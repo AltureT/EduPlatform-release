@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>课堂互动平台 · 管理台</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">课堂互动平台 · 管理台</div>
+  </header>
+
+  <div id="fatal" class="banner danger" hidden></div>
+
+  <!-- 状态带：所有标签页共用（规格 §5）。M3：未运行时只一行"未启动 · 完成下方步骤后启动"（步骤在首页向导里）；
+       运行中"运行中 · 学生地址（新标签打开）· 停止 / 重启"；另有"有改动未生效"提示与启动失败的出错框 -->
+  <section id="band" class="band" aria-label="平台状态">
+    <div class="status">
+      <div class="status-main">
+        <span id="dot" class="dot" aria-hidden="true"></span>
+        <strong id="p-state">正在读取…</strong>
+        <span id="p-spin" class="spinner" aria-hidden="true" hidden></span>
+        <span id="p-meta" class="muted"></span>
+        <button id="p-gohome" class="linkish" type="button" hidden title="回到首页，按步骤完成后启动平台">到首页按步骤启动</button>
+        <span id="p-addr-wrap" class="status-addr" hidden>
+          <span class="muted">学生地址</span>
+          <a id="p-addr" class="url" href="#" target="_blank" rel="noopener" title="在新标签打开，看看学生看到的样子">—</a>
+        </span>
+      </div>
+      <div class="status-actions">
+        <button data-action="stop" title="停止平台，学生端会断开；数据会保留">停止平台</button>
+        <button data-action="restart" title="先停止再启动，让修改过的设置生效；学生进度会保留">重启平台</button>
+      </div>
+    </div>
+
+    <div id="pending" class="pending" hidden>
+      <span>设置有改动，重启平台后生效。</span>
+      <button data-action="restart" class="primary" title="先停止再启动，学生进度会保留">立即重启平台</button>
+    </div>
+
+    <div id="p-error" class="error-box" role="alert" hidden>
+      <p id="p-error-msg" class="error-msg"></p>
+      <div id="p-error-actions" class="row"></div>
+      <!-- L1：课程有问题时"查看详情"逐条列出（文件:行 + 一句话 + 怎么改），其它失败仍是原始记录 -->
+      <details id="p-error-details"><summary>查看详情</summary><ul id="p-error-list" class="check-list" hidden></ul><pre id="p-error-detail"></pre></details>
+    </div>
+  </section>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="home" aria-selected="true"><span class="tab-name">首页</span><span class="tab-desc">上课前看这里</span></button>
+    <button role="tab" data-tab="lessons"><span class="tab-name">课程</span><span class="tab-desc">新建、上传教学设计、切换</span></button>
+    <button role="tab" data-tab="settings"><span class="tab-name">设置</span><span class="tab-desc">密码、端口、课程、AI 接口</span></button>
+    <button role="tab" data-tab="roster"><span class="tab-name">名单</span><span class="tab-desc">导入班级名单，学生只能从名单里选名字</span></button>
+    <button role="tab" data-tab="data"><span class="tab-name">数据</span><span class="tab-desc">备份、恢复、清空上一节课的数据</span></button>
+  </nav>
+
+  <main>
+    <!-- 首页（M3）：未运行 = 向导（左列步骤、右侧当前步的输入）；运行中 = 上课面板。技术信息只在"更多信息"折叠与 title 提示里 -->
+    <section id="tab-home" class="tab">
+      <article id="wizard" class="card wizard" hidden aria-label="开始上课的步骤">
+        <nav class="wz-nav" aria-label="步骤">
+          <p id="wz-compact" class="wz-compact"></p>
+          <!-- 窄屏（< 900）步骤列表折叠后，从这里回到已完成的步骤（M3 审查） -->
+          <button id="wz-back" class="linkish wz-back" type="button" aria-expanded="false" hidden title="回到已完成的步骤修改，例如改密码、换课">改前面的步骤</button>
+          <div id="wz-back-list" class="wz-back-list" hidden></div>
+          <ol id="wz-steps" class="wz-steps"></ol>
+        </nav>
+
+        <div class="wz-body">
+          <div class="wz-pane" data-pane="password" hidden>
+            <h2>设置教师密码</h2>
+            <p class="desc">登录教师端时要输入；6 位以上，上课时只在这台电脑上输入。</p>
+            <p id="wz-pw-summary" class="wz-summary" hidden>
+              <span class="ok-mark" aria-hidden="true">✓</span> 已设置 ·
+              <button id="wz-pw-change" class="linkish" type="button" title="换一个新的教师密码">改密码</button>
+            </p>
+            <form id="wz-pw-form" class="wz-form" novalidate>
+              <label for="wz-pw" class="field-label">教师密码</label>
+              <div class="inline">
+                <input id="wz-pw" type="password" autocomplete="new-password" maxlength="64" placeholder="至少 6 位">
+                <label class="check"><input type="checkbox" id="wz-pw-show"> 显示</label>
+              </div>
+              <small id="wz-pw-err" class="err" role="alert"></small>
+              <div class="row">
+                <button type="submit" class="primary" title="保存密码，然后进入下一步">保存并继续</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="wz-pane" data-pane="lesson" hidden>
+            <h2>选择课程</h2>
+            <p class="desc">选这节课要上的课程。以后想换，随时回到"选择课程"这一步，或到"设置"页里换。</p>
+            <p id="wz-lesson-summary" class="wz-summary" hidden>
+              <span class="ok-mark" aria-hidden="true">✓</span> <span id="wz-lesson-current"></span> ·
+              <button id="wz-lesson-change" class="linkish" type="button" title="换一门课程">换一门</button>
+            </p>
+            <form id="wz-lesson-form" class="wz-form" novalidate>
+              <label for="wz-lesson" class="field-label">课程</label>
+              <select id="wz-lesson"></select>
+              <small id="wz-lesson-err" class="err" role="alert"></small>
+              <div class="row">
+                <button type="submit" class="primary" title="用这门课，然后进入下一步">就用这门 · 继续</button>
+              </div>
+            </form>
+            <!-- L1：当前课的检查结果（有问题或提醒时才显示） -->
+            <p id="wz-lesson-check" class="check-note" hidden>
+              <span id="wz-lesson-check-text"></span> ·
+              <button type="button" class="linkish" data-check-open="current" title="看看是哪几处，可以复制给 AI 让它照着改">查看</button>
+            </p>
+          </div>
+
+          <div class="wz-pane" data-pane="pyodide" hidden>
+            <h2>下载 Python 运行时</h2>
+            <p class="desc">这门课要用 Python，需要联网下载一次（约 40 MB）。</p>
+            <p id="wz-py-ready" class="wz-summary" hidden><span class="ok-mark" aria-hidden="true">✓</span> 已就绪</p>
+            <div id="wz-py-progress" class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="bar"></div></div>
+            <p id="wz-py-label" class="muted"></p>
+            <p id="wz-py-fail" class="err-line" hidden>下载没有完成，网络恢复后再点一次会接着下载。</p>
+            <details id="wz-py-detail" hidden><summary>查看详情</summary><pre class="log small"></pre></details>
+            <div class="row">
+              <button id="wz-py-btn" type="button" class="primary" data-action="fetch-pyodide" title="需要联网；中途断网再点一次会接着下载">开始下载</button>
+            </div>
+          </div>
+
+          <div class="wz-pane" data-pane="start" hidden>
+            <h2>启动平台</h2>
+            <p class="desc">启动后学生才能打开地址加入。第一次启动要等一会儿（准备页面）。</p>
+            <div class="row">
+              <button id="wz-start" type="button" class="primary big-btn" data-action="start" title="启动平台，启动后首页会显示学生地址和二维码">启动平台</button>
+            </div>
+            <p id="wz-busy" class="busy-line" hidden><span class="spinner" aria-hidden="true"></span> <span id="wz-busy-text"></span></p>
+            <p id="wz-start-check" class="check-note" hidden>
+              <span id="wz-start-check-text"></span> ·
+              <button type="button" class="linkish" data-check-open="current" title="看看是哪几处，可以复制给 AI 让它照着改">查看</button>
+            </p>
+          </div>
+        </div>
+      </article>
+
+      <article id="classroom" class="card classroom" hidden aria-label="上课面板">
+        <div id="c-stale" class="stale-bar" hidden>
+          <span>课程文件有更新，重启后生效</span>
+          <button data-action="restart" class="primary" title="重启平台让新的课程内容生效；需要时会先准备一会儿，学生进度会保留">重启并应用</button>
+        </div>
+
+        <div class="c-grid">
+          <div class="c-addr">
+            <p class="label">学生打开这个地址</p>
+            <div class="addr-row">
+              <a id="c-addr" class="big-url" href="#" target="_blank" rel="noopener" title="在新标签打开，看看学生看到的样子">—</a>
+              <button id="c-copy" type="button" data-copy="" title="复制学生地址，发给学生或写在黑板上">复制</button>
+            </div>
+            <div id="c-qr" class="qr" aria-label="学生地址二维码"></div>
+            <details id="c-others-box" hidden>
+              <summary>其它网卡（<span id="c-others-n">0</span> 个地址）</summary>
+              <p class="muted">一般用上面那个；学生打不开时再试这些。</p>
+              <ul id="c-others" class="urls"></ul>
+            </details>
+          </div>
+
+          <div class="c-side">
+            <p class="label">当前课程</p>
+            <p class="big" id="c-lesson">—</p>
+            <p class="muted" id="c-lesson-meta"></p>
+            <p class="next-note" id="c-lesson-next" hidden></p>
+            <p class="c-count">已进入 <strong id="c-students">0</strong> 人</p>
+            <div class="row">
+              <a id="c-teacher" class="button primary" href="#" target="_blank" rel="noopener" title="在本机新标签打开教师端，输入教师密码登录后投影">打开教师端</a>
+            </div>
+            <div class="row">
+              <button data-action="stop" title="停止平台，学生端会断开；数据会保留">停止平台</button>
+              <button data-action="restart" title="先停止再启动，让修改过的设置生效；学生进度会保留">重启平台</button>
+            </div>
+          </div>
+        </div>
+
+        <footer class="c-foot">
+          <span class="muted">出问题了？<button id="c-log" class="linkish" type="button" title="打开最近 500 行运行记录，可以截图发给技术同事">查看运行记录</button></span>
+          <details class="more" id="c-more">
+            <summary>更多信息</summary>
+            <dl class="facts">
+              <dt>Python 运行时</dt><dd id="m-py">—</dd>
+              <dt>数据库大小</dt><dd id="m-db">—</dd>
+              <dt>最近备份</dt><dd id="m-backup">—</dd>
+              <dt>课程目录</dt><dd id="m-dir">—</dd>
+              <dt>课程检查</dt>
+              <dd><span id="m-check">—</span> <button id="m-check-open" type="button" class="linkish" data-check-open="running" hidden title="看看是哪几处，可以复制给 AI 让它照着改">· 查看</button></dd>
+            </dl>
+          </details>
+        </footer>
+      </article>
+    </section>
+
+    <!-- 课程（M4）：新建课程、下载模板；列表每门课一张卡片（按钮由 app.js 按 ui-logic.js lessonCardOps 生成） -->
+    <section id="tab-lessons" class="tab" hidden>
+      <div class="card l-top">
+        <form id="l-new" class="l-new" novalidate>
+          <h3>新建课程</h3>
+          <p class="desc">只填课名。新建后它就是当前课程，接着上传教学设计、复制开场话给帮你做课的 AI。</p>
+          <label for="l-title" class="field-label">课名</label>
+          <div class="inline">
+            <input id="l-title" type="text" maxlength="40" autocomplete="off" placeholder="例如：闰年判断">
+            <button type="submit" class="primary" title="新建一门空课程，并设为当前课程">新建课程</button>
+          </div>
+          <small id="l-new-err" class="err" role="alert"></small>
+        </form>
+        <div id="l-tpl" class="l-tpl">
+          <h3>教学设计模板</h3>
+          <p class="desc">照模板写好教学设计再上传，AI 读得更准；没有模板也可以直接上传自己的教案。</p>
+          <div class="row">
+            <button type="button" id="l-tpl-docx" data-tpl="docx" hidden title="下载 Word 版模板，填好后在下面的课程里上传">下载教学设计模板（Word）</button>
+            <button type="button" id="l-tpl-md" data-tpl="md" hidden title="下载 Markdown 版模板（纯文本，用记事本也能打开）">下载教学设计模板（Markdown）</button>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="l-list-title">全部课程</h3>
+      <p class="desc l-list-desc">"当前"是下次启动平台时上的课。我的课可以上传教学设计、复制开场话给 AI；示例课可以直接上。</p>
+      <ul id="l-list" class="l-list"></ul>
+      <p id="l-empty" class="muted" hidden>还没有课程。</p>
+    </section>
+
+    <!-- 设置 -->
+    <section id="tab-settings" class="tab narrow" hidden>
+      <form id="settings-form" class="card" novalidate>
+        <h3>平台设置</h3>
+        <p class="desc">保存后写入本机的配置文件；平台运行中修改的，重启平台后生效。</p>
+
+        <div class="field">
+          <label for="f-pw">教师密码</label>
+          <div class="inline">
+            <input id="f-pw" type="password" name="TEACHER_PASSWORD" autocomplete="off" maxlength="64">
+            <label class="check"><input type="checkbox" id="show-pw"> 显示</label>
+          </div>
+          <p class="help">6 位以上，上课时只在教师电脑输入。</p>
+          <p class="when">生效：保存后，下次启动或重启平台时生效。</p>
+          <small class="err" data-err="TEACHER_PASSWORD"></small>
+        </div>
+
+        <div class="field">
+          <label for="f-port">端口</label>
+          <input id="f-port" type="number" name="PORT" min="1" max="65535" placeholder="80">
+          <p class="help">80 时学生地址不带端口号（例如 <code>http://192.168.1.100/</code>）；被占用时换 3001 或 8080。</p>
+          <p class="help warn" id="port-hint" hidden>这个端口需要管理员权限，建议 3001 或 8080。</p>
+          <p class="when">生效：重启平台后生效，学生地址会跟着变。</p>
+          <small class="err" data-err="PORT"></small>
+        </div>
+
+        <div class="field">
+          <label for="f-lesson">课程</label>
+          <select id="f-lesson" name="LESSON_CONFIG"></select>
+          <p class="help">每项显示课程名，鼠标停在上面能看到所在目录。"我的课程（自定义）"是自己做的课程，排在最后。</p>
+          <p class="when">生效：重启平台后生效；换课后第一次启动会先准备页面，稍等片刻。</p>
+          <small class="err" data-err="LESSON_CONFIG"></small>
+          <!-- L1：不启动也能查；查的是下拉框里选中的课 -->
+          <div class="row">
+            <button type="button" id="s-check-btn" title="检查下拉框里选中的课程有没有写错的地方，不用启动平台">检查课程</button>
+            <span id="s-check-summary" class="check-summary" role="status"></span>
+          </div>
+          <div id="s-check-result" class="check-result" hidden>
+            <ul id="s-check-list" class="check-list"></ul>
+            <div class="row">
+              <button type="button" id="s-check-copy" title="把整份检查结果复制下来，直接贴给帮你生成课程的 AI，让它照着改">复制给 AI</button>
+            </div>
+          </div>
+        </div>
+
+        <fieldset>
+          <legend>AI 接口（可留空，只有用到 AI 的课程需要）</legend>
+          <div class="field">
+            <label for="f-ai-url">AI 接口地址</label>
+            <input id="f-ai-url" type="url" name="AI_BASE_URL" placeholder="https://api.openai.com/v1">
+            <p class="help">OpenAI 兼容接口，国内常见服务商也用这个格式；以 http:// 或 https:// 开头。</p>
+            <small class="err" data-err="AI_BASE_URL"></small>
+          </div>
+          <div class="field">
+            <label for="f-ai-key">AI 密钥</label>
+            <div class="inline">
+              <input id="f-ai-key" type="password" name="AI_API_KEY" autocomplete="off" placeholder="sk-…（不修改请留空）">
+              <button type="button" id="clear-key" class="danger" title="删除保存的密钥">清空密钥</button>
+            </div>
+            <p class="help">以 sk- 开头的一串，保存在本机 .env，不会上传；页面只显示末 4 位。</p>
+            <p class="muted" id="key-current"></p>
+            <small class="err" data-err="AI_API_KEY"></small>
+          </div>
+          <div class="field">
+            <label for="f-ai-model">AI 模型名</label>
+            <input id="f-ai-model" type="text" name="AI_MODEL" placeholder="gpt-4o-mini">
+            <p class="help">服务商给的模型名称，照抄即可。</p>
+            <small class="err" data-err="AI_MODEL"></small>
+          </div>
+          <p class="when">生效：三项都在重启平台后生效。</p>
+        </fieldset>
+
+        <div class="row">
+          <button type="submit" class="primary" title="把上面的设置写入配置文件">保存设置</button>
+          <span id="settings-msg" class="msg" role="status"></span>
+        </div>
+      </form>
+
+      <div class="card">
+        <h3>重新构建页面</h3>
+        <p class="desc">什么时候用：课程内容改过、学生页面显示不对时。需要先停止平台，完成后再启动。</p>
+        <button data-action="rebuild" title="重新准备学生和教师看到的页面，不会动课堂数据">重新构建页面</button>
+      </div>
+
+      <div class="card">
+        <h3>Python 运行时</h3>
+        <p class="desc">用到 Python 代码的课程需要，联网下载一次即可（约 40 MB）。</p>
+        <p class="state-line"><span id="s-py-dot" class="dot" aria-hidden="true"></span> <strong id="s-py-state">—</strong></p>
+        <div id="s-py-progress" class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="bar"></div></div>
+        <p id="s-py-label" class="muted"></p>
+        <p id="s-py-fail" class="err-line" hidden>下载没有完成，网络恢复后再点一次会接着下载。</p>
+        <details id="s-py-detail" hidden><summary>查看详情</summary><pre class="log small"></pre></details>
+        <div class="row">
+          <button id="s-py-btn" type="button" data-action="fetch-pyodide" title="需要联网；中途断网再点一次会接着下载">检查并补全</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 名单 -->
+    <section id="tab-roster" class="tab narrow" hidden>
+      <div class="card">
+        <h3>当前名单</h3>
+        <p id="r-status">—</p>
+        <p class="muted" id="r-names"></p>
+      </div>
+      <div class="card">
+        <h3>导入名单</h3>
+        <p class="desc">导入后，学生加入时从名单里选自己的名字，不会出现错字或重名。</p>
+        <div class="sample">
+          <p class="label">样例（一行一个名字）</p>
+          <pre>张三
+李四
+王五</pre>
+          <p class="help">从 Excel 复制一列直接粘贴即可；也可以选 CSV / TXT 文件。第一行是"姓名"表头会自动跳过；同名只保留一次，超过 16 个字的名字会跳过。</p>
+        </div>
+        <textarea id="r-text" rows="8" placeholder="在这里粘贴名单"></textarea>
+        <div class="row">
+          <label class="file" title="选一个 CSV 或 TXT 名单文件，内容会放进上面的框里">选择文件<input type="file" id="r-file" accept=".csv,.txt,text/plain,text/csv"></label>
+          <button id="r-preview" title="先看看解析出几个名字，确认后再导入">预览名单</button>
+        </div>
+        <div id="r-preview-box" class="preview" hidden>
+          <p id="r-preview-count" class="big-ish"></p>
+          <p class="muted" id="r-preview-names"></p>
+          <p id="r-preview-ask">看起来对吗？</p>
+          <div class="row">
+            <button id="r-import" class="primary" title="用这份名单替换当前名单">对，导入这份名单</button>
+            <button id="r-cancel" title="收起预览，回到上面修改">不对，回去修改</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>其它操作</h3>
+        <div class="op">
+          <button data-action="roster-clear" class="danger" title="删除名单，学生改为自己输入名字">清空名单</button>
+          <p class="help">什么时候用：不想用名单、改回学生自己输入名字时。</p>
+        </div>
+        <div class="op">
+          <button data-action="reset-bindings" title="解除所有平板和名字的对应关系">重置设备绑定</button>
+          <p class="help">什么时候用：学生换了平板或点错了名字；所有平板回到登录页重新选名字。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 数据 -->
+    <section id="tab-data" class="tab narrow" hidden>
+      <div class="card">
+        <h3>备份</h3>
+        <p class="desc">什么时候用：建议每节课下课后备份一次；平台运行中也可以放心备份。备份存在平台文件夹的 backups 里。</p>
+        <button data-action="backup" class="primary" title="把当前课堂数据存一份">备份当前数据</button>
+      </div>
+      <div class="card">
+        <h3>恢复</h3>
+        <p class="desc">什么时候用：数据出错或误操作后，让课堂数据回到某次备份的时刻。恢复前请先停止平台；恢复前会自动把当前数据再存一份，恢复后学生下次进入会回到登录页。</p>
+        <ul id="b-list" class="backup-list"></ul>
+        <p class="muted" id="b-empty" hidden>还没有备份。</p>
+      </div>
+      <div class="card">
+        <h3>重置课堂</h3>
+        <p class="desc">什么时候用：换一个班、或者开始新一节课之前，清掉上一节课的数据。重置前会自动备份一份。</p>
+        <p id="reset-desc" class="help"></p>
+        <button data-action="reset" class="danger" title="清掉上一节课的数据，课堂回到第一环节">重置并回到第一环节</button>
+      </div>
+    </section>
+  </main>
+
+  <aside id="drawer" class="drawer" hidden aria-label="运行记录">
+    <div class="drawer-head">
+      <strong>运行记录（最近 500 行）</strong>
+      <button id="drawer-close" title="关闭运行记录（Esc）">关闭</button>
+    </div>
+    <pre id="drawer-log" class="log drawer-log"></pre>
+  </aside>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <p id="confirm-text"></p>
+      <div class="row end">
+        <button value="cancel">取消</button>
+        <button value="ok" id="confirm-ok" class="danger"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- L1：课程检查结果（向导第 2 步、上课面板"更多信息"的"查看"） -->
+  <dialog id="check-dlg" class="check-dlg" aria-labelledby="check-dlg-title">
+    <form method="dialog">
+      <h3 id="check-dlg-title">课程检查</h3>
+      <p id="check-dlg-summary" class="check-summary"></p>
+      <ul id="check-dlg-list" class="check-list"></ul>
+      <div class="row end">
+        <button type="button" id="check-dlg-copy" class="primary" title="把整份检查结果复制下来，直接贴给帮你生成课程的 AI，让它照着改">复制给 AI</button>
+        <button value="close">关闭</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- M4：复制开场话时剪贴板不能用 → 弹出可选中的文本框，教师自己复制 -->
+  <dialog id="copy-dlg" class="copy-dlg" aria-labelledby="copy-dlg-title">
+    <form method="dialog">
+      <h3 id="copy-dlg-title">请手动复制这段话</h3>
+      <p class="desc">这台电脑不让网页直接复制。下面的文字已经选好，按 Ctrl+C（Mac 按 Command+C）复制，再贴给帮你做课的 AI。</p>
+      <textarea id="copy-dlg-text" rows="5" readonly></textarea>
+      <div class="row end">
+        <button value="close" class="primary">复制好了</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

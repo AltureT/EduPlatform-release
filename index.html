@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>课堂</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- K3：浏览器太旧的兜底提示。经典脚本，任何浏览器都能跑；主 bundle（build.target chrome85 / edge85 / safari15）在更老的内核上会白屏 -->
+    <script>
+      (function () {
+        var ok = 'noModule' in document.createElement('script') && typeof WebAssembly === 'object' && typeof BigInt === 'function';
+        if (ok) return;
+        var el = document.getElementById('root');
+        el.innerHTML = '<div style="max-width:560px;margin:80px auto;padding:24px;font:18px/1.6 -apple-system,\'PingFang SC\',\'Microsoft YaHei\',sans-serif;color:#333;border:1px solid #ddd;border-radius:12px">这台电脑的浏览器太旧，打不开课堂页面。<br>请换 Chrome 或 Edge（85 以上）；iPad 请把系统升级到 15 以上。</div>';
+        window.__tooOld = true;
+      })();
+    </script>
+    <script type="module" src="/kernel/client/main.jsx"></script>
+  </body>
+</html>

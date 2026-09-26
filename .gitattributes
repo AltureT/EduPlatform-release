@@ -1,0 +1,4 @@
+# Windows 双击入口：检出时一律 CRLF（cmd 对 LF 行尾的 call :label 有已知问题）
+*.bat text eol=crlf
+# Mac 双击入口：一律 LF
+*.command text eol=lf

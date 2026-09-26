@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Claude Code 本地设置（含本机路径，不进仓库）
+.claude/settings.local.json
+.claude/worktrees/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# 构建产物
+dist/
+
+# 环境与密钥
+.env
+.env.local
+.teacher-secret
+
+# 管理台单实例锁（含本次管理台地址与访问凭据）
+.manage.lock
+
+# 课堂数据：数据库、教师登录状态、名单、备份、平台日志都含学生信息，不进仓库
+data/*.sqlite*
+data/*.bak-*
+data/teacher_tokens.json
+data/rosters/
+data/logs/
+backups/
+
+# Logs
+*.log
+
+# Pyodide 等运行时（npm run fetch:pyodide 下载，体积大，不进仓库）
+/vendor/
+
+# 本机开发用 token 文件
+data/*-tokens.json
