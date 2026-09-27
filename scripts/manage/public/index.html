@@ -116,7 +116,7 @@
             <p id="wz-py-ready" class="wz-summary" hidden><span class="ok-mark" aria-hidden="true">✓</span> 已就绪</p>
             <div id="wz-py-progress" class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="bar"></div></div>
             <p id="wz-py-label" class="muted"></p>
-            <p id="wz-py-fail" class="err-line" hidden>下载没有完成，网络恢复后再点一次会接着下载。</p>
+            <p id="wz-py-fail" class="err-line" hidden>下载没有完成，网络恢复后再点一次会接着下载。也可以让同事把运行时压缩包拷给你，放进平台文件夹里的 vendor 文件夹后再点一次。</p>
             <details id="wz-py-detail" hidden><summary>查看详情</summary><pre class="log small"></pre></details>
             <div class="row">
               <button id="wz-py-btn" type="button" class="primary" data-action="fetch-pyodide" title="需要联网；中途断网再点一次会接着下载">开始下载</button>
@@ -267,11 +267,11 @@
         </div>
 
         <fieldset>
-          <legend>AI 接口（可留空，只有用到 AI 的课程需要）</legend>
+          <legend>AI 接口（开了 AI 助手、或课程里有段用 AI 的时候需要；没有可留空）</legend>
           <div class="field">
             <label for="f-ai-url">AI 接口地址</label>
             <input id="f-ai-url" type="url" name="AI_BASE_URL" placeholder="https://api.openai.com/v1">
-            <p class="help">OpenAI 兼容接口，国内常见服务商也用这个格式；以 http:// 或 https:// 开头。</p>
+            <p class="help">OpenAI 兼容接口，国内常见服务商也用这个格式。学生的程序、运行结果和提问会发到这个地址（不含姓名）。也可以填局域网里自己电脑上的模型服务，例如 http://192.168.1.20:11434/v1（Ollama），这时密钥留空。</p>
             <small class="err" data-err="AI_BASE_URL"></small>
           </div>
           <div class="field">
@@ -308,14 +308,37 @@
       <div class="card">
         <h3>Python 运行时</h3>
         <p class="desc">用到 Python 代码的课程需要，联网下载一次即可（约 40 MB）。</p>
+        <p class="help">优先从国内镜像下载；下不动时可以让同事拷 zip 放进 vendor 文件夹。</p>
         <p class="state-line"><span id="s-py-dot" class="dot" aria-hidden="true"></span> <strong id="s-py-state">—</strong></p>
         <div id="s-py-progress" class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="bar"></div></div>
         <p id="s-py-label" class="muted"></p>
-        <p id="s-py-fail" class="err-line" hidden>下载没有完成，网络恢复后再点一次会接着下载。</p>
+        <p id="s-py-fail" class="err-line" hidden>下载没有完成，网络恢复后再点一次会接着下载。也可以让同事把运行时压缩包（EduPlatform-runtime 开头的 zip）拷给你，放进平台文件夹里的 vendor 文件夹后再点一次。</p>
         <details id="s-py-detail" hidden><summary>查看详情</summary><pre class="log small"></pre></details>
         <div class="row">
           <button id="s-py-btn" type="button" data-action="fetch-pyodide" title="需要联网；中途断网再点一次会接着下载">检查并补全</button>
         </div>
+        <!-- R3：下载源（高级）写 .env 的 RUNTIME_ZIP_URL；下载时最先试它，再试国内镜像、GitHub、逐个文件下载 -->
+        <details id="s-py-source">
+          <summary>下载源（高级）</summary>
+          <div class="field">
+            <label for="f-runtime-url">运行时压缩包地址</label>
+            <input id="f-runtime-url" type="url" name="RUNTIME_ZIP_URL" placeholder="https://…/EduPlatform-runtime-v314.0.7.zip">
+            <p class="help">一般留空。学校或同事在局域网里放了一份运行时压缩包时填它的地址，下载时最先试这个地址，不通再试国内镜像、GitHub 和逐个文件下载。</p>
+            <p class="when">生效：保存后下次点"检查并补全"时生效，不用重启平台。</p>
+            <small class="err" data-err="RUNTIME_ZIP_URL"></small>
+          </div>
+          <div class="row">
+            <button type="button" id="s-runtime-save" title="把下载源写入配置文件">保存下载源</button>
+            <span id="s-runtime-msg" class="msg" role="status"></span>
+          </div>
+        </details>
+      </div>
+
+      <!-- K7：版本与平台文件是否被改过（版本.json 的 protected 清单比对；改动清单只放 title） -->
+      <div class="card">
+        <h3>平台版本</h3>
+        <p class="state-line">版本 <strong id="s-version">—</strong> · <span id="s-pf-dot" class="dot" aria-hidden="true"></span> <span id="s-pf-state">—</span></p>
+        <p id="s-pf-help" class="help warn" hidden>平台自带的文件被改过，升级时会被新版本覆盖。课程里要的改动应该放在课程自己的文件夹里；想恢复原样，重新解压一次发布包覆盖平台文件夹即可（课程、课堂数据和设置都不会丢）。</p>
       </div>
     </section>
 

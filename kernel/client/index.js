@@ -9,6 +9,8 @@ export { default as Chip } from './ui/Chip.jsx';
 export { default as HelpTip } from './ui/HelpTip.jsx';
 export { default as GroupTag } from './ui/GroupTag.jsx';
 export { default as ConfirmAdvanceBtn } from './ui/ConfirmAdvanceBtn.jsx';
+// U6（代码展示统一高亮规格 §2）：展示代码一律用它（Python 高亮、--code-* 令牌），不用裸 <pre>
+export { default as CodeView } from './ui/CodeView.jsx';
 
 export { default as DataTable } from './table/DataTable.jsx';
 export { default as DetailModal } from './table/DetailModal.jsx';

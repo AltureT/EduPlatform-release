@@ -2,11 +2,17 @@
 // - 只读：useStudentStage(stageId).readOnly（镜像内）时只显示 myData（草稿比提交新则显示草稿），不渲染按钮、不调 ensure
 // - 刷新保留：学生端按 sandbox:<lessonId>:<classEpoch>:<name>:<stageId> 防抖 1 s 写 localStorage；教师端不写
 // - 挂载时 ensure(本阶段包, { flask }) → writeFiles(files)；状态上报由 studentOverlay 负责，这里不发 s-status；卸载不销毁 Worker
+// - P5（代码段布局与回看规格 §6.2）：每次运行 / 测试前（files 非空时）再 writeFiles(files)——Worker 文件系统各段共用，
+//   回看段跑过之后回到当前段，一运行文件就是本段自己的；回看不只读（只读仍只有镜像），不记录由原语保证
 // - draftEvent：运行 / 测试结束后与代码停止变化 5 s 后，用 buildRecord(…, { draft:true }) 发该事件（≥ 5 s 一次）
 // - S3：本实例运行次数（run + test，挂载时从 0 起）经 onResult / onTest 的第二参数 { runs } 交给阶段，草稿也用它；
 //   onRestore({ code, result })：挂载时从 localStorage 恢复到带运行时代码的最近结果就回调一次（code 为那次运行时的代码，result 见 resultOfLast）
 // - P3：测试结果先经 enrichCases 给每个用例加 label（docstring 优先）/ reason（失败原因）再显示与交给 onTest；
 //   编辑器与输出区各有一行小标题（代码 / 输出，测试后输出区为"测试结果"），captions={false} 关掉
+// - P6（代码段教学功能规格 §4.2）：可选 prop starter（字符串）——给了就在没有草稿时用它作初始代码（不给用 sb.starter）；
+//   code 原语双起始代码时传学生选的那份（受控用法下原语自己也按它算 code）
+// - P6 审查 B1：卸载后（如"换起点"时程序还卡在 input() / 死循环）在途的 run / test 返回时一律不再 setState、不写 localStorage、
+//   不调 onResult / onTest、不发草稿（mountedRef）；Worker 不随卸载停止，要停由阶段先调 usePython().stop()
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, registerKernelHook, Btn, Chip, Fill, Split, Row } from '#kernel/client/index.js';
 import { usePython } from '../usePython.js';
@@ -87,6 +93,7 @@ function chipOf(snap, elapsed) {
 }
 
 // 布局（界面整理规格 §3、§5）：<Fill> 撑满父级 → <Split ratio="3:2" stack="ratio">（wide 左右、narrow 上下按 3:2 分高）
+// P5（代码段布局与回看规格 §5）：内层 Split resizable、storageKey="sandbox:runner"——宽屏代码↔输出之间可拖宽，比例记在本机（各段共用）
 // 左 / 上编辑器，右 / 下输出（<Fill scroll> 内部滚动）；工具栏 <Row> 在下方。只读态同样撑满，没有工具栏
 // P3：captions 时两块各在上方加一行小标题（--fs-sm、--ink-dim）
 const captionStyle = { flexShrink: 0, fontSize: 'var(--fs-sm)', color: 'var(--ink-dim)', fontWeight: 600, lineHeight: 1.4, paddingBottom: 'var(--sp-1)' };
@@ -97,7 +104,7 @@ function Caption({ children }) {
 function Frame({ editor, output, controls, captions = true, outputCaption = '输出' }) {
   return (
     <Fill data-sandbox-runner="">
-      <Split ratio="3:2" stack="ratio">
+      <Split ratio="3:2" stack="ratio" resizable storageKey="sandbox:runner">
         {captions ? <Fill><Caption>代码</Caption>{editor}</Fill> : editor}
         {captions
           ? <Fill><Caption>{outputCaption}</Caption><Fill scroll>{output}</Fill></Fill>
@@ -171,7 +178,7 @@ function InputLine({ prompt, onSend }) {
 
 // ---------- 可编辑 ----------
 
-function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, extraCompletions, captions = true }) {
+function LiveRunner({ st, stageId, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, extraCompletions, captions = true }) {
   const c = useComponent('sandbox');
   const py = usePython();
   const client = getPythonClient();
@@ -184,7 +191,8 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
   // 挂载时读一次草稿（键变化时重读）
   const saved = useMemo(() => readDraft(key), [key]);
   const controlled = codeProp !== undefined;
-  const [inner, setInner] = useState(() => (typeof saved?.code === 'string' ? saved.code : sb.starter ?? ''));
+  const initialCode = typeof starterProp === 'string' ? starterProp : sb.starter ?? '';
+  const [inner, setInner] = useState(() => (typeof saved?.code === 'string' ? saved.code : initialCode));
   const code = controlled ? String(codeProp ?? '') : inner;
   const setCode = (v) => {
     if (!controlled) setInner(v);
@@ -207,6 +215,13 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
   const lastTestRef = useRef(saved?.last?.tests ?? null);
   const disabledRef = useRef(false);   // classroom:reset 之后不再写
   const runsRef = useRef(0);   // S3：本实例运行次数（run + test）
+  const mountedRef = useRef(true);   // P6 B1：卸载后在途运行的收尾一律跳过
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // ---------- 受控模式下的刷新恢复：挂载时把草稿交给阶段 ----------
   useEffect(() => {
@@ -247,7 +262,7 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
     writeDraft(keyRef.current, { code: codeRef.current, last: lastRef.current });
   }, []);
   const scheduleSave = useCallback(() => {
-    if (!keyRef.current || disabledRef.current) return;
+    if (!keyRef.current || disabledRef.current || !mountedRef.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(saveNow, SAVE_MS);
   }, [saveNow]);
@@ -272,7 +287,7 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
   const sendDraft = useCallback(() => {
     const d = draft.current;
     d.timer = null;
-    if (disabledRef.current) return;
+    if (disabledRef.current || !mountedRef.current) return;
     const rec = buildRecord(lastResultRef.current, {
       code: codeRef.current, tests: lastTestRef.current, runs: runsRef.current, draft: true,
     });
@@ -287,7 +302,7 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
     }
   }, [draftEvent]);
   const requestDraft = useCallback(() => {
-    if (!draftEvent || !isStudent) return;
+    if (!draftEvent || !isStudent || !mountedRef.current) return;
     const d = draft.current;
     if (d.timer) return;
     const wait = d.lastAt + DRAFT_GAP_MS - Date.now();
@@ -321,9 +336,11 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
     rafH.current = null;
     const add = buf.current;
     buf.current = [];
+    if (!mountedRef.current) return;
     if (add.length > 0) setEntries((prev) => mergeEntries(prev, add));
   }, []);
   const push = useCallback((e) => {
+    if (!mountedRef.current) return;
     buf.current.push(e);
     if (rafH.current == null) rafH.current = raf(flush);
   }, [flush]);
@@ -369,20 +386,28 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
     setPrompt('');
   };
 
+  // 运行 / 测试前重写本段的附加文件（与挂载时那次同一份）
+  const hasFiles = !!(sb.files && Object.keys(sb.files).length > 0);
+  const rewriteFiles = () => (hasFiles ? client.writeFiles(sb.files) : undefined);
+
   const onRun = async () => {
     const src = codeRef.current;
     begin();
     let r;
     try {
+      await rewriteFiles();
+      if (!mountedRef.current) return;   // 写文件期间被卸载（换起点）：不再启动运行
       r = await client.run(src, {
         onOutput: (o) => push({ kind: o.kind, text: String(o.text ?? '') }),
         onImage: (png) => push({ kind: 'image', png }),
       });
     } catch (e) {
+      if (!mountedRef.current) return;
       end();
       appendNow([{ kind: 'system', text: `${opErrorText(e)}\n` }]);
       return;
     }
+    if (!mountedRef.current) return;   // P6 B1：运行中被卸载（换起点等），结果丢弃
     end();
     runsRef.current += 1;
     const tail = [];
@@ -408,12 +433,16 @@ function LiveRunner({ st, stageId, code: codeProp, onChange, draftEvent, onResul
     begin();
     let t;
     try {
+      await rewriteFiles();
+      if (!mountedRef.current) return;   // 写文件期间被卸载（换起点）：不再启动运行
       t = enrichCases(await client.test(src, sb.tests, { onOutput: (o) => push({ kind: o.kind, text: String(o.text ?? '') }) }), sb.tests);
     } catch (e) {
+      if (!mountedRef.current) return;
       end();
       appendNow([{ kind: 'system', text: `${opErrorText(e)}\n` }]);
       return;
     }
+    if (!mountedRef.current) return;   // P6 B1
     end();
     runsRef.current += 1;
     if (t.interrupted) appendNow([{ kind: 'system', text: '已停止\n' }]);

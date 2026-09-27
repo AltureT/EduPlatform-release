@@ -7,3 +7,4 @@ export { default as StepBar } from './StepBar.jsx';
 export { default as GroupTag } from './GroupTag.jsx';
 export { default as ConfirmAdvanceBtn } from './ConfirmAdvanceBtn.jsx';
 export { default as ViewToggle } from './ViewToggle.jsx';
+export { default as CodeView } from './CodeView.jsx';

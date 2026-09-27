@@ -4,7 +4,7 @@
 // loadStageServers(stages) → Map<id, register>
 //
 // v0.8（活动原语规格 §2、契约 §五）：stage.config.primitive 非 null 时，从 <项目根>/primitives/<type>/ 取原语：
-//   primitive.config.js = { type, label, layout, options: 校验函数（shape(...) 或同形函数）, requiresComponents?, normalize?, secretOptions?,
+//   primitive.config.js = { type, label, layout, options: 校验函数（shape(...) 或同形函数）, requiresComponents?, normalize?, secretOptions?, reviewInteractive?（P5，布尔缺省）,
 //                           defaults: { gate, collect, alerts, subPhases, recommend, score, summarize, onEnter, onLeave, onLateJoin, sandbox } }
 //   defaults 每项是 (options) => 值 的工厂（collect 也可直接写对象），值与契约 §二 同形。
 //   加载顺序：{ from } 引用读入 → await normalize(options, { stageDir, readFrom, readBinaryFrom }) → 摘出 $server → options 校验 → ≤ 256 KB → 按 §2.3 合并为有效 config。
@@ -101,6 +101,9 @@ async function loadPrimitive(type, primitivesRoot, cache) {
   if (def.secretOptions !== undefined
     && !(Array.isArray(def.secretOptions) && def.secretOptions.every((x) => typeof x === 'string'))) {
     throw new Error(`${where}：secretOptions 必须是 options 键名数组`);
+  }
+  if (def.reviewInteractive !== undefined && typeof def.reviewInteractive !== 'boolean') {
+    throw new Error(`${where}：reviewInteractive 必须是 true / false`);
   }
   if (def.defaults !== undefined && !isPlainObject(def.defaults)) throw new Error(`${where}：defaults 必须是对象`);
   for (const [k, v] of Object.entries(def.defaults ?? {})) {
@@ -205,6 +208,10 @@ export function mergePrimitiveConfig(stageConfig, primitive, options) {
   }
   const eff = { ...stageConfig, primitive: type, options: publicOptions };
   eff.layout = primitive.def.layout ?? 'focus';
+  // P5：原语可给回看可交互的缺省（code / data-analysis 为 true），阶段写了以阶段为准
+  if (stageConfig.reviewInteractive === undefined && primitive.def.reviewInteractive !== undefined) {
+    eff.reviewInteractive = primitive.def.reviewInteractive;
+  }
   const collect = make('collect');
   if (collect !== undefined) eff.collect = collect;
   const subPhases = make('subPhases');

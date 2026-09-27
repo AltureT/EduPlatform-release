@@ -8,9 +8,9 @@
 
 ## 一、需要准备什么
 
-- 平台的**发布包**：从发布页 https://github.com/AltureT/EduPlatform-release/releases 下载最新版本下面的 `EduPlatform-v<版本号>.zip`（或向发给你平台的同事要，同事给的可能叫 `课堂互动平台-v<版本号>.zip`，内容一样）
+- 平台的**发布包**：从发布页下载最新版本下面的 `EduPlatform-v<版本号>.zip`。国内请用 Gitee 发布页 https://gitee.com/alture/EduPlatform-release/releases （快）；也可以用 GitHub 发布页 https://github.com/AltureT/EduPlatform-release/releases 。两边内容一样。也可以向发给你平台的同事要，同事给的可能叫 `课堂互动平台-v<版本号>.zip`，内容也一样
 - 一台 Mac 或 Windows 电脑作为教师机（Linux 也可以，见文末"开发者命令"）
-- Node.js 22 或 24（长期支持版）：在 [Node.js 官网](https://nodejs.org/zh-cn) 下载安装包，双击安装即可
+- Node.js 22 或 24（长期支持版）：在 [Node.js 官网](https://nodejs.org/zh-cn) 下载安装包，双击安装即可。官网打不开或很慢时用国内镜像 https://npmmirror.com/mirrors/node/ ：进 `v22` 或 `v24` 开头的最新文件夹，Mac 下载 `.pkg`、Windows 下载 `-x64.msi` 结尾的安装包
 - 教师电脑和学生平板连在同一个 WiFi 上
 
 ---
@@ -21,7 +21,7 @@
 
 1. **解压发布包**：把下载到的 zip 解压到"桌面"或"文稿 / 文档"文件夹（Mac 双击 zip 即可；Windows 右键 zip →"全部解压缩"），得到一个 `课堂互动平台` 文件夹，这就是**平台文件夹**。不要直接在压缩包里双击运行；以后做的课、课堂数据和备份都存在这个文件夹里，别删掉它。
 2. **双击启动**：打开平台文件夹，Mac 双击 `管理台.command`，Windows 双击 `管理台.bat`。
-   - 会打开一个窗口（Mac 是"终端"，Windows 是黑色的命令行窗口）。第一次会自动安装平台需要的组件，需要联网，等几分钟。
+   - 会打开一个窗口（Mac 是"终端"，Windows 是黑色的命令行窗口）。第一次会自动安装平台需要的组件，需要联网，等几分钟。装不上时窗口里会显示"换国内源再试一次…"，自动换国内的下载源再装一次；还不行就检查网络，或者让同事把他平台文件夹里的整个 `node_modules` 文件夹拷给你，放进你的平台文件夹后再双击。
    - Mac 第一次双击如果提示"无法打开"或"无法验证开发者"：先点"完成"（或"取消"）关掉提示，打开"系统设置 → 隐私与安全性"，往下找到关于"管理台.command"的提示，点"仍要打开"，再输入电脑密码确认。之后就可以直接双击了。（macOS 15 起，右键"打开"的老办法已经不管用。）
    - Windows 第一次双击如果出现蓝色的"Windows 已保护你的电脑"：点"更多信息"，再点"仍要运行"。
    - 如果窗口里提示"请先安装 Node.js"，按提示装好 Node.js 后再双击一次。
@@ -29,12 +29,12 @@
 4. **接下来按首页的向导做**。平台还没启动时，首页是一张向导：左边一列是步骤（做完的打 ✓ 变灰，当前这一步是深色圆点、粗字），右边就是这一步要填的东西，**直接在这里填，不用去别的页面**。课程不需要 Python 时少一步，一共四步：
    1. **设置教师密码**：输入密码（至少 6 位，登录教师端时用），点"保存并继续"。太短会在输入框下面用红字提示。
    2. **选择课程**：下拉框里只显示课程名（例如"Python 入门"），选好点"就用这门 · 继续"。新装好的平台已经默认选了"示例课"，这一步会直接打勾，显示"当前：《示例课》· 2 个环节 · 换一门"。自己（或让 AI）做的课程显示为"我的课程（自定义）"，排在最后。如果当前的课程文件被改坏了，这一步会用红字提示"这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试"，下拉框会默认选好一门能用的课。
-   3. **下载 Python 运行时**（只有用到"Python 沙盒"的课程才有这一步）："这门课要用 Python，需要联网下载一次（约 40 MB）"，点"开始下载"，下面有进度条；下载完自动打勾进入下一步。中途断网再点一次会接着下载。
+   3. **下载 Python 运行时**（只有用到"Python 沙盒"的课程才有这一步）："这门课要用 Python，需要联网下载一次（约 40 MB）"，点"开始下载"，下面有进度条；下载完自动打勾进入下一步。中途断网再点一次会接着下载。下载时先从国内镜像（Gitee）下整个压缩包，不通再试 GitHub，最后逐个文件下载，进度条上方会写"正在从国内镜像下载…"之类。都下不动时，可以让同事把运行时压缩包 `EduPlatform-runtime-v314.0.7.zip`（在 Gitee 发布页的 `runtime-v314.0.7` 下面，或者同事电脑上拷的）拷给你，放进平台文件夹里的 `vendor` 文件夹（没有就新建一个），再点一次"开始下载"，不用联网就能装好。
    4. **启动平台**：点"启动平台"。第一次启动或换了课程后要等一会儿，这时显示"正在准备（第一次或换课后要一会儿）…"和一个转圈。
 
    左边做完的步骤可以点：点"设置教师密码"回去改密码，点"选择课程"回去换课；还没做到的步骤是灰的，点不了。窗口较窄时，左边一列会收成一行"第 N 步 / 共 M 步 · 标题"，旁边有"改前面的步骤"，点开会列出做完的步骤，点哪个就回到哪一步。
 
-**做新课**：在管理台"课程"页新建课程（只填课名）、上传教学设计，再点"复制开场话"，把那段话贴给帮你做课的 AI 工具，它就从这门课开始做（见下面"课程页"）。
+**做新课**：在管理台"课程"页新建课程（只填课名）、上传教学设计，再点"复制开场话"，把那段话贴给帮你做课的 AI 工具，它就从这门课开始做（见下面"课程页"）。用你的 AI 开发工具（Claude Code、Cursor、Trae 等）打开管理台所在的那个文件夹，它会自动认识这个平台并按规矩做课。
 
 平台启动后，向导自动收起，首页变成**上课面板**（见"三、上课"）。页面最上方的状态带：没启动时只显示"● 未启动 · 完成下方步骤后启动"（在其它标签页显示"到首页按步骤启动"）；运行中显示"● 运行中 · 学生地址（点了在新标签打开）· 停止平台 / 重启平台"。
 
@@ -43,8 +43,9 @@
 - **教师密码**：至少 6 位，上课时只在教师电脑输入。
 - **端口**：默认 80，学生地址最短（不带数字，例如 `http://192.168.1.100/`），一般不用改；被别的程序占用时换 3001 或 8080。
 - **课程**：同上面"选择课程"一步；下拉框每项只显示课程名，鼠标停在上面能看到所在目录。
-- **Python 运行时**（设置页最后一节）：显示"已就绪 / 未下载 / 当前课程不需要"，按钮"检查并补全"（已下载的文件不会重复下载）。
-- **AI 接口**（可以先留空）：接口地址形如 `https://api.openai.com/v1`（OpenAI 兼容接口，国内常见服务商也用这个格式）；密钥是以 `sk-` 开头的一串，只保存在本机；模型名照服务商给的填，例如 `gpt-4o-mini`。
+- **Python 运行时**（设置页倒数第二节）：显示"已就绪 / 未下载 / 当前课程不需要"，按钮"检查并补全"（已下载的文件不会重复下载）。优先从国内镜像下载；下不动时可以让同事拷 zip 放进 `vendor` 文件夹。折叠的"下载源（高级）"一般留空：学校或同事在局域网里放了一份运行时压缩包时，把它的地址填进去点"保存下载源"，下载时最先试这个地址。
+- **AI 接口**（开了 AI 助手、或课程里有段用 AI 的时候需要；没有可留空）：接口地址形如 `https://api.openai.com/v1`（OpenAI 兼容接口，国内常见服务商也用这个格式）；密钥是以 `sk-` 开头的一串，只保存在本机；模型名照服务商给的填，例如 `gpt-4o-mini`。学生的程序、运行结果和提问会发到这个地址（不含姓名）。也可以填局域网里自己电脑上的模型服务，例如 `http://192.168.1.20:11434/v1`（Ollama），这时密钥留空。
+- **平台版本**（设置页最后一节）：显示"版本 0.x.x · 平台文件完好"。显示"有 N 处改动"说明平台自带的文件被改过（多半是 AI 做课时改错了地方）：升级时会被新版本覆盖；想恢复原样，重新解压一次发布包覆盖平台文件夹即可，课程、课堂数据和设置都不会丢。
 
 > **请记住：那个窗口开着，平台才开着。** 上课期间不要关闭它（可以最小化）。关闭窗口 = 关闭管理台和平台。
 
@@ -173,17 +174,27 @@ Mac 和 Windows 一般不会遇到。Linux 上 1024 以下的端口（包括 80�
 
 以下命令在平台文件夹的终端里运行，教师日常不需要。
 
-开发者也可以不用发布包，直接 `git clone` 平台的开发仓库：仓库里的 `template/` 就是平台文件夹（命令都在 `template/` 里执行）。在仓库根运行 `npm run pack:release`，生成发给教师的发布包 `release/课堂互动平台-v<版本号>.zip`（需要系统有 `zip`；有 `pandoc` 时包里多一份 Word 版教学设计模板）；`npm run publish:release` 再把它发到公开发布仓库 https://github.com/AltureT/EduPlatform-release （仓库内容 = 解压后的平台文件夹，Releases 里的 zip 叫 `EduPlatform-v<版本号>.zip`）。
+开发者也可以不用发布包，直接 `git clone` 平台的开发仓库：仓库里的 `template/` 就是平台文件夹（命令都在 `template/` 里执行）。在仓库根运行 `npm run pack:release`，生成发给教师的发布包 `release/课堂互动平台-v<版本号>.zip`（需要系统有 `zip`；有 `pandoc` 时包里多一份 Word 版教学设计模板）；`npm run publish:release` 再把它发到公开发布仓库 https://github.com/AltureT/EduPlatform-release 并同步推到 Gitee 镜像 https://gitee.com/alture/EduPlatform-release （仓库内容 = 解压后的平台文件夹，Releases 里的 zip 叫 `EduPlatform-v<版本号>.zip`；Gitee 的 Release 附件要环境变量 `GITEE_TOKEN`，没有时脚本打印手动上传地址；`--no-gitee` 只发 GitHub）。Python 运行时整包：`npm run pack:runtime` 把 `template/vendor/pyodide` 打成 `release/EduPlatform-runtime-v<版本>.zip`，`npm run publish:release -- --runtime-only` 把它挂到两边的 `runtime-v<版本>` Release（`--runtime` 在发新版本时顺带做）。Gitee 推送失败时退出码 2，网络恢复后重跑 `publish:release`（内容没变）会补推 Gitee 并补建 Gitee Release；但如果 tag 已经推上 Gitee、只是建 Release 或传附件失败（或当时没设 `GITEE_TOKEN`），重跑不会再建，要按脚本打印的地址到 Gitee 网页手动上传。管理台导入运行时整包时，内核文件、包闭包的 `.whl` 与两份 lock 都按固定的 sha256 核对，`.gz` 按原文件重新生成；`wheels/` 下的 PyPI 轮子（Flask 等）只按整包自带的 manifest 校验。
 
 ```
-npm install              # 安装依赖（双击入口会自动做）
+npm install              # 安装依赖（双击入口会自动做；失败时会换国内源再试一次）
+# 手动换国内源安装（Mac / Linux）：
+#   npm_config_registry=https://registry.npmmirror.com npm_config_better_sqlite3_binary_host_mirror=https://registry.npmmirror.com/-/binary/better-sqlite3 npm install
+# Windows（命令提示符）：
+#   set npm_config_registry=https://registry.npmmirror.com
+#   set npm_config_better_sqlite3_binary_host_mirror=https://registry.npmmirror.com/-/binary/better-sqlite3
+#   npm install
 npm run manage           # 打开管理台（等同于双击入口；Linux 教师机用这个）
 npm run dev              # 开发模式：Vite 热更新，代理到 3001 端口的服务端
 npm run server           # 只启动服务端（读 .env）
 npm run build            # 构建前端到 dist/
 npm test                 # 全部自动测试
-npm run fetch:pyodide    # 下载 Python 运行时（同管理台里的下载按钮）
+npm run fetch:pyodide    # 下载 Python 运行时（同管理台里的下载按钮）：vendor/ 里的整包 → RUNTIME_ZIP_URL → Gitee 整包 → GitHub 整包 → 逐文件
+npm run fetch:pyodide -- --sources   # 只列出下载来源的顺序，不下载
+npm run gen:ai-entry     # 改了 scripts/lib/ai-entry.js 后重新生成各 AI 工具的入口文件（CLAUDE.md、AGENTS.md、.cursor/ 等十个，正文同源；--check 只比对）
 ```
+
+发布包的 `版本.json` 带 `protected`（平台文件 → sha256，范围见 `scripts/lib/platform-files.js`）；`check:lesson` 与管理台设置页据它报"平台文件被改过"。开发仓库里没有 `版本.json`，不做这项检查。
 
 ### 给 AI 的三条命令
 

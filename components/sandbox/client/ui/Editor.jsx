@@ -2,7 +2,7 @@
 // - Python 高亮；补全 = 关键词 + 内置函数 + 文档内标识符（localCompletionSource）+ 阶段传入的 extraCompletions
 // - 括号 / 引号自动配对、括号匹配、自动缩进（4 空格）、Tab / Shift+Tab 缩进、Ctrl/Cmd+Enter → onRun、历史撤销、行号、当前行高亮
 // - 软换行关闭（横向滚动）；只读 = EditorState.readOnly + EditorView.editable（镜像与非 live 阶段）
-// - 浅色主题固定（平台令牌配色，不提供切换）；字号 16 px（iOS 聚焦不放大，规格 v0.2.2 §5）、等宽；contentAttributes 关掉自动大写 / 纠错 / 拼写检查
+// - 浅色主题固定（平台令牌配色，不提供切换；语法配色走 --code-* 令牌，与 <CodeView> 一致）；字号 16 px（iOS 聚焦不放大，规格 v0.2.2 §5）、等宽；contentAttributes 关掉自动大写 / 纠错 / 拼写检查
 // - 补全：唯一候选就是当前词时不弹（否则打完 pass 停顿后回车会被补全吃掉）；文档内标识符与 extraCompletions 按名去重
 // - 输入法组字（isComposing / keyCode 229）期间不处理任何快捷键
 // - 受控：value 变化且与文档不同时以最小区间替换（不进撤销栈、不回调 onChange）；用户修改回调 onChange(新文本)
@@ -14,7 +14,7 @@ import {
   EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
 } from '@codemirror/view';
 import {
-  bracketMatching, defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting,
+  bracketMatching, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting,
 } from '@codemirror/language';
 import { python, localCompletionSource } from '@codemirror/lang-python';
 import {
@@ -24,6 +24,7 @@ import {
   defaultKeymap, history, historyKeymap, indentLess, indentMore, indentWithTab,
 } from '@codemirror/commands';
 import { MONO } from './mono.js';
+import { CODE_TOKENS } from '#kernel/client/ui/codeTokens.js';
 
 export const EDITOR_FONT_PX = 16;
 const FONT = `${EDITOR_FONT_PX}px`;
@@ -161,6 +162,9 @@ export const EDITOR_THEME = {
 };
 const theme = EditorView.theme(EDITOR_THEME, { dark: false });
 
+// U6（代码展示统一高亮规格 §3）：语法配色走 --code-* 令牌，与静态的 <CodeView> 用同一张 token 表（kernel/client/ui/codeTokens.js）
+export const CODE_HIGHLIGHT = HighlightStyle.define(CODE_TOKENS.map(({ name, tag }) => ({ tag, color: `var(--code-${name})` })));
+
 // 外部（受控 value）写入的事务打这个标记：不回调 onChange
 const External = Annotation.define();
 
@@ -206,7 +210,7 @@ export default function Editor({ value = '', onChange, onRun, readOnly = false, 
           bracketMatching(),
           closeBrackets(),
           python(),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          syntaxHighlighting(CODE_HIGHLIGHT),
           indentUnit.of('    '),
           EditorState.tabSize.of(4),
           autocompletion({ override: completionSources(() => cb.current.extra) }),

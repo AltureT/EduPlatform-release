@@ -5,21 +5,30 @@
 //                        自动记录的字段不动；载荷可带 stale: true（代码在最近一次运行后改过），写进 final.stale
 //   teacher:feature { name | null }：把某生的图与代码投到大屏（perClass.featured）；该生须已有记录；null 取消
 //   teacher:feature-next {}：在出过图的学生里按首次出图（firstImageAt）先后轮换到下一位（当前不在其中则从第一位开始）
+//   P6（代码段教学功能规格 §2.2），有 solution 时注册：
+//   teacher:show-solution { on }：只写 perClass.showSolution 布尔（大屏显示 / 隐藏参考答案，参考答案本身只在教师端 options 里）
+//   teacher:publish-solution { on }：on → perClass { solution, solutionPublishedAt }（学生题目栏出现"参考答案"面板）；off → 两者清为 null
+//   有 solution 时，公布中到达的 student:data-submit 写 afterSolution: true（其它情况不写，撤回后历史标记保留）；公布中到达的 student:data-final 写 final.afterSolution: true
 import { shape } from '#kernel/server/schema.js';
 import { recordShape, recordShapeWith } from '#components/sandbox/record-shape.js';
 import { everImage, hasImage } from './primitive.config.js';
 
-export function register(ctx) {
+export function register(ctx, options) {
+  const withSolution = !!options?.solution;
+  const published = () => ctx.data.getClass()?.solutionPublishedAt != null;
+
   ctx.on('student:data-submit', recordShape, (socket, p, actor) => {
     const now = Date.now();
     const first = hasImage(p) && ctx.data.get(actor.name)?.firstImageAt == null ? { firstImageAt: now } : {};
-    ctx.data.set(actor.name, { ...p, submittedAt: now, ...first });
+    const mark = withSolution && published() ? { afterSolution: true } : {};
+    ctx.data.set(actor.name, { ...p, submittedAt: now, ...first, ...mark });
   });
 
   ctx.on('student:data-final', recordShapeWith({ stale: 'optional:boolean' }), (socket, p, actor) => {
     const now = Date.now();
     const final = { code: p.code, stdout: p.stdout, error: p.error ?? null, images: p.images, tests: p.tests ?? null, at: now };
     if (p.stale === true) final.stale = true;
+    if (withSolution && published()) final.afterSolution = true;
     ctx.data.set(actor.name, { final, finalAt: now });
   });
 
@@ -38,4 +47,15 @@ export function register(ctx) {
     const i = list.indexOf(ctx.data.getClass().featured ?? null);
     ctx.data.setClass({ featured: list[(i + 1) % list.length] });
   });
+
+  if (withSolution) {
+    ctx.on('teacher:show-solution', shape({ on: 'boolean' }), (socket, p) => {
+      ctx.data.setClass({ showSolution: p.on });
+    });
+    ctx.on('teacher:publish-solution', shape({ on: 'boolean' }), (socket, p) => {
+      ctx.data.setClass(p.on
+        ? { solution: options.solution, solutionPublishedAt: Date.now() }
+        : { solution: null, solutionPublishedAt: null });
+    });
+  }
 }

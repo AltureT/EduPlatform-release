@@ -8,6 +8,9 @@
 // - P3：split 的 ratio（Main : Side，缺省 '3:2'）；窄屏的学生视图（外壳 PageStageContext.view === 'student'，含镜像）里
 //   Side 排在 Main 之上并可折叠：顶部一行"<sideLabel> ▾ / ▸"（sideLabel 缺省"题目"），缺省展开，折叠状态记在 sessionStorage（键 page-side:<阶段 id>）；
 //   宽屏与外壳页面（登录页等）不变。换位用带 key 的子节点，Main 不重新挂载
+// - P5（代码段布局与回看规格 §4）：split 的 side='right'（缺省）| 'left'：left 时宽屏顺序 [Side, Main]，传给 Split 的 ratio 反转
+//   （ratio 写的仍是 Main : Side）；窄屏顺序不变。resizable 透传给 Split，storageKey 由 Page 生成：
+//   page-split:<lessonId>:<config.primitive ?? config.id>（lessonId 由外壳经 PageStageContext 提供；拿不到就不带 storageKey，只在内存里记）
 // - focus：Main 水平居中、最大宽 960，内容顶对齐放在可见面板里；教师演示视图保持纵向居中、不加面板（规格 v0.2.1）；
 //   U4：面板里没有 <Fill> 时按内容高，有 <Fill> 时撑满
 // - table 模板在 narrow 时 Side 收进操作条上 "推荐 ▾" 打开的底部抽屉；没有 Page.Side 时不渲染 300 px 空侧区
@@ -184,7 +187,25 @@ function AsideRegion({ children }) {
   );
 }
 
-export default function Page({ template, title, hint, ratio = '3:2', sideLabel = '题目', children, ...rest }) {
+// 'a:b' → 'b:a'（认不出的原样返回，由 Split 按 1:1 处理）
+function reverseRatio(ratio) {
+  const m = /^\s*([^:\s]+)\s*:\s*([^:\s]+)\s*$/.exec(String(ratio ?? ''));
+  return m ? `${m[2]}:${m[1]}` : ratio;
+}
+
+// 拖宽比例的记忆键：原语段按原语类型（同类段共用一份宽度），自写段按阶段 id；没有 lessonId / 阶段信息时不记
+function splitKeyOf(stageCtx) {
+  const lessonId = stageCtx && stageCtx.lessonId;
+  const cfg = stageCtx && stageCtx.config;
+  if (lessonId == null || lessonId === '' || !cfg) return undefined;
+  const part = cfg.primitive ?? cfg.id;
+  if (part == null || part === '') return undefined;
+  return `page-split:${lessonId}:${part}`;
+}
+
+export default function Page({
+  template, title, hint, ratio = '3:2', side = 'right', resizable = false, sideLabel = '题目', children, ...rest
+}) {
   const p = pickProps(rest, 'Page');
   const stageCtx = useContext(PageStageContext);
   const sink = useContext(ActionSinkContext);
@@ -244,9 +265,16 @@ export default function Page({ template, title, hint, ratio = '3:2', sideLabel =
     const sideEl = showSide
       ? <SideRegion key="side" empty={sideEmpty} fold={foldable ? { open: sideOpen, toggle: toggleSide } : null} label={sideLabel}>{r.side}</SideRegion>
       : null;
+    // side="left"：宽屏 [Side, Main]、ratio 反转；窄屏顺序不变（学生视图 Side 在上、可折叠，其余 Main 在上）
+    const sideFirst = side === 'left' && !narrow;
     body = (
-      <Split ratio={ratio} single={!showSide}>
-        {foldable ? [sideEl, mainEl] : [mainEl, sideEl]}
+      <Split
+        ratio={sideFirst ? reverseRatio(ratio) : ratio}
+        single={!showSide}
+        resizable={!!resizable}
+        storageKey={resizable ? splitKeyOf(stageCtx) : undefined}
+      >
+        {foldable || sideFirst ? [sideEl, mainEl] : [mainEl, sideEl]}
       </Split>
     );
   } else if (t === 'table') {

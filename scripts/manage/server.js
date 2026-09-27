@@ -11,13 +11,15 @@
 //   M4：课程页接口 /api/lessons/overview、/templates、/template.{docx,md}、POST /api/lessons（新建）、
 //     /api/lessons/:scope/:name/{current,draft,open,opening}、DELETE /api/lessons/:scope/:name（lesson-admin.js）；
 //     openFolder(dir) 与 maxDraftBytes 可注入（测试用）
+//   K7：GET /api/settings 多一项 platformFiles（框架自描述规格 §4）：{ checked, version, builtAt?, total?, changes?, modified?, missing?, added? }
+//     ——版本.json 的 protected 清单与本机平台文件比对（三个数组各最多 PLATFORM_LIST_MAX 条）；没有 版本.json 时 checked: false、version 取 package.json
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings } from './env-file.js';
+import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings, downloadEnv } from './env-file.js';
 import { listLessonChoices, readLesson, lessonDir } from './lessons.js';
 import { createPlatform, checkRequires } from './process.js';
 import { lanAddresses, probePort } from './net.js';
@@ -28,10 +30,31 @@ import * as roster from './roster.js';
 import { checkLessonInWorker } from '../lib/check-in-worker.js';
 import * as lessonAdmin from './lesson-admin.js';
 import { readUpload } from './upload.js';
+import { checkPlatformFiles } from '../lib/platform-files.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, 'public');
 const userError = (message, status = 400) => Object.assign(new Error(message), { status, expose: true });
+export const PLATFORM_LIST_MAX = 20;
+
+// K7：设置页"版本"一行（平台文件完好 / 有 N 处改动）
+export function platformFilesInfo(root) {
+  const r = checkPlatformFiles(root);
+  let version = r.version;
+  if (!version) {
+    try {
+      version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version ?? null;
+    } catch {
+      version = null;
+    }
+  }
+  if (!r.checked) return { checked: false, version };
+  const cut = (a) => a.slice(0, PLATFORM_LIST_MAX);
+  return {
+    checked: true, version, builtAt: r.builtAt, total: r.total, changes: r.changes,
+    modified: cut(r.modified), missing: cut(r.missing), added: cut(r.added),
+  };
+}
 
 function tokenOk(given, token) {
   if (typeof given !== 'string' || !given) return false;
@@ -201,7 +224,8 @@ export function createManageServer({
   function startFetch() {
     if (fetchState.running) throw userError('已经在下载了，请稍候', 409);
     const cmd = fetchCommand ?? [process.execPath, path.join(root, 'scripts', 'fetch-pyodide.mjs')];
-    const child = spawn(cmd[0], cmd.slice(1), { cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    // .env 里的 RUNTIME_ZIP_URL / PYODIDE_MIRROR / PYPI_MIRROR / FONT_URL 传给下载脚本（国内镜像与 Gitee 同步规格 §4）
+    const child = spawn(cmd[0], cmd.slice(1), { cwd: root, env: downloadEnv(root), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     Object.assign(fetchState, { running: true, child, lines: [], result: null });
     const onLine = (line) => {
       fetchState.lines.push(line);
@@ -285,6 +309,7 @@ export function createManageServer({
       // Linux 非 root 绑定 < 1024 需要权限；macOS（10.14 起）与 Windows 不需要
       lowPortNeedsAdmin: process.platform === 'linux' && (typeof process.getuid !== 'function' || process.getuid() !== 0),
       pendingRestart: platform.pendingRestart(),
+      platformFiles: platformFilesInfo(root),
     });
   });
 

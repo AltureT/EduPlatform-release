@@ -7,6 +7,7 @@ import {
   splitAddresses, stateLabel, pickLesson, classroomLesson, wizardBackSteps,
   checkSummary, checkNotice, checkItems, checkReportText,
   lessonCardStatus, lessonCardMeta, draftNote, lessonCardOps, uploadCheck, DRAFT_EXTS, LESSON_TEXT, lessonName,
+  platformFilesStatus,
 } from './ui-logic.js';
 
 // ===== 访问凭据：从地址栏 t 取出后存 sessionStorage，并从地址栏移除 =====
@@ -714,6 +715,15 @@ async function loadSettings() {
   f.AI_MODEL.value = s.values.AI_MODEL;
   f.AI_API_KEY.value = '';
   setText('#key-current', s.values.AI_API_KEY ? `当前密钥：${s.values.AI_API_KEY}` : '当前没有密钥');
+  $('#f-runtime-url').value = s.values.RUNTIME_ZIP_URL ?? '';
+  if (s.values.RUNTIME_ZIP_URL) $('#s-py-source').open = true;
+  // K7：版本与平台文件是否被改过（改动清单只放 title）
+  const pf = platformFilesStatus(s.platformFiles);
+  setText('#s-version', pf.version);
+  setText('#s-pf-state', pf.label);
+  $('#s-pf-state').title = pf.title;
+  $('#s-pf-dot').className = `dot ${pf.dot}`;
+  $('#s-pf-help').hidden = !pf.changed;
   const sel = f.LESSON_CONFIG;
   sel.textContent = '';
   const cur = s.values.LESSON_CONFIG;
@@ -777,6 +787,21 @@ $('#settings-form').addEventListener('submit', (e) => {
   };
   if (f.AI_API_KEY.value !== '') patch.AI_API_KEY = f.AI_API_KEY.value.trim();
   saveSettings(patch);
+});
+// Python 运行时卡片的"下载源（高级）"：只写 RUNTIME_ZIP_URL，下次下载时生效，不影响平台（不提示重启）
+$('#s-runtime-save').addEventListener('click', async () => {
+  const msg = $('#s-runtime-msg');
+  const err = $('[data-err="RUNTIME_ZIP_URL"]');
+  err.textContent = '';
+  try {
+    await api('/api/settings', { method: 'PUT', body: { RUNTIME_ZIP_URL: $('#f-runtime-url').value.trim() } });
+    msg.className = 'msg';
+    msg.textContent = '已保存，下次下载时生效。';
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.data?.errors ? '地址需要修改，见红字提示' : e.message;
+    err.textContent = e.data?.errors?.RUNTIME_ZIP_URL ?? '';
+  }
 });
 $('#clear-key').addEventListener('click', async () => {
   if (!(await confirmDialog('清空后，用到 AI 的功能将无法使用，需要重新填写密钥。', '清空密钥'))) return;

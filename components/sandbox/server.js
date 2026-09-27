@@ -114,13 +114,7 @@ const testsShape = shape({
 });
 export function statusShape(payload) {
   const p = baseStatus(payload);
-  if (p.tests != null) {
-    try {
-      testsShape(p.tests);
-    } catch (err) {
-      throw new Error(`tests.${err.message}`);
-    }
-  }
+  if (p.tests != null) testsShape(p.tests, 'tests');   // K5：路径前缀交给 shape()
   return p;
 }
 

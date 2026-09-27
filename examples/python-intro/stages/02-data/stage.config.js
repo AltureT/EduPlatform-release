@@ -29,6 +29,7 @@ export default {
   primitive: null,
   reviewInteractive: false,
   layout: 'split',             // 页面样式（契约 v0.7）：focus | split | tiles | table | stack
+  coach: true,                 // AI 助手：学生卡住时可以问 AI 要提示（只给提示，不给答案）
 
   sandbox: {
     packages: ['pandas', 'matplotlib'],

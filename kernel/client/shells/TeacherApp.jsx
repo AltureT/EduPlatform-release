@@ -1,6 +1,6 @@
 // 教师端外壳（规格 §9.2；v0.7 界面整理规格 §2.2）：!token || !ready → 登录；否则 <Shell role="teacher">：
 // - 顶栏：品牌 + 阶段导航（narrow 折叠为 "第 N 段 · 名称 ▾" 下拉）+ 组件 teacherToolbar（wide）+ LIVE
-// - 横幅区：阶段清单不一致 / 推进受阻原因 / 回看
+// - 横幅区：服务端拒绝（error:validation，K5，4 秒后消失）/ 阶段清单不一致 / 推进受阻原因 / 回看
 // - 内容：课前页、谢幕、阶段演示视图（阶段自己的 <Page>，缺省 focus）或统计视图（外壳套 table 模板：
 //   Main = TeacherStats，Side = 组件 teacherSidebar；narrow 时侧栏收进操作条 "推荐 ▾" 底部抽屉）
 // - 操作条：左侧 演示 / 统计切换（narrow 用短文案）、暂停更新（统计视图，或统计暂停中的任何视图）、阶段 Page.Actions
@@ -223,6 +223,7 @@ function TeacherShell() {
   const viewMode = coreTeacherStore((s) => s.viewMode);
   const setViewMode = coreTeacherStore((s) => s.setViewMode);
   const advanceError = coreTeacherStore((s) => s.advanceError);
+  const validationError = coreTeacherStore((s) => s.validationError);
   const advance = coreTeacherStore((s) => s.advance);
   const stages = coreTeacherStore((s) => s.stages);
   const lesson = coreTeacherStore((s) => s.lesson);
@@ -238,6 +239,19 @@ function TeacherShell() {
   const closeMore = useCallback(() => setMoreOpen(false), []);
 
   useLessonChrome(lesson);
+
+  // K5：服务端拒绝（error:validation）→ 横幅区一句话提示，4 秒后消失（与学生端 StudentApp 一致）
+  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    // validationError 被清空（classroom:reset）→ 提示立刻消失，不等 4 秒
+    if (!validationError || !validationError.message) {
+      setToast(null);
+      return undefined;
+    }
+    setToast(validationError.message);
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [validationError]);
 
   // 未登录也先连上，拿到 classroom:state（品牌）；有 token 时 connect 内部发 teacher:join
   useEffect(() => {
@@ -319,6 +333,11 @@ function TeacherShell() {
   );
 
   const banner = [
+    toast && (
+      <div key="toast" data-testid="validation-error" role="alert" style={{ ...bannerBase, background: 'var(--bad-soft)', color: 'var(--bad)', fontWeight: 600 }}>
+        {toast}
+      </div>
+    ),
     mismatch && (
       <div key="mismatch" data-testid="stage-mismatch" role="alert" style={{ ...bannerBase, background: 'var(--warn-soft)', color: 'var(--warn)', fontWeight: 600 }}>
         {STAGE_MISMATCH_TEXT}

@@ -8,10 +8,12 @@ export default {
   stages: ['01-hello', '02-data', '03-tests', '04-site'],
   curtain: { label: '总结', override: null },
   // 代码沙盒（代码沙盒组件规格 §4）：学生 join 后空闲时预载核心 + pandas / matplotlib；Flask 轮子一并预载
+  // AI 助手（coach 组件规格 §7）：02-data、03-tests 写了 coach: true；设置页没填 AI 接口时学生端不出现入口
   components: [
     'mirror',
     'share',
     { id: 'sandbox', packages: ['pandas', 'matplotlib'], flask: true },
     'report',
+    'coach',
   ],
 };

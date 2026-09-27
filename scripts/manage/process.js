@@ -22,7 +22,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadComponents } from '../../kernel/server/component-loader.js';
-import { effectiveEnv } from './env-file.js';
+import { effectiveEnv, platformEnv } from './env-file.js';
 import { readLesson } from './lessons.js';
 import { needsBuild, build, pipeLines } from './build.js';
 import { probePort, suggestPort } from './net.js';
@@ -336,7 +336,7 @@ export function createPlatform({
       await sleep(250);
     }
     if (abort) return { ok: false, error: null };
-    startedEnv = JSON.stringify(effectiveEnv(root));
+    startedEnv = JSON.stringify(platformEnv(root));
     set({ state: 'running', port, startedAt: Date.now(), lesson: lessonTitle, lessonConfig: fileEnv.LESSON_CONFIG });
     log(`[manage] 平台已启动，端口 ${port}`);
     return { ok: true };
@@ -427,7 +427,7 @@ export function createPlatform({
   // 运行中且 .env 与启动时不同 → 有改动未生效
   function pendingRestart() {
     if (!startedEnv || st.state !== 'running') return false;
-    return JSON.stringify(effectiveEnv(root)) !== startedEnv;
+    return JSON.stringify(platformEnv(root)) !== startedEnv; // 只影响下载的键（DOWNLOAD_KEYS）不算
   }
 
   return {

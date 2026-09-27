@@ -1,5 +1,5 @@
 // useComponent(id)（规格 v0.5 §2.3，公开导出）
-// 返回 { options, role, me, lesson, isEnabledFor, slice, setLocal, send, data, stageData, authFetch, currentStage, classEpoch }：
+// 返回 { options, role, me, lesson, isEnabledFor, slice, setLocal, send, data, stageData, authFetch, currentStage, viewedStage, classEpoch }：
 // - role 由外壳的 KernelRoleContext 决定；me 形状同契约 §四（教师端 null）；lesson = { id, title, glyph }
 // - isEnabledFor(stageId)：prelogin / curtain 恒为 true；否则组件已打开且（stages 为 null 或包含该阶段）
 // - send：教师端只放行 `<id>:t-`，学生端只放行 `<id>:s-`，否则抛错
@@ -8,6 +8,8 @@
 // - authFetch：教师端带 Authorization: Bearer <token> 的 fetch；学生端调用即抛错
 // - K2（v0.6）currentStage = { id, index }：本端 core store 的 stage / stageIndex（教师端是当前阶段，不是查看的阶段）；
 //   classEpoch：学生端来自 coreStudentStore；教师 store 有意不保存它，教师端恒为 null
+// - K5 viewedStage = { id, index, isLive }：学生端 = 正在看的段（回看时 isLive false，与 StudentApp 的回看判定一致）；
+//   教师端 = 正在查看的段（viewedStageIndex），与槽位 props 的 stageId / isLive 同一来源
 import { useCallback, useMemo } from 'react';
 import { socket } from '../socket.js';
 import { coreStudentStore } from '../stores/coreStudentStore.js';
@@ -43,10 +45,27 @@ export function useComponent(id) {
   const teacherStage = coreTeacherStore((s) => s.stage);
   const teacherStageIndex = coreTeacherStore((s) => s.stageIndex);
   const studentEpoch = coreStudentStore((s) => s.classEpoch);
+  const studentViewed = coreStudentStore((s) => s.viewedStageIndex);
+  const teacherViewed = coreTeacherStore((s) => s.viewedStageIndex);
+  const studentStages = coreStudentStore((s) => s.stages);
+  const teacherStages = coreTeacherStore((s) => s.stages);
 
   const stageIdNow = (role === 'teacher' ? teacherStage : studentStage) ?? 'prelogin';
   const stageIndexNow = (role === 'teacher' ? teacherStageIndex : studentStageIndex) ?? 0;
   const currentStage = useMemo(() => ({ id: stageIdNow, index: stageIndexNow }), [stageIdNow, stageIndexNow]);
+
+  // 学生端回看判定同 StudentApp（viewed ≠ 当前且 ≥ 1）；教师端同 TeacherApp（viewed ≠ 当前）
+  const viewedRaw = (role === 'teacher' ? teacherViewed : studentViewed) ?? stageIndexNow;
+  const reviewing = role === 'teacher' ? viewedRaw !== stageIndexNow : viewedRaw !== stageIndexNow && viewedRaw >= 1;
+  const viewedIndex = reviewing ? viewedRaw : stageIndexNow;
+  const stageList = role === 'teacher' ? teacherStages : studentStages;
+  const viewedId = reviewing
+    ? (Array.isArray(stageList) && stageList[viewedIndex] ? stageList[viewedIndex].id ?? null : null)
+    : stageIdNow;
+  const viewedStage = useMemo(
+    () => ({ id: viewedId, index: viewedIndex, isLive: !reviewing }),
+    [viewedId, viewedIndex, reviewing],
+  );
 
   const lessonSrc = role === 'teacher' ? teacherLesson : studentLesson;
   const lesson = useMemo(
@@ -107,6 +126,7 @@ export function useComponent(id) {
     stageData,
     authFetch,
     currentStage,
+    viewedStage,
     classEpoch: role === 'teacher' ? null : studentEpoch ?? null,
   };
 }

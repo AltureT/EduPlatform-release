@@ -3,11 +3,14 @@
 // 用法见同目录 README.md。defaults 每项是 (options) => 值 的工厂（契约 v0.8 §五）。
 import { shape } from '#kernel/server/schema.js';
 import { declarativeGate, validateGateSpec } from '../_shared/gate.js';
+import { validateTaskItem } from '../_shared/taskItem.js';
 import { errorHead, finalOf, hasTestsIn, ran, submitted, testsPassed, testsText } from './record.js';
 
 export const DEFAULT_STARTER = "# 在这里写你的代码\n\n\nif __name__ == '__main__':\n    pass\n";
 const IDLE_MS = 8 * 60_000;
 const MAX_REQUIREMENTS = 10;
+// P6（代码段教学功能规格 §3）：requirements 条目可写 { text, hint }，hint 1–600 字
+const REQ_HINT_MAX = 600;
 const REPORT_CODE_CHARS = 2000;
 // starter + tests + files 按 JSON 转义后的 UTF-8 长度合计上限（它们随 options 与 sandbox 经 classroom:state 下发）
 export const CONTENT_MAX_BYTES = 200 * 1024;
@@ -21,18 +24,51 @@ const validRelPath = (p) => typeof p === 'string' && p !== '' && !p.startsWith('
   && p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
 const TEST_NAME_RE = /^[A-Za-z0-9_]+\.py$/;
 
+const STARTERS_MIN = 2;
+const STARTERS_MAX = 4;
+const LABEL_MAX = 12;
+const STARTER_MAX = 20000;
+
+// P6（代码段教学功能规格 §4.1）：starter 写成数组 [{ label: 1–12 字, code }]（2–4 份，label 不重复；code 可 { from }，已读成文本）
+function normalizeStarters(list) {
+  if (list.length < STARTERS_MIN || list.length > STARTERS_MAX) {
+    throw new Error(`starter 写成数组时要 ${STARTERS_MIN}–${STARTERS_MAX} 份（每份 { label, code }），现在 ${list.length} 份`);
+  }
+  const seen = new Set();
+  return list.map((s, i) => {
+    if (!isPlainObject(s)) throw new Error(`starter[${i}] 必须是 { label, code }`);
+    const extra = Object.keys(s).filter((k) => k !== 'label' && k !== 'code');
+    if (extra.length > 0) throw new Error(`starter[${i}] 不认识的键 ${extra.join(', ')}（可用：label、code）`);
+    if (typeof s.label !== 'string' || s.label.trim() === '' || s.label.length > LABEL_MAX || /[\u0000-\u001f\u007f]/.test(s.label)) {
+      throw new Error(`starter[${i}].label 必须是 1–${LABEL_MAX} 字（不含换行等控制字符）`);
+    }
+    if (seen.has(s.label)) throw new Error(`starter[${i}].label 与前面重复（每份的名字要不同）`);
+    seen.add(s.label);
+    if (typeof s.code !== 'string') throw new Error(`starter[${i}].code 必须是文本（或 { from } 引用）`);
+    if (s.code.length > STARTER_MAX) throw new Error(`starter[${i}].code 超过 ${STARTER_MAX} 字`);
+    return { label: s.label, code: s.code };
+  });
+}
+
 // 报错信息里不写具体的示例路径（前端打包含本文件，构建插件的输出扫描会把与 options 相同的字符串当成泄露）。
-// 补缺省值；{ from } 已由加载器读成文本
+// 补缺省值；{ from } 已由加载器读成文本。
+// P6：starter 为数组时统一成 starters: [{ label, code }]（内部字段，随 options 下发学生），starter 取第一份的 code
+// （defaults.sandbox 仍给 sandbox 组件一个字符串）；字符串写法 starters 为 undefined。stage.config.js 里不能直接写 starters。
 export function normalize(raw) {
+  if (raw && Object.hasOwn(raw, 'starters')) throw new Error('starters 由 starter 数组生成，不能在 stage.config.js 里写（多份起始代码写成 starter: [{ label, code }, …]）');
   const o = { packages: [], starter: DEFAULT_STARTER, idleAlertMs: IDLE_MS, ...raw };
+  if (Array.isArray(o.starter)) {
+    o.starters = normalizeStarters(o.starter);
+    o.starter = o.starters[0].code;
+  }
   if (o.gate === undefined) o.gate = hasTestsIn(o) ? { testsPassed: 'all', soft: true } : { ran: 0.7, soft: true };
   return o;
 }
 
 const baseShape = shape({
   prompt: 'string:1-4000',
-  requirements: 'optional:array:string',
   starter: 'string:0-20000',
+  starters: 'optional:array:object',
   packages: 'array:string',
   files: 'optional:object',
   tests: 'optional:object',
@@ -41,13 +77,12 @@ const baseShape = shape({
 });
 
 function validate(o) {
-  const { gate, ...rest } = o;
+  const { gate, requirements, ...rest } = o;
   baseShape(rest);
-  const reqs = o.requirements ?? [];
+  if (requirements !== undefined && !Array.isArray(requirements)) throw new Error('requirements 必须是数组（每项是字符串或 { text, hint }）');
+  const reqs = requirements ?? [];
   if (reqs.length > MAX_REQUIREMENTS) throw new Error(`requirements 最多 ${MAX_REQUIREMENTS} 条`);
-  reqs.forEach((r, i) => {
-    if (r.trim() === '' || r.length > 200) throw new Error(`requirements[${i}] 必须是 1–200 字`);
-  });
+  reqs.forEach((r, i) => validateTaskItem('requirements', r, i, REQ_HINT_MAX));
   for (const [p, content] of Object.entries(o.files ?? {})) {
     if (!validRelPath(p)) throw new Error(`files 的路径 ${JSON.stringify(p)} 不合法（相对路径，不含 ..）`);
     if (typeof content !== 'string') throw new Error(`files[${JSON.stringify(p)}] 必须是文本（或 { from } 引用）`);
@@ -56,7 +91,9 @@ function validate(o) {
     if (!TEST_NAME_RE.test(name)) throw new Error(`tests 的文件名 ${JSON.stringify(name)} 不合法（字母、数字、下划线，以 .py 结尾）`);
     if (typeof src !== 'string') throw new Error(`tests[${JSON.stringify(name)}] 必须是文本（或 { from } 引用）`);
   }
-  const bytes = [o.starter, ...Object.values(o.tests ?? {}), ...Object.values(o.files ?? {})]
+  // P6：多份起始代码时每份都算（starter 就是第一份）
+  const starterTexts = Array.isArray(o.starters) ? o.starters.map((x) => x.code) : [o.starter];
+  const bytes = [...starterTexts, ...Object.values(o.tests ?? {}), ...Object.values(o.files ?? {})]
     .reduce((n, text) => n + escapedBytes(text), 0);
   if (bytes > CONTENT_MAX_BYTES) {
     throw new Error(`starter、tests、files 经转义后合计 ${kb(bytes)} KB，超过 ${kb(CONTENT_MAX_BYTES)} KB，请精简`);
@@ -89,6 +126,8 @@ export default {
   type: 'code',
   label: '程序题',
   layout: 'split',
+  // P5（代码段布局与回看规格 §6.1）：回看时可滚动、编辑、运行、测试（不记录、不能上交，由视图保证）；阶段写 reviewInteractive: false 可关
+  reviewInteractive: true,
   requiresComponents: ['sandbox'],
   // 保密选项：参考答案只发教师；sandbox 配置里没有它
   secretOptions: ['solution'],
@@ -109,8 +148,15 @@ export default {
       perStudent: {
         code: 'text', stdout: 'text', error: 'text', images: 'array', tests: 'object', runs: 'integer', ms: 'integer', submittedAt: 'integer',
         firstPassedAt: 'integer', final: 'object', finalAt: 'integer',
+        // P6（代码段教学功能规格 §2.2）：参考答案公布之后到达的记录带 afterSolution（最终稿写在 final.afterSolution）
+        afterSolution: 'boolean',
+        // P6（§4.3）：多份起始代码时学生选的那份的 label
+        starterLabel: 'text',
       },
-      perClass: { featured: 'text', ...(o.solution ? { showSolution: 'boolean' } : {}) },
+      perClass: {
+        featured: 'text',
+        ...(o.solution ? { showSolution: 'boolean', solution: 'text', solutionPublishedAt: 'integer' } : {}),
+      },
     }),
 
     alerts: (o) => {
@@ -150,7 +196,8 @@ export default {
         const which = fin ? '最终稿' : '最后一次';
         first = { label: '运行', value: `运行 ${record.runs} 次，${which}${head ? `报错：${head}` : '无报错'}${mark}` };
       }
-      return [first, { label: '我的代码', value: src?.code ? codeForReport(src.code) : '—' }];
+      // U6：有代码时 format: 'code'，报告里按代码块（<CodeView>）显示；没有代码仍是一行"—"
+      return [first, src?.code ? { label: '我的代码', value: codeForReport(src.code), format: 'code' } : { label: '我的代码', value: '—' }];
     },
   },
 };

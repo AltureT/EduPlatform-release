@@ -1,5 +1,12 @@
 // report：谢幕时为每个学生（含离线）按各阶段 summarize 约定生成个人报告
+// 条目 { label, value, cohort?, format? }（契约 §二）：U6 起 format 可为 'text'（缺省）| 'code'（客户端按代码块 <CodeView> 显示）；
+// 其它 format 值去掉（按文字显示），其余键原样
 import { shape } from '#kernel/server/schema.js';
+
+const FORMATS = new Set(['text', 'code']);
+const normItem = (it) => (it && typeof it === 'object' && 'format' in it && !FORMATS.has(it.format)
+  ? Object.fromEntries(Object.entries(it).filter(([k]) => k !== 'format'))
+  : it);
 
 function defaultSummarize(record, config) {
   const fields = Object.keys(config?.collect?.perStudent ?? {});
@@ -13,7 +20,7 @@ async function buildSection(stage, record, stageData) {
     items = typeof config?.summarize === 'function'
       ? await config.summarize(record, { perStudent: stageData.all(), perClass: stageData.getClass() })
       : defaultSummarize(record, config);
-    if (!Array.isArray(items)) items = [];
+    items = Array.isArray(items) ? items.map(normItem) : [];
   } catch (err) {
     items = [{ label: '生成失败', value: err?.message ?? String(err) }];
   }

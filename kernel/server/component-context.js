@@ -1,5 +1,6 @@
 // 组件上下文与组件分发器（规格 v0.5 §2.2）
-// createComponentContext({ id, options, io, state, db, log?, throttle?, stages?, anon?, actions? }) → cctx
+// createComponentContext({ id, options, io, state, db, log?, throttle?, stages?, anon?, actions?, ai? }) → cctx
+//   K6：cctx.ai 为内核统一 AI 接口（kernel/server/ai.js，缺省未配置实例），与阶段 ctx.ai 同一实例
 //   data 复用阶段的数据句柄（stageId = component:<id>），写入后内核照常发 stage:data-update / stage:my-data / stage:class-update
 //   anon 缺省为 state.anon（推进与重置时由 state 清空）；actions 缺省写 teacher_actions（stage_id = 当前阶段）
 // createComponentDispatcher({ contexts, log? }) → { handle(socket, event, payload), attach(socket), events() }
@@ -8,6 +9,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createLog } from './log.js';
 import { createDataHandle } from './stage-context.js';
+import { unconfiguredAI } from './ai.js';
 
 export const COMPONENT_HANDLERS = Symbol('componentHandlers');
 export const COMPONENT_HOOKS = Symbol('componentHooks');
@@ -16,7 +18,7 @@ export const componentStageId = (id) => `component:${id}`;
 
 const dispatchStore = new AsyncLocalStorage();
 
-export function createComponentContext({ id, options, io, state, db, log, throttle, stages, anon, actions }) {
+export function createComponentContext({ id, options, io, state, db, log, throttle, stages, anon, actions, ai }) {
   const onRe = new RegExp(`^${id}:(t|s)-[a-z-]+$`);
   const emitRe = new RegExp(`^${id}:[a-z-]+$`);
   const handlers = new Map();
@@ -111,7 +113,7 @@ export function createComponentContext({ id, options, io, state, db, log, thrott
     },
 
     stages: {
-      list: () => lessonStages.map((s) => ({ id: s.id, label: s.config?.label, config: s.config })),
+      list: () => lessonStages.map((s) => ({ id: s.id, label: s.config?.label, config: s.config, dir: s.dir })),   // K5：dir = 阶段目录绝对路径
       data: (sid) => readOnlyData(sid),
     },
 
@@ -125,6 +127,8 @@ export function createComponentContext({ id, options, io, state, db, log, thrott
     },
 
     anon: { code: (name) => (anon ?? state.anon).code(name) },
+
+    ai: ai ?? unconfiguredAI(),
 
     hooks: {
       onStageChange: (fn) => pushHook(hooks.stageChange, fn),

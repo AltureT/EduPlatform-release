@@ -1,11 +1,13 @@
 // 阶段上下文（规格 §6、契约 §三）
-// createStageContext({ io, state, db, stageId, config, log?, throttle? }) → ctx（register / gate / 钩子共用同一对象）
+// createStageContext({ io, state, db, stageId, config, log?, throttle?, ai?, anon? }) → ctx（register / gate / 钩子共用同一对象）
+//   K6：ctx.ai 为内核统一 AI 接口（kernel/server/ai.js，缺省未配置实例）；ctx.anon.code(name) 与 cctx.anon 同源（缺省 state.anon）
 // createDispatcher({ io, state, contexts }) → { handle(socket, event, payload), attach(socket), events() }
 // createDataHandle({ io, state, db, stageId, throttle }) → ctx.data（v0.5：组件上下文复用，stageId = component:<id>）
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createLog } from './log.js';
 import { createThrottle } from './throttle.js';
 import { saveSnapshot } from './persistence.js';
+import { unconfiguredAI } from './ai.js';
 
 export const HANDLERS = Symbol('stageHandlers');
 
@@ -79,7 +81,7 @@ export function createDataHandle({ io, state, db, stageId, throttle }) {
   };
 }
 
-export function createStageContext({ io, state, db, stageId, config, log, throttle }) {
+export function createStageContext({ io, state, db, stageId, config, log, throttle, ai, anon }) {
   const handlers = new Map();
   const prefix = `stage:${stageId}:`;
   const stageLog = log ?? createLog(stageId);
@@ -165,6 +167,12 @@ export function createStageContext({ io, state, db, stageId, config, log, thrott
     data: createDataHandle({ io, state, db, stageId, throttle }),
 
     log: stageLog,
+
+    // K6：统一 AI 接口（契约 §三"调 AI"）；与组件 cctx.ai 是同一实例
+    ai: ai ?? unconfiguredAI(),
+
+    // K6：匿名代号，与 cctx.anon 同源（推进 / 重置时由 state 清空）
+    anon: { code: (name) => (anon ?? state.anon).code(name) },
   };
   Object.defineProperty(ctx, HANDLERS, { value: handlers, enumerable: false });
   Object.defineProperty(ctx, 'config', { value: config, enumerable: false });

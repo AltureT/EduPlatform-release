@@ -15,6 +15,7 @@
 //   L1：checkSummary / checkNotice / checkItems / checkReportText：课程检查（check:lesson）的摘要、列表与"复制给 AI"的文本；
 //     errorActions 的 'check'（课程有问题，没启动）→ "复制给 AI" + "改好了，再启动"
 //   M4：lessonCardStatus / lessonCardMeta / draftNote / lessonCardOps / uploadCheck：课程页卡片（见文件末尾）
+//   K7：platformFilesStatus：设置页"版本"一行旁的"平台文件完好 / 有 N 处改动"（文件末尾）
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -117,15 +118,31 @@ export function pyodideStatus(py = {}) {
   return { label, dot, title, button, buttonTitle };
 }
 
-// 下载进度：scripts/fetch-pyodide.mjs 没有百分比输出，按它的阶段行估算（核心文件 → 扩展包 → 轮子 → 字体 → 完成）
+// 下载进度：按 scripts/fetch-pyodide.mjs 的输出行估算（国内镜像与 Gitee 同步规格 §4）
+//   "来源：…" 每换一个来源重新开始；整包来源按"整包 x / y MB（n%）"与"解压并校验…"；
+//   逐文件来源没有百分比输出，按阶段行估算（核心文件 → 扩展包 → 轮子 → 字体 → 完成）
+const SOURCE_LABEL = [
+  [/^国内镜像/, '正在从国内镜像下载…'],
+  [/^GitHub/, '正在从 GitHub 下载…'],
+  [/^本机文件/, '正在导入拷来的运行时…'],
+  [/^自定义地址/, '正在从设置的下载源下载…'],
+  [/^逐文件/, '正在逐个文件下载…'],
+];
 export function fetchProgress(lines = []) {
   let percent = 2;
   let label = '正在连接…';
   let closure = 0;
   let files = 0;
   for (const l of lines) {
+    const src = /^来源：(.+)$/.exec(l);
+    const zip = /^\s+整包 .*（(\d+)%）/.exec(l);
     const pk = /^包闭包 (\d+) 个/.exec(l);
-    if (/^Pyodide /.test(l)) [percent, label] = [10, '正在下载核心文件…'];
+    if (src) {
+      [percent, closure, files] = [2, 0, 0];
+      label = SOURCE_LABEL.find(([re]) => re.test(src[1]))?.[1] ?? '正在下载…';
+    } else if (zip) percent = Math.max(percent, Math.min(90, 3 + Math.round((87 * Number(zip[1])) / 100)));
+    else if (/^\s+解压并校验…/.test(l)) [percent, label] = [92, '正在解压并校验…'];
+    else if (/^Pyodide /.test(l)) [percent, label] = [10, '正在下载核心文件…'];
     else if (pk) {
       closure = Number(pk[1]) || 0;
       files = 0;
@@ -398,3 +415,18 @@ export const LESSON_TEXT = {
   copiedButton: '已复制 ✓',
   downloadFailed: '下载失败',
 };
+
+// K7（框架自描述规格 §4）：设置页"版本"一行旁的平台文件状态；pf = GET /api/settings 的 platformFiles
+//   → { version, label, dot, title, changed }；改动的文件清单只放 title
+export function platformFilesStatus(pf) {
+  const version = pf?.version ?? '—';
+  if (!pf?.checked) return { version, label: '开发版，不检查平台文件', dot: 'off', title: '平台文件夹里没有发布包带的版本记录', changed: false };
+  if (!pf.changes) return { version, label: '平台文件完好', dot: 'good', title: `共 ${pf.total ?? 0} 个平台文件，与发布包一致`, changed: false };
+  const lines = [
+    ...(pf.modified ?? []).map((f) => `改动 ${f}`),
+    ...(pf.missing ?? []).map((f) => `缺失 ${f}`),
+    ...(pf.added ?? []).map((f) => `多出 ${f}`),
+  ];
+  const more = pf.changes > lines.length ? [`……共 ${pf.changes} 处`] : [];
+  return { version, label: `有 ${pf.changes} 处改动`, dot: 'busy', title: [...lines, ...more].join('\n'), changed: true };
+}

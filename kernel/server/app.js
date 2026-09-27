@@ -1,7 +1,8 @@
 // 把一切接起来（规格 §5、§6）
-// createApp({ lessonPath, dbPath, componentsRoot?, vendorRoot?, distDir? }) → Promise<{ app, server, io, state, db, kernel, start(port), stop() }>
+// createApp({ lessonPath, dbPath, componentsRoot?, vendorRoot?, distDir?, ai? }) → Promise<{ app, server, io, state, db, kernel, ai, start(port), stop() }>
+//   K6：进程里只建一个 AI 实例（缺省 createAI() 读 process.env），经 createKernel 传给全部阶段与组件上下文
 //   K2（v0.6）：组件 static 的相对目录以 vendorRoot ?? 项目根 解析；组件 http 路由挂在 /api/c/<id>/
-// createKernel({ io, state, db, stages, registers, tokens, components? }) → socket 处理（可用 mockIo / mockSocket 单测）
+// createKernel({ io, state, db, stages, registers, tokens, components?, ai? }) → socket 处理（可用 mockIo / mockSocket 单测）；ai 缺省未配置
 // v0.5：组件在阶段之后加载与注册；组件钩子在 stage:change 广播后、classroom:reset 广播前依次调用
 import fs from 'node:fs';
 import http from 'node:http';
@@ -23,6 +24,7 @@ import { staticDir } from './static-dir.js';
 import { createExportRouter } from './export.js';
 import { createAdmin } from './admin.js';
 import { shape } from './schema.js';
+import { createAI, unconfiguredAI } from './ai.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST_DIR = path.join(PROJECT_ROOT, 'dist');
@@ -49,7 +51,7 @@ function withTimeout(fn, ms) {
 }
 
 export function createKernel({
-  io, state, db, stages, registers, tokens, components = [], log = createLog('kernel'), onLeaveTimeoutMs = 2000,
+  io, state, db, stages, registers, tokens, components = [], log = createLog('kernel'), onLeaveTimeoutMs = 2000, ai = unconfiguredAI(),
 }) {
   const throttle = createThrottle({
     windowMs: 100,
@@ -58,7 +60,7 @@ export function createKernel({
 
   const contexts = new Map();
   for (const s of stages) {
-    contexts.set(s.id, createStageContext({ io, state, db, stageId: s.id, config: s.config, throttle }));
+    contexts.set(s.id, createStageContext({ io, state, db, stageId: s.id, config: s.config, throttle, ai }));
   }
   // 注册期错误（非法事件名 / 保留名 / 重复）直接抛出，使启动失败
   for (const s of stages) {
@@ -71,7 +73,7 @@ export function createKernel({
   const componentContexts = new Map();
   for (const c of components) {
     componentContexts.set(c.id, createComponentContext({
-      id: c.id, options: c.options, io, state, db, throttle, stages,
+      id: c.id, options: c.options, io, state, db, throttle, stages, ai,
     }));
   }
   for (const c of components) {
@@ -349,6 +351,7 @@ export function createKernel({
   }
 
   return {
+    ai,
     throttle,
     contexts,
     dispatcher,
@@ -366,7 +369,7 @@ export function createKernel({
 }
 
 export async function createApp({
-  lessonPath, dbPath, tokens = authTokens, componentsRoot = DEFAULT_COMPONENTS_ROOT, vendorRoot, distDir = DIST_DIR,
+  lessonPath, dbPath, tokens = authTokens, componentsRoot = DEFAULT_COMPONENTS_ROOT, vendorRoot, distDir = DIST_DIR, ai = createAI(),
 }) {
   const log = createLog('server');
   const { lessonConfig, stages } = await loadLesson(lessonPath);
@@ -385,7 +388,7 @@ export async function createApp({
   const componentRouters = [];
   try {
     hydrate(state, db);
-    kernel = createKernel({ io, state, db, stages, registers, tokens, components });
+    kernel = createKernel({ io, state, db, stages, registers, tokens, components, ai });
     for (const c of components) {
       if (typeof c.http !== 'function') continue;
       const router = express.Router();
@@ -428,6 +431,7 @@ export async function createApp({
     state,
     db,
     kernel,
+    ai,
     start(port) {
       return new Promise((resolve, reject) => {
         server.once('error', reject);

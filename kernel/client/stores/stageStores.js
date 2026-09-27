@@ -117,6 +117,10 @@ function mergePrimitiveClient(base, prim, options, sandbox) {
     }
   };
   const eff = { ...base, options: options ?? null, layout: (prim.config && prim.config.layout) || 'focus' };
+  // P5：原语可给回看可交互的缺省（code / data-analysis 为 true），阶段写了以阶段为准（与服务端 mergePrimitiveConfig 同规则）
+  if (base.reviewInteractive === undefined && prim.config && typeof prim.config.reviewInteractive === 'boolean') {
+    eff.reviewInteractive = prim.config.reviewInteractive;
+  }
   if (sandbox && typeof sandbox === 'object' && !Array.isArray(sandbox)) eff.sandbox = sandbox;
   const collect = make('collect');
   if (collect !== undefined) eff.collect = collect;

@@ -9,6 +9,8 @@
 //   不计入 statsPending（镜像与分享要求实时）。
 // - advance(force)：回看时（viewedStageIndex !== stageIndex）不发；force 只认布尔 true，
 //   阶段视图经 useTeacherStage().advance 调用这里；send('teacher:advance') 会抛错（见 hooks/useStage.js）。
+// - K5：error:validation（ctx.reject / schema 失败发给教师 socket 的）写 validationError { event, message, at }，
+//   供 TeacherApp 在横幅区显示一句话、4 秒后消失（与学生端一致）；classroom:reset 清掉。
 import { create } from 'zustand';
 import { socket } from '../socket.js';
 import { runKernelHooks } from './kernelHooks.js';
@@ -71,6 +73,7 @@ export const coreTeacherStore = create((set, get) => ({
   components: [],
   lesson: EMPTY_LESSON,
   advanceError: null,
+  validationError: null,
   statsPaused: false,
   statsPending: 0,
   studentDetail: null,
@@ -345,8 +348,12 @@ function bindListeners(set, get) {
     set({ adminError: { action, message } });
   });
 
+  socket.on('error:validation', ({ event, message } = {}) => {
+    set({ validationError: { event, message, at: Date.now() } });
+  });
+
   socket.on('classroom:reset', (payload = {}) => {
-    set({ stageData: {}, liveStageData: {}, statsPaused: false, statsPending: 0, studentDetail: null, advanceError: null, subPhase: null });
+    set({ stageData: {}, liveStageData: {}, statsPaused: false, statsPending: 0, studentDetail: null, advanceError: null, validationError: null, subPhase: null });
     resetSlices();
     resetComponentSlices();
     runKernelHooks('reset', payload);

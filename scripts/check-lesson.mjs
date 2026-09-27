@@ -19,6 +19,15 @@
 //   7 保密：原语 secretOptions 的值（≥ 8 字的字符串）不得出现在阶段目录的 .jsx / STAGE.md 里
 //   8 UI 规则：阶段目录的 .jsx 过 check-ui.mjs 的 scanSource（同一进程）
 //   9 模拟片段：自写阶段缺 __tests__/simulate.js → 警告
+//   10 AI 助手（coach 组件规格 §2）：stage.config.js 顶层 coach 只能是 boolean 或 { intro: ≤ 60 字 }（否则错误）；
+//     写了 coach 为真而 lesson.config.components 没有 'coach' → 警告
+//   11 AI 接口（统一 AI 接口规格 §5，契约 §三"调 AI"）：lesson.config.js 与阶段目录的 .js / .jsx / .mjs（不含 __tests__）逐行查——
+//     出现 chat/completions、AI_BASE_URL / AI_API_KEY / AI_MODEL、process.env.AI、process.env.<任意>_(API_)KEY、Authorization 与 Bearer（同一文件）、sk- 密钥串、
+//     路径含 /v1 的 http(s) 地址 → 错误；客户端文件（.jsx，含 Student / TeacherDemo / TeacherStats / client.jsx）出现 ctx.ai / cctx.ai / ctx['ai'] → 错误；
+//     客户端文件 fetch('http…') 字面量直连外网 → 警告（/api/ 相对路径不算）
+//   12 平台文件（框架自描述规格 §4）：平台目录有 版本.json 且带 protected 时逐文件比对 sha256；改动 / 缺失 / 受保护目录下多出 → 一条警告
+//     "平台文件被改过：<第一个> 等 N 个（改动 a 个、缺失 b 个、多出 c 个）"（不挡启动）；没有 版本.json（开发仓库）跳过。
+//     平台目录缺省 = 本脚本所在的平台目录（platformRoot 可注入）；比对逻辑在 scripts/lib/platform-files.js
 //   另：TODO 占位（new:stage 的骨架）每个文件一条警告
 import fs from 'node:fs';
 import os from 'node:os';
@@ -33,6 +42,7 @@ import { STAGE_CARD_COLUMNS, parseStageCard } from './lib/stage-card.js';
 import {
   isPlainObject, toPosix, lineAt, findLine, stripComments, walkFiles, loadParseAst, syntaxErrorAt, moduleFacts,
 } from './lib/lesson-source.js';
+import { checkPlatformFiles, platformFilesWarning } from './lib/platform-files.js';
 
 export const LAYOUTS = ['focus', 'split', 'tiles', 'table', 'stack'];
 const VIEW_FILES = ['Student.jsx', 'TeacherDemo.jsx', 'TeacherStats.jsx'];
@@ -40,8 +50,23 @@ const SECRET_MIN = 8;
 // 审查 5：事件名后半段放宽（内核只要求 student: / teacher: 前缀，不限字符）
 const EVENT = '(?:student|teacher):[a-z0-9_:-]+';
 const COMPONENTS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'components');
+export const PLATFORM_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEXT_EXT = /\.(js|jsx|mjs|md|py|csv|txt|json)$/;
 const CONTRACT = '契约 docs/02-阶段模块契约.md';
+
+// 11 AI 接口：课程代码里不许出现的东西（每行报第一处；密钥本身不回显）
+export const AI_CODE_RULES = [
+  { re: /chat\/completions/, label: () => 'chat/completions' },
+  { re: /\bAI_(?:BASE_URL|API_KEY|MODEL)\b/, label: (m) => m[0] },
+  { re: /process\.env\.AI/, label: () => 'process.env.AI…' },
+  { re: /process\.env(?:\.|\?\.|\s*\[\s*['"`])[A-Za-z0-9_]*_(?:API_)?KEY\b/, label: () => 'process.env.…_KEY' },
+  { re: /\bsk-[A-Za-z0-9]{16,}/, label: () => '密钥串 sk-…' },
+  { re: /https?:\/\/[^\s'"`<>()]*\/v1/, label: () => '模型接口地址（…/v1）' },
+];
+export const AI_BEARER = { auth: /\bauthorization\b/i, bearer: /\bBearer\b/ };
+export const AI_IN_CLIENT = /\bc?ctx\s*(?:\??\.\s*ai\b|(?:\?\.)?\[\s*(['"`])ai\1\s*\])/;
+export const CLIENT_FETCH_HTTP = /\bfetch\s*\(\s*(['"`])https?:\/\//;
+const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在管理台'设置'页填，课程代码里不写";
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const readText = (f) => {
@@ -103,7 +128,9 @@ function componentChoices() {
 }
 
 function loaderFix(msg, primitive) {
-  const req = /(?:^|[：\s])([A-Za-z_$][\w$]*(?:\[\d+\])?(?:\.[A-Za-z_$][\w$]*)*): required\b/.exec(msg);
+  // K5：shape() 的缺键消息为"缺少字段 <键>"；旧英文"<键>: required"仍认（原语自己的校验函数可能照旧）
+  const req = /缺少字段 ([A-Za-z_$][\w$]*(?:\[\d+\])?(?:\.[A-Za-z_$][\w$]*)*)/.exec(msg)
+    ?? /(?:^|[：\s])([A-Za-z_$][\w$]*(?:\[\d+\])?(?:\.[A-Za-z_$][\w$]*)*): required\b/.exec(msg);
   if (req) return `在 options 里补上 ${req[1]}${primitive ? `（见 primitives/${primitive}/README.md 的 options 表）` : ''}`;
   for (const [re, fix] of LOADER_FIXES) {
     const m = re.exec(msg);
@@ -265,7 +292,7 @@ const UI_FIXES = {
 
 // ===== 主流程 =====
 export async function checkLesson(configPath, {
-  root = process.cwd(), primitivesRoot = DEFAULT_PRIMITIVES_ROOT, componentsRoot = COMPONENTS_ROOT,
+  root = process.cwd(), primitivesRoot = DEFAULT_PRIMITIVES_ROOT, componentsRoot = COMPONENTS_ROOT, platformRoot = PLATFORM_ROOT,
 } = {}) {
   const absConfig = path.resolve(root, configPath);
   const errors = [];
@@ -384,6 +411,8 @@ export async function checkLesson(configPath, {
     }
     todoCheck(absConfig, lessonSrc, warn);
   }
+  // 11 AI 接口：lesson.config.js
+  if (lessonSrc !== null) aiCheck(absConfig, lessonSrc, { client: false }, error, warn);
 
   const openComponents = isPlainObject(lessonConfig) ? componentIdsOf(lessonConfig) : [];
   const knownPrimitives = subdirs(primitivesRoot).filter((d) => !d.startsWith('_'));
@@ -418,6 +447,18 @@ export async function checkLesson(configPath, {
         error(e.file, findLine(e.src, /\bexport\s+default\b/) ?? findLine(e.src, /\bexport\b/) ?? 1,
           `stage.config.js 的写法不合规，页面构建会失败：${why}`,
           "改成 export default { id, label, primitive, options: {…} }（对象字面量），或 const cfg = {…}; export default cfg;（同文件顶层 const）；顶层不要用展开或计算属性名", 'build');
+      }
+    }
+
+    // coach（AI 助手，coach 组件规格 §2）：顶层 coach 为 boolean 或 { intro: ≤ 60 字 }；写了真值而课程没开组件 → 警告
+    if (cfg && cfg.coach !== undefined) {
+      const line = findLine(e.src, /^\s*['"]?coach['"]?\s*:/m);
+      if (!coachFieldOk(cfg.coach)) {
+        error(e.file, line, `coach 写成了 ${JSON.stringify(cfg.coach) ?? String(cfg.coach)}，只能是 true / false 或 { intro: '…' }（intro 不超过 ${COACH_INTRO_MAX} 字）`,
+          `改成 coach: true，或 coach: { intro: '卡住了？可以问 AI 要个提示' }（横幅区那一行的话，≤ ${COACH_INTRO_MAX} 字）；不要 AI 助手就删掉这一行`, 'coach');
+      } else if (cfg.coach !== false && !openComponents.includes('coach')) {
+        warn(e.file, line, `段 ${cfg.id ?? dir} 写了 coach，但课程没开 AI 助手`,
+          "lesson.config.js 的 components 加 'coach'", 'coach');
       }
     }
 
@@ -560,6 +601,11 @@ export async function checkLesson(configPath, {
       }
     }
 
+    // 11 AI 接口：阶段目录的代码文件（不含 __tests__）
+    for (const f of noTests.filter((x) => /\.(jsx?|mjs)$/.test(x))) {
+      aiCheck(at(f), readText(at(f)) ?? '', { client: f.endsWith('.jsx') }, error, warn);
+    }
+
     // 8 UI 规则（check-ui 同一套扫描）
     for (const f of noTests.filter((x) => x.endsWith('.jsx'))) {
       const src = readText(at(f)) ?? '';
@@ -572,7 +618,59 @@ export async function checkLesson(configPath, {
     for (const f of files.filter((x) => TEXT_EXT.test(x))) todoCheck(at(f), readText(at(f)), warn);
   }
 
+  // 12 平台文件改动（警告，不挡启动）
+  const pf = platformFilesWarning(checkPlatformFiles(platformRoot));
+  if (pf) warn(path.join(platformRoot, pf.first), null, pf.message, pf.fix, 'platform-files');
+
   return { ok: errors.length === 0, errors, warnings, lesson };
+}
+
+// coach 组件规格 §2：stage.config.js 顶层 coach
+export const COACH_INTRO_MAX = 60;
+export function coachFieldOk(v) {
+  if (typeof v === 'boolean') return true;
+  if (!isPlainObject(v)) return false;
+  const keys = Object.keys(v);
+  return keys.length === 1 && keys[0] === 'intro' && typeof v.intro === 'string' && v.intro.trim() !== ''
+    && Array.from(v.intro).length <= COACH_INTRO_MAX;
+}
+
+// 11 AI 接口（统一 AI 接口规格 §5）：逐行查；client 为真时另查 ctx.ai / cctx.ai 与 fetch 外网
+export function aiFindings(src, { client = false } = {}) {
+  const text = String(src ?? '');
+  const out = [];
+  const bearerFile = AI_BEARER.auth.test(text) && AI_BEARER.bearer.test(text);
+  text.split('\n').forEach((row, i) => {
+    const line = i + 1;
+    let hit = null;
+    for (const r of AI_CODE_RULES) {
+      const m = r.re.exec(row);
+      if (m) {
+        hit = r.label(m);
+        break;
+      }
+    }
+    if (!hit && bearerFile && (AI_BEARER.bearer.test(row) || AI_BEARER.auth.test(row))) hit = 'Authorization: Bearer';
+    if (hit) out.push({ level: 'error', line, kind: 'ai-code', hit });
+    if (client && AI_IN_CLIENT.test(row)) out.push({ level: 'error', line, kind: 'ai-client' });
+    if (client && CLIENT_FETCH_HTTP.test(row)) out.push({ level: 'warning', line, kind: 'client-fetch' });
+  });
+  return out;
+}
+
+function aiCheck(file, src, opts, error, warn) {
+  const base = path.basename(file);
+  for (const h of aiFindings(src, opts)) {
+    if (h.kind === 'ai-code') {
+      error(file, h.line, `第 ${h.line} 行：课程代码不能自己连 AI 接口或写密钥（这一行有 ${h.hit}）`, AI_FIX, 'ai');
+    } else if (h.kind === 'ai-client') {
+      error(file, h.line, `AI 只能在 server.js 里调：${base} 第 ${h.line} 行用了 ctx.ai`,
+        '视图发事件给本段 server.js，服务端 ctx.ai.chat 后写 ctx.data.set 或 emitToStudent，视图读记录显示（契约 §四）', 'ai');
+    } else {
+      warn(file, h.line, `学生端直接连外网（${base} 第 ${h.line} 行 fetch('http…')），机房常没外网，确认是否必要`,
+        '要用外部数据就放进阶段目录随课带上；要 AI 结果就发事件给 server.js 用 ctx.ai.chat；平台接口用 /api/ 开头的相对路径', 'client-fetch');
+    }
+  }
 }
 
 function todoCheck(file, src, warn) {

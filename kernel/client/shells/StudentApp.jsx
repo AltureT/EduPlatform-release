@@ -20,14 +20,15 @@ import { useLessonChrome } from './useLessonChrome.js';
 import { ComponentSlot, useStudentBanner } from './ComponentSlots.jsx';
 import { KernelRoleContext } from '../hooks/roleContext.js';
 
-function StageView({ entry, curtainOverride }) {
+// PageStageContext 带 lessonId：<Page resizable> 按课记拖宽比例（P5 规格 §4）
+function StageView({ entry, curtainOverride, lessonId = null }) {
   if (!entry) return null;
   if (entry.id === 'prelogin') return <StudentLogin />;
   if (entry.id === 'curtain') return <Curtain role="student" title={entry.label} overrideDir={curtainOverride} />;
   const Comp = entry.Student;
   if (!Comp) return null;
   return (
-    <PageStageContext.Provider value={{ view: 'student', config: entry.config }}>
+    <PageStageContext.Provider value={{ view: 'student', config: entry.config, lessonId }}>
       <Comp />
     </PageStageContext.Provider>
   );
@@ -79,7 +80,11 @@ function StudentShell() {
   // 服务端拒绝（error:validation）→ 横幅区一句话提示，4 秒后消失（"平台不说废话"允许的一句话错误提示）
   const [toast, setToast] = useState(null);
   useEffect(() => {
-    if (!validationError || !validationError.message) return undefined;
+    // validationError 被清空（classroom:reset）→ 提示立刻消失，不等 4 秒
+    if (!validationError || !validationError.message) {
+      setToast(null);
+      return undefined;
+    }
     setToast(validationError.message);
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
@@ -176,13 +181,13 @@ function StudentShell() {
         {/* live 阶段始终挂载，回看时隐藏以保留其本地状态 */}
         <div data-testid="live-view" style={{ ...paneStyle, display: isReviewing ? 'none' : 'flex' }}>
           <ActionSinkContext.Provider value={liveSink}>
-            <StageView entry={liveEntry} curtainOverride={curtainOverride} />
+            <StageView entry={liveEntry} curtainOverride={curtainOverride} lessonId={lesson.id} />
           </ActionSinkContext.Provider>
         </div>
         {isReviewing && reviewedEntry && (
           <div data-testid="review-view" inert={lockReview} style={paneStyle}>
             <ActionSinkContext.Provider value={reviewSink}>
-              <StageView entry={reviewedEntry} curtainOverride={curtainOverride} />
+              <StageView entry={reviewedEntry} curtainOverride={curtainOverride} lessonId={lesson.id} />
             </ActionSinkContext.Provider>
           </div>
         )}

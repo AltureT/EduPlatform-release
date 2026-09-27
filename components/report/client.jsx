@@ -2,6 +2,8 @@
 // 布局（界面整理规格 §2.3 / §3.5）：两个谢幕槽位是谢幕页（tiles 模板）里的格子——ReportView 返回若干 <Tile>
 // （Fragment，直接成为格子，不再嵌套 <Tiles>）；空态是一块标题为"个人报告"的 <Tile>；
 // 教师预览某生报告走内核 Overlay 的 panel 形态（预览里自己包一层 <Tiles>）
+// U6：条目 format === 'code'（值为字符串）时独立一行标签 + <CodeView size="sm" wrap>（左对齐、等宽、保留换行缩进、高亮；
+//   折行而不横向滚动——手机扫码看报告、打印时不裁掉），其它条目照旧
 import { useState } from 'react';
 import {
   useComponent,
@@ -9,6 +11,7 @@ import {
   Bar,
   Btn,
   Chip,
+  CodeView,
   ConfirmAdvanceBtn,
   Overlay,
   Row,
@@ -40,6 +43,14 @@ function CompareBar({ value, median }) {
 }
 
 function ReportItem({ item }) {
+  if (item.format === 'code' && typeof item.value === 'string') {
+    return (
+      <div data-report-code="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+        <span style={{ color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' }}>{item.label}</span>
+        <CodeView code={item.value} size="sm" wrap />
+      </div>
+    );
+  }
   const median = item.cohort?.median;
   const comparable = typeof item.value === 'number' && typeof median === 'number';
   return (

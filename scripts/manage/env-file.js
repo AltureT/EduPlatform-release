@@ -3,15 +3,19 @@
 //   writeEnv(root, patch)：逐行读取；已知键原位替换值（重复出现的键每一处都替换），缺失的已知键追加到末尾，其余行原样保留；未知键忽略
 //   ensureEnv(root, platform?)：.env 缺失时从 .env.example 生成（PORT：darwin / win32 取 80，linux 等取 3001；LESSON_CONFIG 取 examples/ 下第一门课，minimal 优先）
 //   maskSecret / settingsView / prepareSettingsPatch / validateSettings：设置页的读出与提交
+//   R3：RUNTIME_ZIP_URL（设置页"Python 运行时 → 下载源（高级）"）；downloadEnv(root) = 下载子进程的环境（.env 里非空的 DOWNLOAD_KEYS 盖上去）；
+//     platformEnv(root) = 去掉 DOWNLOAD_KEYS 的有效配置（process.js 判断"有改动未生效"用）
 import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 
 export const KNOWN_KEYS = [
-  'PORT', 'DB_PATH', 'TEACHER_PASSWORD', 'AUTH_TOKEN_FILE', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL',
+  'PORT', 'DB_PATH', 'TEACHER_PASSWORD', 'AUTH_TOKEN_FILE', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'RUNTIME_ZIP_URL',
 ];
 // 设置页可见、可改的键（DB_PATH / AUTH_TOKEN_FILE 保持 .env.example 默认，不展示）
-export const EDITABLE_KEYS = ['TEACHER_PASSWORD', 'PORT', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL'];
+export const EDITABLE_KEYS = ['TEACHER_PASSWORD', 'PORT', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'RUNTIME_ZIP_URL'];
+// 下载 Python 运行时用的键（国内镜像与 Gitee 同步规格 §4）：管理台起下载子进程时从 .env 传入；平台本身不用，改了不需要重启平台
+export const DOWNLOAD_KEYS = ['RUNTIME_ZIP_URL', 'PYODIDE_MIRROR', 'PYPI_MIRROR', 'FONT_URL'];
 export const DEFAULTS = {
   PORT: '80',
   DB_PATH: 'data/classroom.sqlite',
@@ -33,6 +37,24 @@ export function effectiveEnv(root) {
   const { values } = readEnv(root);
   const out = { ...values };
   for (const [k, v] of Object.entries(DEFAULTS)) if (!out[k]) out[k] = v;
+  return out;
+}
+
+// 下载子进程的环境：base（管理台自己的环境）+ .env 里非空的 DOWNLOAD_KEYS（.env 优先）
+export function downloadEnv(root, base = process.env) {
+  const { values } = readEnv(root);
+  const out = { ...base };
+  for (const k of DOWNLOAD_KEYS) {
+    const v = String(values[k] ?? '').trim();
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
+// 平台关心的配置（判断"有改动未生效"用）：去掉只影响下载的键
+export function platformEnv(root) {
+  const out = effectiveEnv(root);
+  for (const k of DOWNLOAD_KEYS) delete out[k];
   return out;
 }
 
@@ -166,6 +188,8 @@ export function validateSettings(patch, { lessonPaths } = {}) {
       if (!/^\d+$/.test(v.trim()) || !Number.isInteger(n) || n < 1 || n > 65535) errors[k] = '端口须是 1 到 65535 之间的整数';
     } else if (k === 'AI_BASE_URL') {
       if (v !== '' && !/^https?:\/\//i.test(v)) errors[k] = '地址须以 http:// 或 https:// 开头';
+    } else if (k === 'RUNTIME_ZIP_URL') {
+      if (v !== '' && !/^https?:\/\/\S+$/i.test(v)) errors[k] = '地址须以 http:// 或 https:// 开头，中间不能有空格';
     } else if (k === 'LESSON_CONFIG') {
       if (v === '') errors[k] = '请选择课程';
       else if (lessonPaths && !lessonPaths.includes(v)) errors[k] = '找不到这门课程';

@@ -44,6 +44,19 @@ body {
   --brand-soft: rgba(43, 58, 85, 0.08);
   --overlay: rgba(43, 40, 36, 0.55);
 
+  /* U6 代码配色（代码展示统一高亮规格 §3）：<CodeView> 与编辑器共用 */
+  --code-keyword: #770088;
+  --code-string: #AA1111;
+  --code-comment: #994400;
+  --code-number: #116644;
+  --code-def: #0033CC;
+  --code-builtin: #221199;
+  --code-operator: var(--ink-soft);
+  --code-variable: var(--ink);
+  --code-bg: var(--surface-alt);
+  /* U6 等宽字体栈（与 kernel/client/ui/mono.js 的 MONO 相同） */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
   /* U1 尺寸令牌（界面整理规格 §2.1） */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
   --control-h: 40px;
@@ -137,6 +150,16 @@ body {
     --base: clamp(20px, 2.4vw, 22px);
   }
 }
+
+/* U6 <CodeView> 的 token 颜色（类名见 kernel/client/ui/codeTokens.js） */
+.code-view .tok-keyword { color: var(--code-keyword); }
+.code-view .tok-string { color: var(--code-string); }
+.code-view .tok-comment { color: var(--code-comment); }
+.code-view .tok-number { color: var(--code-number); }
+.code-view .tok-def { color: var(--code-def); }
+.code-view .tok-builtin { color: var(--code-builtin); }
+.code-view .tok-operator { color: var(--code-operator); }
+.code-view .tok-variable { color: var(--code-variable); }
 
 /* 学生横幅区的组件行（v0.7.1 studentBanner）：行间底线；提供者返回 null 时不占位 */
 .banner-row {

@@ -2,6 +2,8 @@
 // 值 { code, last: { code(运行时的代码，S3), stdout(尾 20 KB), error, images(≤ 1 张), tests, interrupted, ms(S3), at } }；
 // 读写一律 try/catch（隐私模式 / 配额满时静默失败）
 // P3：last.tests 带 cases（记录形状 [{ name, ok, reason }]，见 testReport.js），刷新后测试面板照样显示用例
+// P6（代码段教学功能规格 §4.2）：code 原语双起始代码——学生选的那份起点的 label 记在 starterKey（= draftKey + ':starter'），
+//   readStarter / writeStarter(key, null 即删)；clearDraft(key) 删一个草稿键（"换起点"用）；classroom:reset 时 clearLessonDrafts 按前缀一并清掉
 import { reportCases } from './testReport.js';
 const STDOUT_TAIL = 20 * 1024;
 const TRACEBACK_MAX = 4000;
@@ -9,6 +11,45 @@ const TRACEBACK_MAX = 4000;
 export function draftKey({ lessonId, classEpoch, name, stageId }) {
   if (!lessonId || !name || !stageId) return null;
   return `sandbox:${lessonId}:${classEpoch ?? null}:${name}:${stageId}`;
+}
+
+// "换起点"之后、还没选新起点时写进起点键的标记（P6 审查 S3）：不是合法 label（含控制字符，code 原语校验 label 时拒绝控制字符）
+export const STARTER_PENDING = '\u0000pending';
+
+// 起点选择键：draftKey + ':starter'（与草稿同前缀，重置时一起清）
+export function starterKey(args) {
+  const k = draftKey(args ?? {});
+  return k ? `${k}:starter` : null;
+}
+
+export function readStarter(key) {
+  if (!key) return null;
+  try {
+    const v = globalThis.localStorage?.getItem(key);
+    return typeof v === 'string' && v !== '' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// label 为 null / 空串时删掉
+export function writeStarter(key, label) {
+  if (!key) return;
+  try {
+    if (typeof label === 'string' && label !== '') globalThis.localStorage?.setItem(key, label);
+    else globalThis.localStorage?.removeItem(key);
+  } catch {
+    // 忽略
+  }
+}
+
+export function clearDraft(key) {
+  if (!key) return;
+  try {
+    globalThis.localStorage?.removeItem(key);
+  } catch {
+    // 忽略
+  }
 }
 
 export function readDraft(key) {

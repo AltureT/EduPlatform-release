@@ -6,6 +6,7 @@
 //   dataset.from 为 .xlsx 时用 readBinaryFrom 读、exceljs（按需加载，前端不打包）取第一个工作表转 CSV——此时 normalize 返回 Promise。
 import { shape } from '#kernel/server/schema.js';
 import { declarativeGate, validateGateSpec } from '../_shared/gate.js';
+import { validateTaskItem } from '../_shared/taskItem.js';
 import { parseCsv } from './csv.js';
 import { xlsxToCsv } from './xlsx.js';
 
@@ -101,34 +102,22 @@ const baseShape = shape({
   packages: 'array:string',
   expectImage: 'boolean',
   idleAlertMs: 'integer:0-86400000',
+  // P6（代码段教学功能规格 §2.1）：参考答案（字符串或 { from }），保密选项，只发教师；教师可在大屏显示、可公布给学生
+  solution: 'optional:string:1-20000',
 });
 const datasetShape = shape({ path: 'string:1-200', rows: 'integer:0-1000000', columns: 'array:string' });
-
-function validateTask(t, i) {
-  if (typeof t === 'string') {
-    if (t.trim() === '' || t.length > 200) throw new Error(`tasks[${i}] 必须是 1–200 字`);
-    return;
-  }
-  if (!isPlainObject(t)) throw new Error(`tasks[${i}] 必须是字符串或 { text, hint }`);
-  const extra = Object.keys(t).filter((k) => k !== 'text' && k !== 'hint');
-  if (extra.length > 0) throw new Error(`tasks[${i}] 不认识的键 ${extra.join(', ')}（可用：text、hint）`);
-  if (typeof t.text !== 'string' || t.text.trim() === '' || t.text.length > 200) throw new Error(`tasks[${i}].text 必须是 1–200 字`);
-  if (t.hint !== undefined && (typeof t.hint !== 'string' || t.hint.trim() === '' || t.hint.length > HINT_MAX)) {
-    throw new Error(`tasks[${i}].hint 必须是 1–${HINT_MAX} 字的代码片段`);
-  }
-}
 
 function validate(o) {
   const { gate, tasks, ...rest } = o;
   baseShape(rest);
   if (!Array.isArray(tasks)) throw new Error('tasks 必须是数组（每项是字符串或 { text, hint }）');
   try {
-    datasetShape(o.dataset);
+    datasetShape(o.dataset, 'dataset');   // K5：路径前缀交给 shape()
   } catch (err) {
-    throw new Error(`dataset.${err.message}（由 normalize 生成）`);
+    throw new Error(`${err.message}（由 normalize 生成）`);
   }
   if (o.tasks.length > MAX_TASKS) throw new Error(`tasks 最多 ${MAX_TASKS} 条`);
-  o.tasks.forEach(validateTask);
+  o.tasks.forEach((t, i) => validateTaskItem('tasks', t, i, HINT_MAX));
   validateGateSpec(gate, ['submitted', 'ran', 'image']);
   return o;
 }
@@ -144,7 +133,11 @@ export default {
   type: 'data-analysis',
   label: '数据分析',
   layout: 'split',
+  // P5（代码段布局与回看规格 §6.1）：回看时可滚动、编辑、运行、测试（不记录、不能上交，由视图保证）；阶段写 reviewInteractive: false 可关
+  reviewInteractive: true,
   requiresComponents: ['sandbox'],
+  // 保密选项（P6）：参考答案只发教师；sandbox 配置里没有它，公布时才由 teacher:publish-solution 写进班级记录
+  secretOptions: ['solution'],
   options: validate,
   normalize,
   defaults: {
@@ -153,13 +146,18 @@ export default {
 
     gate: (o) => declarativeGate(o.gate, { submitted, ran, image: everImage }),
 
-    collect: {
+    collect: (o) => ({
       perStudent: {
         code: 'text', stdout: 'text', error: 'text', images: 'array', tests: 'object', runs: 'integer', ms: 'integer', submittedAt: 'integer',
         firstImageAt: 'integer', final: 'object', finalAt: 'integer',
+        // P6：参考答案公布之后到达的记录带 afterSolution（最终稿写在 final.afterSolution）
+        afterSolution: 'boolean',
       },
-      perClass: { featured: 'text' },
-    },
+      perClass: {
+        featured: 'text',
+        ...(o.solution ? { showSolution: 'boolean', solution: 'text', solutionPublishedAt: 'integer' } : {}),
+      },
+    }),
 
     alerts: (o) => {
       if (!(o.idleAlertMs > 0)) return [];

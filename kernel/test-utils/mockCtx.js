@@ -1,4 +1,5 @@
-// 冻结接口（规格 §10）：mockCtx({ stageId, config, students, data, subPhase })
+// 冻结接口（规格 §10）：mockCtx({ stageId, config, students, data, subPhase, ai })
+//   K6：ai 缺省为未配置实例（chat 抛 not-configured）；测试注入 createAI({ env, fetch }) 用假 fetch
 // 基于真实 stage-context.js + mockIo + memDb；与真实 ctx 同形，另加：
 //   dispatch(event, actor, payload) → Promise<{ ok, rejected?, error? }>（角色 → schema → handler；当前阶段恒为本阶段）
 //   emitted: [{ target: { kind: 'all'|'teachers'|'students'|'student'|'socket', name? }, event, payload }]
@@ -10,8 +11,11 @@ import { createStageContext, createDispatcher } from '#kernel/server/stage-conte
 import { mockIo } from './mockIo.js';
 import { mockSocket } from './mockSocket.js';
 import { memDb } from './memDb.js';
+import { unconfiguredAI } from '#kernel/server/ai.js';
 
-export function mockCtx({ stageId, config = {}, students = [], data = {}, subPhase } = {}) {
+const quietLog = { info() {}, warn() {}, error() {} };
+
+export function mockCtx({ stageId, config = {}, students = [], data = {}, subPhase, ai } = {}) {
   if (typeof stageId !== 'string' || !stageId) throw new Error('mockCtx: stageId required');
   const state = createState({
     lesson: { id: 'mock', title: 'mock' },
@@ -75,7 +79,7 @@ export function mockCtx({ stageId, config = {}, students = [], data = {}, subPha
     dropAll() {},
   };
 
-  const ctx = createStageContext({ io, state, db: memDb(), stageId, config, throttle });
+  const ctx = createStageContext({ io, state, db: memDb(), stageId, config, throttle, ai: ai ?? unconfiguredAI(quietLog) });
   const dispatcher = createDispatcher({ io, state, contexts: [ctx] });
 
   async function dispatch(event, actor, payload) {

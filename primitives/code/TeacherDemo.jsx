@@ -1,23 +1,14 @@
 // code 教师演示视图（大屏）：focus 模板。标题区提示已运行 N/M（在线）、测试全过 N（有 tests 时；按 firstPassedAt）、最近报错 Top 3（按报错首行聚合）；
 // 教师从统计页"投到大屏"的学生（perClass.featured）：显示其代码与输出（<PyOutput>）——P3：有最终稿（final）优先显示最终稿，否则最近运行；
 // Page.Actions：有 solution 时"显示 / 隐藏参考答案"（teacher:show-solution；参考答案来自教师端完整 options），有 featured 时"取消展示"。
-import { useTeacherStage, Btn, Chip, Fill, Page, Row, Stack } from '#kernel/client/index.js';
+// P6（代码段教学功能规格 §2.4）：有 solution 时另有"公布参考答案给学生"（ConfirmAdvanceBtn，两次点击）→ teacher:publish-solution { on: true }；
+// 已公布时换成"撤回参考答案"（{ on: false }），标题区提示加"参考答案已公布 HH:MM"。
+// U6：投屏代码与参考答案用 <CodeView size="md" wrap>（高亮，大屏保持折行）。
+import { useTeacherStage, Btn, Chip, CodeView, Fill, Page, Row, Stack } from '#kernel/client/index.js';
 import { PyOutput } from '@components/sandbox/index.js';
 import { finalOf, hasTestsIn, testsPassed, topErrors } from './record.js';
+import { PublishSolutionBtn, publishedHint } from '../_shared/SolutionPanel.jsx';
 
-const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-const codeBox = {
-  margin: 0,
-  padding: 'var(--sp-3)',
-  fontFamily: MONO,
-  fontSize: 'var(--fs-md, 18px)',
-  lineHeight: 1.5,
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-  background: 'var(--surface-alt)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--radius-sm)',
-};
 const heading = { fontWeight: 600, color: 'var(--ink-soft)' };
 
 export default function TeacherDemo({ stageId } = {}) {
@@ -34,9 +25,10 @@ export default function TeacherDemo({ stageId } = {}) {
   const fin = finalOf(latest);
   const rec = fin ?? latest;
   const showSolution = !!options.solution && perClass?.showSolution === true;
+  const publishedAt = options.solution ? perClass?.solutionPublishedAt ?? null : null;
 
   return (
-    <Page template="focus" title={stage?.label} hint={`已运行 ${ranN}/${online.length}`}>
+    <Page template="focus" title={stage?.label} hint={`已运行 ${ranN}/${online.length}${publishedHint(publishedAt)}`}>
       <Page.Main>
         <Fill scroll>
           <Stack gap={4}>
@@ -51,7 +43,7 @@ export default function TeacherDemo({ stageId } = {}) {
                 {errors.map((e) => (
                   <Row key={e.text} gap={2}>
                     <Chip tone="bad">× {e.count}</Chip>
-                    <span style={{ fontFamily: MONO, wordBreak: 'break-word' }}>{e.text}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-word' }}>{e.text}</span>
                   </Row>
                 ))}
               </Stack>
@@ -59,7 +51,7 @@ export default function TeacherDemo({ stageId } = {}) {
             {rec && (
               <Stack gap={2} data-testid="code-featured">
                 <div style={heading}>{featured} 的代码（{fin ? '最终稿' : '最近运行'}）</div>
-                <pre style={codeBox}>{rec.code}</pre>
+                <CodeView code={rec.code} size="md" wrap />
                 <PyOutput record={rec} label="输出" hideCode />
               </Stack>
             )}
@@ -69,7 +61,7 @@ export default function TeacherDemo({ stageId } = {}) {
             {showSolution && (
               <Stack gap={2} data-testid="code-solution">
                 <div style={heading}>参考答案</div>
-                <pre style={codeBox}>{options.solution}</pre>
+                <CodeView code={options.solution} size="md" wrap />
               </Stack>
             )}
           </Stack>
@@ -83,6 +75,7 @@ export default function TeacherDemo({ stageId } = {}) {
               {showSolution ? '隐藏参考答案' : '显示参考答案'}
             </Btn>
           )}
+          {options.solution && <PublishSolutionBtn publishedAt={publishedAt} send={send} />}
         </Page.Actions>
       )}
     </Page>

@@ -1,6 +1,8 @@
 // scripts/fetch-pyodide.mjs 的纯函数部分（代码沙盒规格 §2.3）：闭包计算、裁剪 lock、字体字符表、PyPI 轮子选择、manifest
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { GB2312_HANZI } from './gb2312-hanzi.js';
 
 export const sha256Hex = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
@@ -73,6 +75,14 @@ export function buildManifest({ version, files, fetchedAt }) {
 
 const GZIP_EXT = new Set(['.wasm', '.mjs', '.json', '.zip', '.otf']);
 export const shouldGzip = (file) => GZIP_EXT.has(path.extname(file).toLowerCase());
+
+// 预压缩：<file>.gz（level 9，先写 .part 再改名）；逐文件下载的第 5 步与导入整包后重生成 .gz 共用；返回 .gz 路径
+export function writeGzip(file) {
+  const gz = `${file}.gz`;
+  fs.writeFileSync(`${gz}.part`, zlib.gzipSync(fs.readFileSync(file), { level: 9 }));
+  fs.renameSync(`${gz}.part`, gz);
+  return gz;
+}
 
 const withSlash = (u) => (u.endsWith('/') ? u : `${u}/`);
 
