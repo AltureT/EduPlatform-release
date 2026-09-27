@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // npm run check:ui（界面整理规格 §6）：阶段与组件目录不得自写布局。
 // 扫描 examples/*/stages/**/*.jsx、components/*/**/*.jsx 与 primitives/*/**/*.jsx（v0.8；排除 __tests__；kernel/ 不扫），
+// C5：另扫课程本地组件 examples/*/components/*/**/*.jsx 与 lessons/*/components/*/**/*.jsx，
 // 命中即列出 文件:行 并退出 1：
 //   position       position: fixed | absolute（覆盖层走内核 Overlay；sticky / relative 允许）
 //   size           数值 height / minHeight / width > 64；JSX 属性 height={300} 同样（canvas / svg / img / video / iframe 豁免）；
@@ -368,10 +369,18 @@ const subdirs = (dir) => {
 };
 
 // examples/*/stages/**/*.jsx、components/*/**/*.jsx 与 primitives/*/**/*.jsx（排除 __tests__），相对 root 的 posix 路径，排序
+// C5：加课程本地组件 examples/*/components/*/**/*.jsx、lessons/*/components/*/**/*.jsx
 export function listTargets(root) {
   const out = [];
   for (const lesson of subdirs(path.join(root, 'examples'))) {
     walk(path.join(root, 'examples', lesson, 'stages'), `examples/${lesson}/stages`, out);
+  }
+  for (const top of ['examples', 'lessons']) {
+    for (const lesson of subdirs(path.join(root, top))) {
+      for (const comp of subdirs(path.join(root, top, lesson, 'components'))) {
+        walk(path.join(root, top, lesson, 'components', comp), `${top}/${lesson}/components/${comp}`, out);
+      }
+    }
   }
   for (const comp of subdirs(path.join(root, 'components'))) {
     walk(path.join(root, 'components', comp), `components/${comp}`, out);
@@ -390,7 +399,7 @@ function targetsFor(root, only = []) {
   return listTargets(root).filter((f) => prefixes.length === 0 || prefixes.some((p) => underPrefix(f, p)));
 }
 
-// U4：逐个校验路径参数——返回扫描范围里一个文件也匹配不到的参数（路径不存在、写错，或不在 examples/*/stages、components/*、primitives/* 内），原样返回
+// U4：逐个校验路径参数——返回扫描范围里一个文件也匹配不到的参数（路径不存在、写错，或不在 examples/*/stages、components/*、primitives/*、examples|lessons/*/components/* 内），原样返回
 export function emptyPrefixes(root, only = []) {
   const files = listTargets(root);
   return only.filter((raw) => {
@@ -409,10 +418,10 @@ export function checkUi(root, only = []) {
 function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const only = process.argv.slice(2);
-  const scope = only.length ? only.join(', ') : 'examples/*/stages、components/*、primitives/*';
+  const scope = only.length ? only.join(', ') : 'examples/*/stages、components/*、primitives/*、课程组件';
   const missing = emptyPrefixes(root, only);
   if (missing.length) {
-    for (const m of missing) console.log(`check:ui：${m} 下没有可扫描的 .jsx 文件（路径不存在、写错，或不在 examples/*/stages、components/*、primitives/* 内）`);
+    for (const m of missing) console.log(`check:ui：${m} 下没有可扫描的 .jsx 文件（路径不存在、写错，或不在 examples/*/stages、components/*、primitives/*、examples|lessons/*/components/* 内）`);
     console.log(`\ncheck:ui：${missing.length} 个路径参数无效，未扫描`);
     process.exit(1);
   }

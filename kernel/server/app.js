@@ -1,5 +1,5 @@
 // 把一切接起来（规格 §5、§6）
-// createApp({ lessonPath, dbPath, componentsRoot?, vendorRoot?, distDir?, ai? }) → Promise<{ app, server, io, state, db, kernel, ai, start(port), stop() }>
+// createApp({ lessonPath, dbPath, componentsRoot?, lessonComponentsRoot?, vendorRoot?, distDir?, ai? }) → Promise<{ app, server, io, state, db, kernel, ai, start(port), stop() }>
 //   K6：进程里只建一个 AI 实例（缺省 createAI() 读 process.env），经 createKernel 传给全部阶段与组件上下文
 //   K2（v0.6）：组件 static 的相对目录以 vendorRoot ?? 项目根 解析；组件 http 路由挂在 /api/c/<id>/
 // createKernel({ io, state, db, stages, registers, tokens, components?, ai? }) → socket 处理（可用 mockIo / mockSocket 单测）；ai 缺省未配置
@@ -19,7 +19,7 @@ import { loadLesson, loadStageServers } from './stage-loader.js';
 import { createThrottle } from './throttle.js';
 import { createStageContext, createDispatcher } from './stage-context.js';
 import { createComponentContext, createComponentDispatcher, runComponentHooks } from './component-context.js';
-import { loadComponents } from './component-loader.js';
+import { loadComponents, lessonComponentsRootOf } from './component-loader.js';
 import { staticDir } from './static-dir.js';
 import { createExportRouter } from './export.js';
 import { createAdmin } from './admin.js';
@@ -59,8 +59,10 @@ export function createKernel({
   });
 
   const contexts = new Map();
+  // C5：阶段事件不得以任何已启用组件（平台或课程组件）的 '<id>:' 开头——前缀表由已加载组件 id 生成
+  const componentIds = components.map((c) => c.id);
   for (const s of stages) {
-    contexts.set(s.id, createStageContext({ io, state, db, stageId: s.id, config: s.config, throttle, ai }));
+    contexts.set(s.id, createStageContext({ io, state, db, stageId: s.id, config: s.config, throttle, ai, componentIds }));
   }
   // 注册期错误（非法事件名 / 保留名 / 重复）直接抛出，使启动失败
   for (const s of stages) {
@@ -71,9 +73,13 @@ export function createKernel({
 
   // ===== 组件（v0.5）：阶段之后构造与注册；注册期错误同样使启动失败 =====
   const componentContexts = new Map();
+  // C5（课程本地组件规格 §4）：server.js 导出 report 的组件，按 lesson.config 顺序；以各自的 cctx 调用
+  const reportProviders = components
+    .filter((c) => typeof c.report === 'function')
+    .map((c) => ({ id: c.id, label: c.label, report: (name) => c.report(name, componentContexts.get(c.id)) }));
   for (const c of components) {
     componentContexts.set(c.id, createComponentContext({
-      id: c.id, options: c.options, io, state, db, throttle, stages, ai,
+      id: c.id, options: c.options, io, state, db, throttle, stages, ai, componentReports: () => reportProviders,
     }));
   }
   for (const c of components) {
@@ -369,12 +375,16 @@ export function createKernel({
 }
 
 export async function createApp({
-  lessonPath, dbPath, tokens = authTokens, componentsRoot = DEFAULT_COMPONENTS_ROOT, vendorRoot, distDir = DIST_DIR, ai = createAI(),
+  lessonPath, dbPath, tokens = authTokens, componentsRoot = DEFAULT_COMPONENTS_ROOT, lessonComponentsRoot, vendorRoot, distDir = DIST_DIR,
+  ai = createAI(),
 }) {
   const log = createLog('server');
   const { lessonConfig, stages } = await loadLesson(lessonPath);
   const registers = await loadStageServers(stages);
-  const components = await loadComponents(lessonConfig, componentsRoot);
+  // C5：课程组件目录缺省 = <lesson.config.js 所在目录>/components（与 loadLesson 一样按 cwd 解析 lessonPath）
+  const components = await loadComponents(lessonConfig, componentsRoot, {
+    lessonComponentsRoot: lessonComponentsRoot ?? lessonComponentsRootOf(path.resolve(process.cwd(), lessonPath)),
+  });
   const db = openDb(dbPath);
   const state = createState({ lesson: lessonConfig, stages, components });
 
@@ -406,9 +416,11 @@ export async function createApp({
   app.use('/api', createExportRouter({ state, tokens }));
   for (const [id, router] of componentRouters) app.use(`/api/c/${id}`, router);
   // K2（v0.6）：组件声明的静态目录，挂在 SPA 回退之前（缺文件 404，不回 index.html）；目录缺失只 warn，不拒绝启动
+  // C5：课程组件的 static 相对课程目录（lessons/<id>/）解析
   for (const c of components) {
+    const base = c.origin === 'lesson' ? path.dirname(path.dirname(c.dir)) : (vendorRoot ?? PROJECT_ROOT);
     for (const [prefix, dir] of Object.entries(c.static ?? {})) {
-      const abs = path.resolve(vendorRoot ?? PROJECT_ROOT, dir);
+      const abs = path.resolve(base, dir);
       if (!fs.existsSync(abs)) log.warn(`component "${c.id}": static dir for ${prefix} not found (${abs}); all requests will 404`);
       app.use(prefix, staticDir(abs));
     }

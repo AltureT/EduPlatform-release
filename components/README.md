@@ -2,6 +2,8 @@
 
 可选组件：整节课都能用的功能（看学生屏、挑人分享、收作答、个人报告、Python 运行环境、AI 助手），在 `lesson.config.js` 的 `components` 里打开——写字符串 `'id'`，要带参数写 `{ id, ...参数 }`。没打开的组件不出现在任何页面上。
 
+这里没有的、跨段或挂在页面边上的功能（作品墙、分层挑战、互评），给这节课单独做一个课程组件：放在 `lessons/<id>/components/<cid>/`，与这里的组件同形，写法见 `docs/06-组件契约.md`，范本 `examples/primitives-tour/components/gallery/`。
+
 ```js
 // lesson.config.js
 components: ['mirror', 'share', 'report'],

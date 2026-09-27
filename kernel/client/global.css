@@ -169,3 +169,12 @@ body {
 .banner-row:empty {
   display: none;
 }
+
+/* 学生页段内旁挂（C5 studentAside）：<Page> 里每个组件一行；提供者返回 null 时不占位 */
+.aside-row {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.aside-row:empty {
+  display: none;
+}

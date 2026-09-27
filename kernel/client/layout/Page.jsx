@@ -15,6 +15,9 @@
 //   U4：面板里没有 <Fill> 时按内容高，有 <Fill> 时撑满
 // - table 模板在 narrow 时 Side 收进操作条上 "推荐 ▾" 打开的底部抽屉；没有 Page.Side 时不渲染 300 px 空侧区
 //   （外壳只在有 teacherSidebar 提供者时传 Side）
+// - C5（课程本地组件规格 §3）：学生视图（PageStageContext.view === 'student'，含镜像）里渲染组件槽位 studentAside：
+//   split 有 Side 时放在 Side 内容之后，其余模板（含 split 无 Side / 窄屏 Side 为空）放在 Main 内容之后；
+//   props { stageId: config.id, isLive: PageStageContext.isLive（缺省 true） }；无提供者不渲染任何包裹元素
 // - Actions 的内容渲染在外壳操作条的位置：拿得到内核的 context，拿不到阶段在 <Page> 里面自己包的 Context
 import { Children, Fragment, isValidElement, useCallback, useContext, useEffect, useState } from 'react';
 import { MirrorContext } from '../mirror/mirrorContext.js';
@@ -26,6 +29,7 @@ import { useNarrow } from './useNarrow.js';
 import { pickProps, cx } from './props.js';
 import { ActionSinkContext, useActionSink } from './actionSink.js';
 import { FillProbeContext, PageStageContext, TEMPLATES, defaultTemplateOf } from './pageContext.js';
+import { StudentAside } from '../shells/ComponentSlots.jsx';
 
 function Main() { return null; }
 function Side() { return null; }
@@ -254,6 +258,9 @@ export default function Page({
   useActionSink(inline ? null : sink, actionsNode);
 
   const sideEmpty = !hasContent(r.side);
+  const asideNode = stageCtx && stageCtx.view === 'student'
+    ? <StudentAside stageId={stageCtx.config && stageCtx.config.id != null ? stageCtx.config.id : null} isLive={stageCtx.isLive !== false} />
+    : null;
   let body;
   if (t === 'split') {
     // 没有 Page.Side 时不分栏：Main 占满全宽（wide / narrow 都一样），不留 40% 空区
@@ -261,9 +268,9 @@ export default function Page({
     // 始终是同一个 <Split>，只用 single 切单列：Main 在树里的位置不变，切换时不会重新挂载（草稿 / 光标 / 撤销历史不丢）
     const showSide = r.hasSide && !(narrow && sideEmpty);
     const foldable = showSide && narrow && !!stageCtx && stageCtx.view === 'student';
-    const mainEl = <MainRegion key="main">{r.main}</MainRegion>;
+    const mainEl = <MainRegion key="main">{r.main}{showSide ? null : asideNode}</MainRegion>;
     const sideEl = showSide
-      ? <SideRegion key="side" empty={sideEmpty} fold={foldable ? { open: sideOpen, toggle: toggleSide } : null} label={sideLabel}>{r.side}</SideRegion>
+      ? <SideRegion key="side" empty={sideEmpty} fold={foldable ? { open: sideOpen, toggle: toggleSide } : null} label={sideLabel}>{r.side}{asideNode}</SideRegion>
       : null;
     // side="left"：宽屏 [Side, Main]、ratio 反转；窄屏顺序不变（学生视图 Side 在上、可折叠，其余 Main 在上）
     const sideFirst = side === 'left' && !narrow;
@@ -290,7 +297,7 @@ export default function Page({
           gridTemplateRows: 'minmax(0, 1fr)',
         }}
       >
-        <MainRegion>{r.main}</MainRegion>
+        <MainRegion>{r.main}{asideNode}</MainRegion>
         {!narrow && r.hasSide && <SideRegion empty={sideEmpty}>{r.side}</SideRegion>}
       </div>
     );
@@ -310,6 +317,7 @@ export default function Page({
         >
           {r.main}
         </div>
+        {asideNode}
       </MainRegion>
     );
   } else if (t === 'stack') {
@@ -318,6 +326,7 @@ export default function Page({
         {/* 单列容器纵向撑满 Main，里面的 <Fill> 可撑到可用高度 */}
         <div data-ly="stack" style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', minWidth: 0 }}>
           {r.main}
+          {asideNode}
         </div>
       </MainRegion>
     );
@@ -325,7 +334,7 @@ export default function Page({
     const demo = !!stageCtx && stageCtx.view === 'demo';
     body = demo
       ? <MainRegion center max={960}>{r.main}</MainRegion>
-      : <MainRegion panel max={960}>{r.main}</MainRegion>;
+      : <MainRegion panel max={960}>{r.main}{asideNode}</MainRegion>;
   }
 
   const titleSize = role === 'teacher' && !inMirror ? 'var(--heading, var(--fs-xl))' : 'var(--fs-xl)';

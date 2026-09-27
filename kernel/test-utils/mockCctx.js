@@ -1,4 +1,5 @@
-// 规格 v0.5 §2.7：mockCctx({ id, options, stages: [{ id, config, dir?, perStudent, perClass }], students, data: { perStudent, perClass }, currentStage, ai })
+// 规格 v0.5 §2.7：mockCctx({ id, options, stages: [{ id, config, dir?, perStudent, perClass }], students, data: { perStudent, perClass }, currentStage, ai, componentReports })
+//   C5：componentReports = [{ id, label, report(name) }]（缺省 []），即 cctx.componentReports() 的返回，供 report 组件测试
 //   K6：ai 缺省为未配置实例（chat 抛 not-configured）；测试注入 createAI({ env, fetch }) 用假 fetch
 // 基于真实 component-context.js + mockIo + memDb；与 cctx 同形，另加：
 //   dispatch(event, actor, payload) → Promise<{ ok, rejected?, error? }>（角色 → schema → handler；不受当前阶段限制）
@@ -20,7 +21,7 @@ import { unconfiguredAI } from '#kernel/server/ai.js';
 
 const quietLog = { info() {}, warn() {}, error() {} };
 
-export function mockCctx({ id, options = {}, stages = [], students = [], data = {}, currentStage, ai } = {}) {
+export function mockCctx({ id, options = {}, stages = [], students = [], data = {}, currentStage, ai, componentReports = [] } = {}) {
   if (typeof id !== 'string' || !id) throw new Error('mockCctx: id required');
   const lessonStages = stages.map((s) => ({
     id: s.id,
@@ -125,6 +126,7 @@ export function mockCctx({ id, options = {}, stages = [], students = [], data = 
     stages: lessonStages,
     actions,
     ai: ai ?? unconfiguredAI(quietLog),
+    componentReports: () => componentReports,
   });
   const dispatcher = createComponentDispatcher({ contexts: new Map([[id, cctx]]), log: quietLog });
 

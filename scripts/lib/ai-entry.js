@@ -10,7 +10,7 @@ export const AI_ENTRY_TEXT = `# 课堂互动平台（平台目录）
 3. 对话里贴进来的是"阶段审查清单"：就只按那份清单审查，不读 \`skills/SKILL.md\`、不做课。
 4. 不能动：\`kernel/\`、\`components/\`、\`primitives/\`、\`scripts/\`、\`docs/\`、\`skills/\`。要的功能平台没有，就告诉教师，记进这门课 \`平台规格.md\` 的"后续定制"，不要改平台文件绕过（升级时会被覆盖，\`npm run check:lesson\` 也会报"平台文件被改过"）。
 5. 不碰 \`data/\`、\`backups/\`、\`.env\`、\`vendor/\`（\`.env\` 只由 \`npm run new:lesson\` 与管理台写）。
-6. 课程只在 \`lessons/<id>/\` 下写；样式只用 \`docs/05-样式约定.md\` 的令牌与组件；要用 AI 只在服务端走 \`ctx.ai\`（\`docs/02-阶段模块契约.md\` §三），不写接口地址与密钥。
+6. 课程只在 \`lessons/<id>/\` 下写（这节课自己的组件放 \`lessons/<id>/components/\`，写法见 \`docs/06-组件契约.md\`）；样式只用 \`docs/05-样式约定.md\` 的令牌与组件；要用 AI 只在服务端走 \`ctx.ai\`（\`docs/02-阶段模块契约.md\` §三），不写接口地址与密钥。
 7. 写完跑 \`npm run check:lesson\`，有"错误"先改完再交给教师。
 8. 对教师说话按 \`skills/SKILL.md\`"对教师说话"的规矩：只用教学词，不露文件名、路径、命令、版本号。
 `;

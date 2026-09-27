@@ -5,6 +5,7 @@ export default {
   id: 'score-analysis',
   label: '成绩分析',
   primitive: 'data-analysis',
+  gallery: true,                  // 课程组件"作品墙"开在这一段（components/gallery/README.md）
   options: {
     prompt: '这是一个班 12 位同学（编号 S01–S12）的语文、数学、英语成绩。\n\n先点"运行"看看起始代码读进来的表格，再完成下面的任务。',
     dataset: { path: 'data/scores.csv', from: './data/scores.csv' },

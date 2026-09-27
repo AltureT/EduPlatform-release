@@ -28,6 +28,11 @@
 //   12 平台文件（框架自描述规格 §4）：平台目录有 版本.json 且带 protected 时逐文件比对 sha256；改动 / 缺失 / 受保护目录下多出 → 一条警告
 //     "平台文件被改过：<第一个> 等 N 个（改动 a 个、缺失 b 个、多出 c 个）"（不挡启动）；没有 版本.json（开发仓库）跳过。
 //     平台目录缺省 = 本脚本所在的平台目录（platformRoot 可注入）；比对逻辑在 scripts/lib/platform-files.js
+//   13 课程组件（课程本地组件规格 §5）：lesson.config.js 所在目录的 components/<cid>/ 逐个查（错误）——
+//     component.config.js 默认导出 { id, label } 且 id 与目录名一致；id 合法、不是保留字 / 内置组件名、不与平台组件重名；
+//     server.js 有则导出 register，cctx.on('…') 的事件前缀必须是自己的 id；client.jsx 有则过 check:ui、slots 只用契约槽位名；
+//     代码文件过第 11 项；README.md 缺失 → 警告；没在 lesson.config.js 的 components 里打开 → 警告。
+//     阶段顶层写已启用组件的 id（如 gallery: true）不报；第 6 项同样认 @lesson-components/<id>
 //   另：TODO 占位（new:stage 的骨架）每个文件一条警告
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,7 +40,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 import { loadLesson, DEFAULT_PRIMITIVES_ROOT } from '../kernel/server/stage-loader.js';
-import { componentIdsOf, loadComponents } from '../kernel/server/component-loader.js';
+import {
+  componentIdsOf, loadComponents, lessonComponentsRootOf, COMPONENT_ID_RE, RESERVED_COMPONENT_IDS, BUILTIN_COMPONENT_IDS,
+} from '../kernel/server/component-loader.js';
 import stripStageOptions from '../kernel/build/strip-stage-options.js';
 import { scanSource } from './check-ui.mjs';
 import { STAGE_CARD_COLUMNS, parseStageCard } from './lib/stage-card.js';
@@ -67,6 +74,12 @@ export const AI_BEARER = { auth: /\bauthorization\b/i, bearer: /\bBearer\b/ };
 export const AI_IN_CLIENT = /\bc?ctx\s*(?:\??\.\s*ai\b|(?:\?\.)?\[\s*(['"`])ai\1\s*\])/;
 export const CLIENT_FETCH_HTTP = /\bfetch\s*\(\s*(['"`])https?:\/\//;
 const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在管理台'设置'页填，课程代码里不写";
+// 13 课程组件：契约 §八的槽位名（与 kernel/client/stores/componentRegistry.js 的 SLOT_NAMES 一致，测试核对）
+export const CONTRACT_SLOTS = [
+  'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
+  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside',
+];
+const COMPONENT_DOC = 'docs/06-组件契约.md';
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const readText = (f) => {
@@ -111,7 +124,8 @@ const LOADER_FIXES = [
   [/Cannot find module|ERR_MODULE_NOT_FOUND|does not provide an export/, () => '检查 import 的路径与导出名；阶段之间不能互相 import，内核只能从 #kernel/… 的公开入口引用'],
   [/Unexpected|Expected|SyntaxError|Invalid or unexpected token|missing \) after/, () => '按指出的行修正语法（括号、引号、逗号是否配对）'],
   // 课程级组件（审查 1：component-loader 的 loadComponents）
-  [/component "([^"]+)": unknown component/, (m) => `把 '${m[1]}' 从 lesson.config.js 的 components 里删掉或改成已有的组件（${componentChoices()}）`],
+  [/component "([^"]+)": unknown component/, (m) => `把 '${m[1]}' 从 lesson.config.js 的 components 里删掉或改成已有的组件（${componentChoices()}）；要给这节课单独做一个就在课程目录的 components/${m[1]}/ 下建（npm run new:component）`],
+  [/与平台组件重名|平台内置组件的名字/, () => '课程组件换一个名字（建议 x- 开头）：目录名、component.config.js 的 id 与 lesson.config.js 的 components 里一起改'],
   [/invalid component entry|component: invalid id/, () => `components 的每一项写组件 id 字符串（如 'share'）或 { id: 'sandbox', … }；已有的组件：${componentChoices()}`],
   [/duplicate id in lesson config/, () => 'components 里同一个组件只写一次'],
   [/components must be an array/, () => "components 写成数组，如 ['mirror', 'share', 'report']"],
@@ -312,6 +326,9 @@ export async function checkLesson(configPath, {
   const error = (...a) => add('error', ...a);
   const warn = (...a) => add('warning', ...a);
   const lesson = { path: toPosix(configPath), title: null, stageCount: 0 };
+  // C5：课程组件目录 = lesson.config.js 所在目录的 components/；就是平台自己的 components/（课程配置放在平台根上）时没有课程组件
+  const lessonComponentsRoot = [componentsRoot, path.join(platformRoot, 'components')]
+    .some((d) => path.resolve(d) === lessonComponentsRootOf(absConfig)) ? null : lessonComponentsRootOf(absConfig);
   const lessonSrc = readText(absConfig);
 
   // 我们自己也读一次课程配置（静态检查要用 stagesDir / stages / components）；读不出由加载器报
@@ -381,15 +398,22 @@ export async function checkLesson(configPath, {
     error(file, line, msg, loaderFix(msg, typeof primitive === 'string' ? primitive : null), 'loader');
   }
 
+  // 13 课程组件（静态检查；先于加载器，已报过错的组件不再重复报加载器的英文错误）
+  const openIds = isPlainObject(lessonConfig) ? componentIdsOf(lessonConfig) : [];
+  const badLessonComponents = lessonComponentsRoot
+    ? await checkLessonComponents({ root: lessonComponentsRoot, componentsRoot, openIds, error, warn })
+    : new Set();
+
   // 审查 1：课程级组件（内核加载器只取 id，组件本身由 component-loader 在启动时加载）
   if (isPlainObject(lessonConfig)) {
     try {
-      await loadComponents(lessonConfig, componentsRoot);
+      await loadComponents(lessonConfig, componentsRoot, { lessonComponentsRoot });
     } catch (err) {
-      const msg = String(err?.message ?? err).replace(`${componentsRoot}${path.sep}`, 'components/');
+      const msg = String(err?.message ?? err).replace(`${componentsRoot}${path.sep}`, 'components/')
+        .replace(`${path.dirname(absConfig)}${path.sep}`, `${rel(path.dirname(absConfig))}/`);
       const id = /component "([^"]+)"/.exec(msg)?.[1];
       const line = (id ? findLine(lessonSrc, new RegExp(`['"\`]${esc(id)}['"\`]`)) : null) ?? findLine(lessonSrc, /^\s*components\s*:/m);
-      error(absConfig, line, msg, loaderFix(msg, null), 'components');
+      if (!(id && badLessonComponents.has(id))) error(absConfig, line, msg, loaderFix(msg, null), 'components');
     }
   }
   for (const w of warned) {
@@ -578,7 +602,7 @@ export async function checkLesson(configPath, {
     for (const f of noTests.filter((x) => /\.(jsx?|mjs)$/.test(x))) {
       const src = readText(at(f)) ?? '';
       const code = stripComments(src);
-      for (const m of code.matchAll(/[@#]components\/([a-z][a-z0-9-]*)/g)) {
+      for (const m of code.matchAll(/(?:[@#]|@lesson-)components\/([a-z][a-z0-9-]*)/g)) {
         if (openComponents.includes(m[1])) continue;
         error(at(f), lineAt(code, m.index), `引用了组件 ${m[1]}，但 lesson.config.js 的 components 里没有打开它`,
           `在 lesson.config.js 的 components 里加上 '${m[1]}'，或删掉这个引用`, 'components');
@@ -673,11 +697,153 @@ function aiCheck(file, src, opts, error, warn) {
   }
 }
 
-function todoCheck(file, src, warn) {
+function todoCheck(file, src, warn, fix = '把 TODO 换成本课的内容（照 STAGE.md 阶段卡填写）') {
   if (!src) return;
   const hits = [...src.matchAll(/\bTODO\b/g)];
   if (hits.length === 0) return;
-  warn(file, lineAt(src, hits[0].index), `还有 ${hits.length} 处 TODO 占位`, '把 TODO 换成本课的内容（照 STAGE.md 阶段卡填写）', 'todo');
+  warn(file, lineAt(src, hits[0].index), `还有 ${hits.length} 处 TODO 占位`, fix, 'todo');
+}
+
+// ===== 13 课程组件（课程本地组件规格 §5）=====
+// client.jsx 里用到的槽位名：slots.<名> 与 slots: { … } 对象字面量的顶层键（静态、文本级）
+export function slotNamesIn(src) {
+  const code = stripComments(src);
+  const out = [];
+  for (const m of code.matchAll(/\bslots\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*)/g)) out.push({ name: m[1], line: lineAt(code, m.index) });
+  for (const m of code.matchAll(/\bslots\s*:\s*\{/g)) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let flat = '';
+    for (let i = open; i < code.length; i += 1) {
+      const c = code[i];
+      const before = depth;
+      if ('{(['.includes(c)) depth += 1;
+      else if ('})]'.includes(c)) depth -= 1;
+      if (depth === 0) break;
+      // 只留对象顶层（嵌套内容换成空格，行号不变）；顶层的括号本身保留，认得出方法简写 name() { … }
+      flat += before === 1 || depth === 1 || c === '\n' ? c : ' ';
+    }
+    for (const k of flat.matchAll(/(?:^|[{,])\s*(['"]?)([A-Za-z_$][\w$]*)\1\s*(?=[:,(}]|$)/g)) {
+      out.push({ name: k[2], line: lineAt(code, open + k.index + k[0].indexOf(k[2])) });
+    }
+  }
+  return out;
+}
+
+// 组件 server.js 里字面量注册的事件：cctx.on('…') / 裸 on('…')
+export function componentOnEvents(src) {
+  const code = stripComments(src);
+  return [...code.matchAll(/(?<![\w$])on\(\s*(['"`])([^'"`\n]+)\1/g)].map((m) => ({ event: m[2], line: lineAt(code, m.index) }));
+}
+
+let freshSeq = 0;
+// 逐个查 <课程目录>/components/<cid>/；返回有错误的组件 id（加载器对它们的英文报错不再重复）
+async function checkLessonComponents({ root, componentsRoot, openIds, error, warn }) {
+  const bad = new Set();
+  const dirs = subdirs(root).sort();
+  for (const cid of dirs) {
+    const dir = path.join(root, cid);
+    const at = (f) => path.join(dir, f);
+    const files = walkFiles(dir);
+    const noTests = files.filter((f) => !f.startsWith('__tests__/'));
+    const has = (f) => files.includes(f);
+    const err = (...a) => {
+      bad.add(cid);
+      error(...a);
+    };
+    const cfgFile = at('component.config.js');
+    const cfgSrc = readText(cfgFile);
+    const idLine = cfgSrc ? findLine(cfgSrc, /\bid\s*:/) : null;
+    const rename = `换一个名字（小写字母开头，只含小写字母、数字和连字符，建议 x- 开头）：目录名、component.config.js 的 id 与 lesson.config.js 的 components 里一起改（见 ${COMPONENT_DOC}）`;
+
+    // id：目录名合法、不是保留字 / 内置组件名、不与平台组件重名
+    if (!COMPONENT_ID_RE.test(cid)) {
+      err(cfgFile, idLine, `课程组件目录名 ${cid} 不能当组件 id`, rename, 'lesson-component');
+    } else if (fs.existsSync(path.join(componentsRoot, cid))) {
+      err(cfgFile, idLine, `课程组件 ${cid} 与平台组件重名，请改名`, rename, 'lesson-component');
+    } else if (RESERVED_COMPONENT_IDS.includes(cid) || BUILTIN_COMPONENT_IDS.includes(cid)) {
+      err(cfgFile, idLine, `课程组件 ${cid} 用了平台保留的名字`, rename, 'lesson-component');
+    }
+
+    // component.config.js：默认导出 { id, label }，id 与目录名一致
+    if (cfgSrc === null) {
+      err(cfgFile, null, `课程组件 ${cid} 缺 component.config.js`,
+        `建 component.config.js：export default { id: '${cid}', label: '<中文名>' }（npm run new:component 会生成整套骨架）`, 'lesson-component');
+    } else {
+      let cfg;
+      let importErr = null;
+      try {
+        cfg = (await import(`${pathToFileURL(cfgFile).href}?check-lesson=${++freshSeq}`)).default;
+      } catch (e) {
+        importErr = e;
+      }
+      if (importErr) {
+        const syn = await syntaxErrorAt(cfgSrc);
+        err(cfgFile, syn?.line ?? null, `component.config.js 读不出来：${importErr?.message ?? importErr}`, '按指出的行修正语法；只写 export default { id, label }', 'lesson-component');
+      } else if (!isPlainObject(cfg)) {
+        err(cfgFile, findLine(cfgSrc, /\bexport\s+default\b/), 'component.config.js 没有默认导出对象',
+          `写成 export default { id: '${cid}', label: '<中文名>' }`, 'lesson-component');
+      } else {
+        if (cfg.id !== cid) {
+          err(cfgFile, idLine, `component.config.js 的 id 是 ${JSON.stringify(cfg.id) ?? '（没写）'}，与目录名 ${cid} 不一致`,
+            `把 id 改成 '${cid}'（或把目录改名成与 id 一致）`, 'lesson-component');
+        }
+        if (typeof cfg.label !== 'string' || cfg.label.trim() === '') {
+          err(cfgFile, findLine(cfgSrc, /\blabel\s*:/) ?? idLine, 'component.config.js 没有写 label（教师端显示的中文名）',
+            "加上 label: '<中文名>'，如 label: '作品墙'", 'lesson-component');
+        }
+      }
+    }
+
+    // 代码文件语法；server.js 导出 register、事件前缀是自己的 id；client.jsx 过 check:ui、只用契约槽位
+    for (const f of noTests.filter((x) => /\.(jsx?|mjs)$/.test(x) && x !== 'component.config.js')) {
+      const src = readText(at(f)) ?? '';
+      const syn = await syntaxErrorAt(src, { lang: f.endsWith('.jsx') ? 'jsx' : undefined });
+      if (syn) {
+        err(at(f), syn.line, `${path.posix.basename(f)} 有语法错误：${syn.message}`, '按指出的行修正语法（括号、引号、逗号、标签是否配对）', 'syntax');
+        continue;
+      }
+      aiCheck(at(f), src, { client: f.endsWith('.jsx') }, err, warn);
+      if (f.endsWith('.jsx')) {
+        for (const h of scanSource(src, `components/${cid}/${f}`)) {
+          err(at(f), h.line, `界面规则：${h.message}`, UI_FIXES[h.rule] ?? `对照${CONTRACT} §四"页面与布局"修改`, `ui:${h.rule}`);
+        }
+      }
+    }
+    if (has('server.js')) {
+      const src = readText(at('server.js')) ?? '';
+      const facts = await moduleFacts(src);
+      if (facts && !facts.exports.has('register') && !facts.exports.has('*')) {
+        err(at('server.js'), findLine(src, /\bregister\b/), '组件 server.js 没有导出 register，平台启动时会失败',
+          `写成 export function register(cctx) { … }（${COMPONENT_DOC}）`, 'lesson-component');
+      }
+      for (const { event, line } of componentOnEvents(src)) {
+        if (event.startsWith(`${cid}:`)) continue;
+        err(at('server.js'), line, `组件 ${cid} 注册了事件 ${event}：组件事件必须以自己的 id 开头`,
+          `改成 ${cid}:s-…（学生发）或 ${cid}:t-…（教师发），视图里 send 的事件名一起改`, 'lesson-component');
+      }
+    }
+    if (has('client.jsx')) {
+      const src = readText(at('client.jsx')) ?? '';
+      for (const { name, line } of slotNamesIn(src)) {
+        if (CONTRACT_SLOTS.includes(name)) continue;
+        err(at('client.jsx'), line, `slots 里的 ${name} 不是平台的槽位，不会显示`,
+          `改成 ${CONTRACT_SLOTS.join(' / ')} 之一（${CONTRACT} §八）`, 'lesson-component');
+      }
+    }
+    if (!has('README.md')) {
+      warn(at('README.md'), null, `课程组件 ${cid} 缺 README.md`,
+        '写 README.md：这是什么、开在哪些段、数据形状（给以后改这节课的 AI 看）', 'lesson-component');
+    }
+    if (!openIds.includes(cid)) {
+      warn(cfgFile, null, `课程组件 ${cid} 还没在 lesson.config.js 的 components 里打开，上课时不会出现`,
+        `lesson.config.js 的 components 里加上 '${cid}'；不要了就删掉这个目录`, 'lesson-component');
+    }
+    for (const f of files.filter((x) => TEXT_EXT.test(x) && !x.startsWith('__tests__/'))) {
+      todoCheck(at(f), readText(at(f)), warn, `把 TODO 换成这个组件的内容（照组件 README.md 与 ${COMPONENT_DOC}）`);
+    }
+  }
+  return bad;
 }
 
 function subdirs(dir) {

@@ -1,5 +1,7 @@
 // 组件上下文与组件分发器（规格 v0.5 §2.2）
-// createComponentContext({ id, options, io, state, db, log?, throttle?, stages?, anon?, actions?, ai? }) → cctx
+// createComponentContext({ id, options, io, state, db, log?, throttle?, stages?, anon?, actions?, ai?, componentReports? }) → cctx
+//   C5（课程本地组件规格 §4）：cctx.componentReports() → [{ id, label, report(name) }]——已打开组件里 server.js 导出了 report 的，
+//   按 lesson.config.components 顺序（report(name) 以该组件自己的 cctx 调用其 report(name, cctx)）；供 report 组件生成个人报告
 //   K6：cctx.ai 为内核统一 AI 接口（kernel/server/ai.js，缺省未配置实例），与阶段 ctx.ai 同一实例
 //   data 复用阶段的数据句柄（stageId = component:<id>），写入后内核照常发 stage:data-update / stage:my-data / stage:class-update
 //   anon 缺省为 state.anon（推进与重置时由 state 清空）；actions 缺省写 teacher_actions（stage_id = 当前阶段）
@@ -18,7 +20,7 @@ export const componentStageId = (id) => `component:${id}`;
 
 const dispatchStore = new AsyncLocalStorage();
 
-export function createComponentContext({ id, options, io, state, db, log, throttle, stages, anon, actions, ai }) {
+export function createComponentContext({ id, options, io, state, db, log, throttle, stages, anon, actions, ai, componentReports }) {
   const onRe = new RegExp(`^${id}:(t|s)-[a-z-]+$`);
   const emitRe = new RegExp(`^${id}:[a-z-]+$`);
   const handlers = new Map();
@@ -134,6 +136,10 @@ export function createComponentContext({ id, options, io, state, db, log, thrott
       onStageChange: (fn) => pushHook(hooks.stageChange, fn),
       onReset: (fn) => pushHook(hooks.reset, fn),
     },
+
+    // C5：提供个人报告条目的组件（见文件头）；缺省 []
+    componentReports: () => (typeof componentReports === 'function' ? componentReports() : componentReports ?? [])
+      .map((r) => ({ id: r.id, label: r.label, report: r.report })),
   };
   Object.defineProperty(cctx, COMPONENT_HANDLERS, { value: handlers, enumerable: false });
   Object.defineProperty(cctx, COMPONENT_HOOKS, { value: hooks, enumerable: false });

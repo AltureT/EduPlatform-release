@@ -21,14 +21,15 @@ import { ComponentSlot, useStudentBanner } from './ComponentSlots.jsx';
 import { KernelRoleContext } from '../hooks/roleContext.js';
 
 // PageStageContext 带 lessonId：<Page resizable> 按课记拖宽比例（P5 规格 §4）
-function StageView({ entry, curtainOverride, lessonId = null }) {
+// C5：isLive 经 PageStageContext 交给 <Page>，作为 studentAside 槽位的 props
+function StageView({ entry, curtainOverride, lessonId = null, isLive = true }) {
   if (!entry) return null;
   if (entry.id === 'prelogin') return <StudentLogin />;
   if (entry.id === 'curtain') return <Curtain role="student" title={entry.label} overrideDir={curtainOverride} />;
   const Comp = entry.Student;
   if (!Comp) return null;
   return (
-    <PageStageContext.Provider value={{ view: 'student', config: entry.config, lessonId }}>
+    <PageStageContext.Provider value={{ view: 'student', config: entry.config, lessonId, isLive }}>
       <Comp />
     </PageStageContext.Provider>
   );
@@ -187,7 +188,7 @@ function StudentShell() {
         {isReviewing && reviewedEntry && (
           <div data-testid="review-view" inert={lockReview} style={paneStyle}>
             <ActionSinkContext.Provider value={reviewSink}>
-              <StageView entry={reviewedEntry} curtainOverride={curtainOverride} lessonId={lesson.id} />
+              <StageView entry={reviewedEntry} curtainOverride={curtainOverride} lessonId={lesson.id} isLive={false} />
             </ActionSinkContext.Provider>
           </div>
         )}

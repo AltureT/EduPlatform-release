@@ -1,5 +1,9 @@
 // 组件发现（规格 v0.5 §2.1）
-// loadComponents(lessonConfig, componentsRoot) → [{ id, label, options, dir, register?, static, http, requires }]
+// loadComponents(lessonConfig, componentsRoot, { lessonComponentsRoot? }) → [{ id, label, options, dir, origin, register?, static, http, requires, report }]
+//   C5（课程本地组件规格 §2）：每个 id 先在 componentsRoot（平台组件）找，找不到再在 lessonComponentsRoot
+//   （= <lesson.config.js 所在目录>/components，见 lessonComponentsRootOf）找；两处都有 → 重名错误；origin = 'platform' | 'lesson'。
+//   lessonComponentsRoot 与 componentsRoot 是同一目录（模板根的 lesson.config.js）时视为没有课程组件。
+//   课程组件 id 不得等于内置组件 id（BUILTIN_COMPONENT_IDS）。server.js 可选导出 report(name, cctx)（缺省 null）
 //   K2（v0.6）：component.config.js 可选 static（{ '/前缀': '相对项目根的目录' }，缺省 null）、
 //   requires（[{ path, hint }]，缺省 []）；server.js 可选导出 http(router, cctx)（缺省 null）
 //   lesson.config.components：字符串 'id' 或 { id, ...options }；componentsRoot = <项目根>/components
@@ -78,7 +82,35 @@ function validateId(id) {
   if (RESERVED_COMPONENT_IDS.includes(id)) throw new Error(`component: id "${id}" is reserved`);
 }
 
-export async function loadComponents(lessonConfig, componentsRoot) {
+// C5：课程组件目录 = <lesson.config.js 所在目录>/components
+export function lessonComponentsRootOf(configPath) {
+  return path.join(path.dirname(path.resolve(configPath)), 'components');
+}
+
+// C5：id 对应的组件目录与来源；平台优先，两处都有 → 重名错误，都没有 → unknown component
+export function locateComponent(id, componentsRoot, lessonComponentsRoot) {
+  const platformDir = path.join(componentsRoot, id);
+  const lessonRoot = lessonComponentsRoot && path.resolve(lessonComponentsRoot) !== path.resolve(componentsRoot)
+    ? lessonComponentsRoot
+    : null;
+  const lessonDir = lessonRoot ? path.join(lessonRoot, id) : null;
+  const inPlatform = fs.existsSync(platformDir);
+  const inLesson = lessonDir !== null && fs.existsSync(lessonDir);
+  if (inPlatform && inLesson) {
+    throw new Error(`component "${id}": 课程组件 ${id} 与平台组件重名，请改名（${lessonDir}）`);
+  }
+  if (inPlatform) return { dir: platformDir, origin: 'platform' };
+  if (inLesson) {
+    if (BUILTIN_COMPONENT_IDS.includes(id)) {
+      throw new Error(`component "${id}": 课程组件 id "${id}" 是平台内置组件的名字，请改名（建议 x- 开头）`);
+    }
+    return { dir: lessonDir, origin: 'lesson' };
+  }
+  const where = lessonDir ?? path.join('lessons', '<课程目录>', 'components', id);
+  throw new Error(`component "${id}": unknown component (no directory ${platformDir}；或在 ${where}${path.sep} 下建一个课程组件)`);
+}
+
+export async function loadComponents(lessonConfig, componentsRoot, { lessonComponentsRoot = null } = {}) {
   const list = lessonConfig?.components ?? [];
   if (!Array.isArray(list)) throw new Error('lesson config: components must be an array');
   const out = [];
@@ -89,9 +121,8 @@ export async function loadComponents(lessonConfig, componentsRoot) {
     if (seen.has(id)) throw new Error(`component "${id}": duplicate id in lesson config`);
     seen.add(id);
 
-    const dir = path.join(componentsRoot, id);
+    const { dir, origin } = locateComponent(id, componentsRoot, lessonComponentsRoot);
     const cfgFile = path.join(dir, 'component.config.js');
-    if (!fs.existsSync(dir)) throw new Error(`component "${id}": unknown component (no directory ${dir})`);
     if (!fs.existsSync(cfgFile)) throw new Error(`component "${id}": missing component.config.js (${cfgFile})`);
     const config = (await import(pathToFileURL(cfgFile).href)).default;
     if (!isPlainObject(config)) throw new Error(`component "${id}": component.config.js must export default an object`);
@@ -107,9 +138,11 @@ export async function loadComponents(lessonConfig, componentsRoot) {
       label: config.label,
       options,
       dir,
+      origin,
       static: parseStatic(id, config.static),
       http: null,
       requires: parseRequires(id, config.requires),
+      report: null,
     };
     const serverFile = path.join(dir, 'server.js');
     if (fs.existsSync(serverFile)) {
@@ -119,6 +152,11 @@ export async function loadComponents(lessonConfig, componentsRoot) {
       if (mod.http !== undefined) {
         if (typeof mod.http !== 'function') throw new Error(`component "${id}": server.js export http must be a function http(router, cctx)`);
         item.http = mod.http;
+      }
+      // C5（课程本地组件规格 §4）：可选 report(name, cctx) → [{ label, value, format? }]，由 report 组件在各阶段之后调用
+      if (mod.report !== undefined) {
+        if (typeof mod.report !== 'function') throw new Error(`component "${id}": server.js export report must be a function report(name, cctx)`);
+        item.report = mod.report;
       }
     }
     out.push(item);

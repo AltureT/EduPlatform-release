@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
-import { loadComponents } from '../kernel/server/component-loader.js';
+import { loadComponents, lessonComponentsRootOf } from '../kernel/server/component-loader.js';
 
 dotenv.config({ quiet: true });
 
@@ -18,7 +18,7 @@ const baseDir = path.resolve(process.env.VENDOR_ROOT || ROOT);
 
 async function main() {
   const { default: lessonConfig } = await import(pathToFileURL(lessonPath).href);
-  const components = await loadComponents(lessonConfig, componentsRoot);
+  const components = await loadComponents(lessonConfig, componentsRoot, { lessonComponentsRoot: lessonComponentsRootOf(lessonPath) });
   const missing = [];
   for (const c of components) {
     for (const r of c.requires) {

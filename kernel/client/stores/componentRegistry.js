@@ -11,11 +11,11 @@ import componentGlob from './componentGlob.js';
 const FILE_RE = /([^/\\]+)[/\\]client\.jsx$/;
 const EMPTY_SLOTS = Object.freeze({});
 
-// 槽位清单（可选组件规格 §2.3；v0.7.1 加 studentBanner）。外壳按名字渲染，不在清单里的名字不会被渲染：
-// discoverComponents 在开发模式下对清单外的 slots 键 console.warn（多半是拼错）
+// 槽位清单（可选组件规格 §2.3；v0.7.1 加 studentBanner；C5 加 studentAside，由 <Page> 在学生视图里渲染）。
+// 外壳按名字渲染，不在清单里的名字不会被渲染：discoverComponents 在开发模式下对清单外的 slots 键 console.warn（多半是拼错）
 export const SLOT_NAMES = Object.freeze([
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
-  'studentOverlay', 'studentCurtain', 'studentBanner',
+  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside',
 ]);
 const DEV = (() => {
   try {

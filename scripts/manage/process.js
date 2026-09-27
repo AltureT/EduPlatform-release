@@ -21,7 +21,7 @@ import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadComponents } from '../../kernel/server/component-loader.js';
+import { loadComponents, lessonComponentsRootOf } from '../../kernel/server/component-loader.js';
 import { effectiveEnv, platformEnv } from './env-file.js';
 import { readLesson } from './lessons.js';
 import { needsBuild, build, pipeLines } from './build.js';
@@ -115,7 +115,9 @@ export function createLogWriter(file, maxBytes = LOG_MAX_BYTES) {
 export async function checkRequires(root, lessonRel) {
   const lesson = await readLesson(root, lessonRel);
   if (!lesson) throw new Error(`找不到课程配置 ${lessonRel}`);
-  const components = await loadComponents(lesson.config, path.join(root, 'components'));
+  const components = await loadComponents(lesson.config, path.join(root, 'components'), {
+    lessonComponentsRoot: lessonComponentsRootOf(path.resolve(root, lessonRel)),
+  });
   const missing = [];
   let needed = false;
   for (const c of components) {

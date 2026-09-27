@@ -2,6 +2,7 @@
 // { view: 'student' | 'demo' | 'stats', config }，config 为该阶段 stage.config（与 useStudentStage(id).stage 同一对象）。
 // 学生视图缺省模板取 config.layout（缺省 focus）；教师演示视图缺省 focus；统计视图由外壳套 table。
 // P5：学生外壳另给 lessonId（lesson.id），<Page resizable> 用它生成拖宽比例的记忆键；没有时不记。
+// C5：学生视图另给 isLive（live 窗格 true、回看窗格 false；镜像按本端当前阶段），作为 studentAside 槽位的 props；缺省按 true。
 import { createContext } from 'react';
 
 export const PageStageContext = createContext(null);

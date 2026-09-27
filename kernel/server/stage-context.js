@@ -1,5 +1,5 @@
 // 阶段上下文（规格 §6、契约 §三）
-// createStageContext({ io, state, db, stageId, config, log?, throttle?, ai?, anon? }) → ctx（register / gate / 钩子共用同一对象）
+// createStageContext({ io, state, db, stageId, config, log?, throttle?, ai?, anon?, componentIds? }) → ctx（register / gate / 钩子共用同一对象）
 //   K6：ctx.ai 为内核统一 AI 接口（kernel/server/ai.js，缺省未配置实例）；ctx.anon.code(name) 与 cctx.anon 同源（缺省 state.anon）
 // createDispatcher({ io, state, contexts }) → { handle(socket, event, payload), attach(socket), events() }
 // createDataHandle({ io, state, db, stageId, throttle }) → ctx.data（v0.5：组件上下文复用，stageId = component:<id>）
@@ -13,12 +13,23 @@ export const HANDLERS = Symbol('stageHandlers');
 
 const EVENT_RE = /^(student|teacher):[a-z-]+$/;
 // 契约 v0.5 §三：classroom:* / stage:* / student:* / teacher:* / error:* 由内核与阶段按现有规则使用；
-// 组件前缀（内置组件固定 id）阶段不得使用
+// 组件前缀阶段不得使用。C5（课程本地组件规格 §2）：组件前缀由已加载组件 id 运行时生成（createKernel 经
+// createStageContext({ componentIds }) 传入），与内置表合并；内置表（内置组件固定 id）只作缺省
 export const COMPONENT_EVENT_PREFIXES = ['share:', 'inbox:', 'report:', 'mirror:', 'coach:', 'sandbox:', 'web-sim:'];
-const RESERVED_PREFIXES = [
+const KERNEL_RESERVED_PREFIXES = [
   'classroom:', 'error:', 'student:join', 'student:request-claim-release', 'teacher:join', 'teacher:advance',
-  'teacher:admin-', ...COMPONENT_EVENT_PREFIXES,
+  'teacher:admin-',
 ];
+
+// 已加载组件 id → 事件前缀（'<id>:'），并上内置表；不传 / 空时即内置表
+export function componentEventPrefixes(ids = []) {
+  const out = [...COMPONENT_EVENT_PREFIXES];
+  for (const id of ids ?? []) {
+    const p = `${id}:`;
+    if (typeof id === 'string' && id && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
 const RESERVED_EXACT = new Set([
   'stage:change', 'stage:sub-phase', 'stage:data-update', 'stage:class-update', 'stage:my-data',
   'student:joined', 'student:left', 'student:switch-name',
@@ -26,15 +37,18 @@ const RESERVED_EXACT = new Set([
   'teacher:import-roster', 'teacher:clear-roster',
 ]);
 
-export function isReservedEvent(event) {
-  return RESERVED_EXACT.has(event) || RESERVED_PREFIXES.some((p) => event.startsWith(p));
+// componentPrefixes 缺省为内置表（COMPONENT_EVENT_PREFIXES）
+export function isReservedEvent(event, componentPrefixes = COMPONENT_EVENT_PREFIXES) {
+  return RESERVED_EXACT.has(event)
+    || KERNEL_RESERVED_PREFIXES.some((p) => event.startsWith(p))
+    || componentPrefixes.some((p) => event.startsWith(p));
 }
 
-export function validateEventName(event) {
+export function validateEventName(event, componentPrefixes = COMPONENT_EVENT_PREFIXES) {
   if (typeof event !== 'string' || !EVENT_RE.test(event)) {
     throw new Error(`invalid event name ${JSON.stringify(event)} (must match ${EVENT_RE})`);
   }
-  if (isReservedEvent(event)) throw new Error(`event "${event}" is reserved by the kernel`);
+  if (isReservedEvent(event, componentPrefixes)) throw new Error(`event "${event}" is reserved by the kernel`);
 }
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -81,8 +95,9 @@ export function createDataHandle({ io, state, db, stageId, throttle }) {
   };
 }
 
-export function createStageContext({ io, state, db, stageId, config, log, throttle, ai, anon }) {
+export function createStageContext({ io, state, db, stageId, config, log, throttle, ai, anon, componentIds }) {
   const handlers = new Map();
+  const componentPrefixes = componentEventPrefixes(componentIds);
   const prefix = `stage:${stageId}:`;
   const stageLog = log ?? createLog(stageId);
 
@@ -106,7 +121,7 @@ export function createStageContext({ io, state, db, stageId, config, log, thrott
     stageId,
 
     on(event, schema, handler) {
-      validateEventName(event);
+      validateEventName(event, componentPrefixes);
       if (typeof schema !== 'function') throw new Error(`stage "${stageId}": on("${event}") requires a schema (use shape({}))`);
       if (typeof handler !== 'function') throw new Error(`stage "${stageId}": on("${event}") handler must be a function`);
       if (handlers.has(event)) throw new Error(`stage "${stageId}": event "${event}" already registered`);

@@ -6,6 +6,7 @@ import { Component, useMemo } from 'react';
 import { coreStudentStore } from '../stores/coreStudentStore.js';
 import { coreTeacherStore } from '../stores/coreTeacherStore.js';
 import { assembleComponents, SLOT_NAMES } from '../stores/componentRegistry.js';
+import { useKernelRole } from '../hooks/roleContext.js';
 
 export { SLOT_NAMES };
 
@@ -44,6 +45,26 @@ export function useStudentBanner() {
       <div key={`banner-${c.id}`} data-banner-row={c.id} className="banner-row">
         <SlotBoundary id={c.id} slot="studentBanner">
           <Banner />
+        </SlotBoundary>
+      </div>
+    );
+  });
+}
+
+// C5（课程本地组件规格 §3）：学生页段内旁挂 studentAside——<Page> 在学生视图（含镜像）里调用，
+// 每个提供者一行 <div data-aside-row={id} class="aside-row">（提供者返回 null 时 :empty 隐藏，不占位），
+// 按 lesson.config 顺序纵向堆叠；props { stageId, isLive }；无提供者时返回 null（不产生任何包裹元素）。
+// 组件列表取本端 core store（学生外壳 = 学生端；教师端镜像 = 教师端，组件列表相同）
+export function StudentAside({ stageId, isLive }) {
+  const components = useOpenComponents(useKernelRole());
+  const list = slotProviders(components, 'studentAside');
+  if (list.length === 0) return null;
+  return list.map((c) => {
+    const Aside = c.slots.studentAside;
+    return (
+      <div key={`aside-${c.id}`} data-aside-row={c.id} className="aside-row">
+        <SlotBoundary id={c.id} slot="studentAside">
+          <Aside stageId={stageId} isLive={isLive} />
         </SlotBoundary>
       </div>
     );
