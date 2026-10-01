@@ -9,14 +9,18 @@
 //   日志：stdout / stderr 写 data/logs/server.log（> 5 MB 改名为 .1 保留一份）并进内存环形缓冲（500 行）
 //   explainFailure(lines, port) / describeExit(code, signal) / portBusyError(port, owner, suggestPort)：纯函数，给教师看的一句话原因
 //   failMessage(kind, { what, seconds })：M3 审查，端口以外各类失败的一句话（不含原始报错、退出码、"构建"；原始信息只进 detail）
+//   G3：LESSON_CONFIG 空值（还没有课程）→ error = { kind: 'no-lesson', message: '还没有课程，先新建一门' }，不启动
 //   status().lessonConfig：M3 审查，平台启动时的 LESSON_CONFIG（上课面板显示正在跑的课）
+//   status().dbPath：M6 审查，平台启动时实际用的库（绝对路径；启动前算好、以 DB_PATH 传给子进程：.env 自定义 DB_PATH，否则 data/lessons/<课程 id>.sqlite）；
+//     管理台据它判断名单 / 数据页选中的课是不是"正在跑"（比较库路径）
 //   端口被占时 error = { kind: 'port', reason: 'in-use', port, owner, suggestPort, message }；
 //     reason 'no-permission'（需要管理员权限）/ 'not-ours'（stopOld 指向的不是本项目平台；同样带 suggestPort）
 //   运行中意外退出：error = { kind: 'crash', phase: 'running', message, detail }
 //   checkRequires(root, lessonRel) → { needed, missing, components }：复用 component-loader 的 loadComponents
 //   L1：启动顺序：读课程 → 课程校验 → requires 检查（组件写错先由校验逐条报出）；课程校验（checkLesson(root, lessonRel)，缺省 check:lesson 跑在 worker 线程里）：
-//     有错误 → error = { kind: 'check', message: '课程有 N 处问题…', detail: 每条一行, check }，不构建不启动；
-//     status().check = 最近一次启动时的检查结果 { ok, errors, warnings, path, at }（只有警告时照常启动，页面显示"课程有 M 处提醒"）
+//     V1（代码题测试验证规格 §5.5）：只有课程加载不了（rule 'loader' 的错误）→ error = { kind: 'check', message: '课程文件加载不了…', detail: 每条一行, check }，
+//     不构建不启动；其它错误与警告照常构建启动（任何检查结果都不拦上课），页面状态带显示"课程有 N 处问题、M 处提醒，已照常启动"；
+//     status().check = 最近一次启动时的检查结果 { ok, errors, warnings, path, at, tests }
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -24,6 +28,7 @@ import path from 'node:path';
 import { loadComponents, lessonComponentsRootOf } from '../../kernel/server/component-loader.js';
 import { effectiveEnv, platformEnv } from './env-file.js';
 import { readLesson } from './lessons.js';
+import { lessonDbPath } from '../../kernel/server/lesson-db-path.js';
 import { needsBuild, build, pipeLines } from './build.js';
 import { probePort, suggestPort } from './net.js';
 import { findPortOwner, stopOwnPlatform } from './port-owner.js';
@@ -62,10 +67,11 @@ const WHAT = { 构建: '准备页面', 启动: '启动', 重启: '重启' };
 
 export function failMessage(kind, { what, seconds, count } = {}) {
   switch (kind) {
+    case 'no-lesson': return '还没有课程，先新建一门';
     case 'password': return '请先在设置里填写教师密码';
     case 'requires': return '当前课程需要的文件还没准备好，请先下载';
     case 'lesson': return '这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试，或换一门课';
-    case 'check': return `课程有 ${count} 处问题，改好之前不能启动；点"查看详情"看是哪几处，可以"复制给 AI"让它照着改`;
+    case 'check': return `课程文件加载不了，平台起不来：有 ${count} 处要改；点"查看详情"看是哪几处，可以"复制给 AI"让它照着改`;
     case 'build': return `页面没能准备好，${SEND_LOG}`;
     case 'crash': return `平台没能启动，${SEND_LOG}`;
     case 'timeout': return `平台 ${seconds} 秒内没有启动完成，已停止；${SEND_LOG}`;
@@ -156,7 +162,7 @@ export function createPlatform({
   const ee = new EventEmitter();
   const ring = [];
   const writer = createLogWriter(logFile);
-  const st = { state: 'stopped', port: null, startedAt: null, lesson: null, lessonConfig: null, error: null, lastExit: null, check: null };
+  const st = { state: 'stopped', port: null, startedAt: null, lesson: null, lessonConfig: null, dbPath: null, error: null, lastExit: null, check: null };
   let child = null;
   let buildChild = null;
   let op = null; // 进行中的 start / rebuild
@@ -213,19 +219,25 @@ export function createPlatform({
     };
     const fileEnv = effectiveEnv(root);
     const port = Number(fileEnv.PORT);
+    // G3（管理台线性路径重设计规格 §2.4）：还没有课程（LESSON_CONFIG 空值）→ 不启动；线性路径第一步是新建课程，先于密码检查
+    if (!fileEnv.LESSON_CONFIG) return fail({ kind: 'no-lesson', message: failMessage('no-lesson') });
     if (!fileEnv.TEACHER_PASSWORD) return fail({ kind: 'password', message: failMessage('password') });
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       return fail({ kind: 'port', message: `端口 ${fileEnv.PORT} 不对，请在设置里改成 1 到 65535 之间的整数` });
     }
     let lessonTitle = null;
+    let dbPath = null;
     try {
       const lesson = await readLesson(root, fileEnv.LESSON_CONFIG);
       if (!lesson) throw new Error(`找不到课程配置 ${fileEnv.LESSON_CONFIG}`);
       lessonTitle = lesson.title ?? null;
+      // M6 审查：这次启动用的库（课程 id 不合法时 lessonDbPath 抛错 → 按课程读不出处理）
+      const explicit = extraEnv.DB_PATH ?? fileEnv.DB_PATH;
+      dbPath = explicit ? path.resolve(root, explicit) : lessonDbPath(root, lesson.id);
     } catch (err) {
       return fail({ kind: 'lesson', message: failMessage('lesson'), detail: [String(err?.message ?? err)] });
     }
-    // L1：构建之前先校验课程（check:lesson，worker 线程里跑，读到的是课程文件的最新内容）；有错误不构建、不启动。
+    // L1：构建之前先校验课程（check:lesson，worker 线程里跑，读到的是课程文件的最新内容）；V1：只有加载不了才不构建、不启动。
     // 校验器自身出错时只记日志、照常启动（不因检查工具的问题挡住上课）
     let check = null;
     try {
@@ -235,19 +247,20 @@ export function createPlatform({
     }
     if (abort) return { ok: false, error: null };
     st.check = check; // 不单独发状态事件，随下一次 set 一起发出
-    if (check && check.errors.length > 0) {
-      return fail({
-        kind: 'check',
-        message: failMessage('check', { count: check.errors.length }),
-        detail: check.errors.map(formatItem),
-        check,
-      });
-    }
-    // 组件写错（不存在的组件等）已由上面的检查逐条报出；检查器自身失败时仍按"读不出来"处理
+    const checkFail = (count) => fail({
+      kind: 'check',
+      message: failMessage('check', { count }),
+      detail: check.errors.map(formatItem),
+      check,
+    });
+    const loaderErrors = check ? check.errors.filter((e) => e.rule === 'loader') : [];
+    if (loaderErrors.length > 0) return checkFail(loaderErrors.length);
+    // 组件写错（不存在的组件等）平台同样起不来：检查已逐条报出时按"加载不了"列出；检查器自身失败时仍按"读不出来"处理
     let req;
     try {
       req = await checkRequires(root, fileEnv.LESSON_CONFIG);
     } catch (err) {
+      if (check && check.errors.length > 0) return checkFail(check.errors.length);
       return fail({ kind: 'lesson', message: failMessage('lesson'), detail: [String(err?.message ?? err)] });
     }
     if (req.missing.length) {
@@ -283,7 +296,7 @@ export function createPlatform({
       set({ state: 'starting' });
     }
 
-    const childEnv = { ...process.env, ...fileEnv, ...extraEnv };
+    const childEnv = { ...process.env, ...fileEnv, DB_PATH: dbPath, ...extraEnv };
     writer.write(`==== 启动 ${new Date().toISOString()} 端口 ${port}`);
     const c = spawn(serverCommand[0], serverCommand.slice(1), {
       cwd: root, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
@@ -339,7 +352,7 @@ export function createPlatform({
     }
     if (abort) return { ok: false, error: null };
     startedEnv = JSON.stringify(platformEnv(root));
-    set({ state: 'running', port, startedAt: Date.now(), lesson: lessonTitle, lessonConfig: fileEnv.LESSON_CONFIG });
+    set({ state: 'running', port, startedAt: Date.now(), lesson: lessonTitle, lessonConfig: fileEnv.LESSON_CONFIG, dbPath });
     log(`[manage] 平台已启动，端口 ${port}`);
     return { ok: true };
   }
@@ -369,6 +382,11 @@ export function createPlatform({
     op = (async () => {
       set({ error: null });
       const lessonConfig = effectiveEnv(root).LESSON_CONFIG;
+      if (!lessonConfig) {
+        const error = { kind: 'no-lesson', message: failMessage('no-lesson') };
+        set({ state: 'stopped', error });
+        return { ok: false, error };
+      }
       const r = await runBuild(lessonConfig);
       if (abort) return { ok: false, error: null };
       const error = r.ok ? null : { kind: 'build', message: failMessage('build'), detail: r.lines.slice(-20) };
@@ -517,4 +535,83 @@ export async function acquireManageLock(root, { pid = process.pid, isAlive = pid
     };
   }
   throw new Error(`无法获取 ${LOCK_FILE}`);
+}
+
+// ===== S6：npm run manage 遇旧管理台窗口时自动接管 =====
+//   pingManage(port, { timeoutMs = 1000 }) → GET http://127.0.0.1:<port>/api/ping 的 JSON；连不上 / 超时 / 非 200 / 非 JSON → null
+//   decideTakeover({ other, pingResult, root }) → 纯函数：
+//     { action: 'replace', pid }：旧窗口已写端口、ping 回的是本项目管理台（app 相符、root 与本项目相同、pid 与锁里一致）且平台 stopped
+//     { action: 'busy', state }：同上但 platformState 不是 stopped（running / starting / building / stopping；
+//       'updating' = 正在更新平台或更新成功等重启；'busy' = 离线恢复 / 重置中或 Python 运行时下载中）→ 不接管
+//   takeoverMessage(state) → busy 时给教师的一句话（按 state 区分）
+//     { action: 'none', reason: 'starting' | 'no-ping' | 'not-ours' }：旧窗口正在启动 / ping 不通 / 不是本项目或 pid 对不上 → 不接管，提示不变
+//   replaceOldManage({ pid, kill?, acquire, sleep?, timeoutMs = 10000, now? }) → 对 pid 发一次结束信号（Windows process.kill(pid)，
+//     其它 SIGTERM），再每 200 ms 重取锁（acquire 抛错当作没取到），最多 timeoutMs；取到返回锁，超时返回 null。
+//     只应以 decideTakeover 给出的 pid 调用
+export const MANAGE_APP = 'eduplatform-manage';
+
+export async function pingManage(port, { timeoutMs = 1000 } = {}) {
+  if (!Number.isInteger(port) || port <= 0) return null;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/api/ping`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (r.status !== 200) return null;
+    const body = await r.json();
+    return body && typeof body === 'object' && !Array.isArray(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameRoot(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+  const norm = (p) => {
+    const r = path.resolve(p);
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  };
+  return norm(a) === norm(b);
+}
+
+export function decideTakeover({ other, pingResult, root }) {
+  if (!other || other.starting || !other.port) return { action: 'none', reason: 'starting' };
+  if (!pingResult) return { action: 'none', reason: 'no-ping' };
+  const ours = typeof pingResult === 'object' && !Array.isArray(pingResult)
+    && pingResult.app === MANAGE_APP
+    && sameRoot(pingResult.root, root)
+    && Number.isInteger(other.pid) && other.pid > 0 && pingResult.pid === other.pid;
+  if (!ours) return { action: 'none', reason: 'not-ours' };
+  if (pingResult.platformState !== 'stopped') return { action: 'busy', state: pingResult.platformState ?? null };
+  return { action: 'replace', pid: other.pid };
+}
+
+function killManage(pid) {
+  if (process.platform === 'win32') process.kill(pid);
+  else process.kill(pid, 'SIGTERM');
+}
+
+export async function replaceOldManage({
+  pid, kill = killManage, acquire, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), timeoutMs = 10_000, now = Date.now,
+}) {
+  try {
+    kill(pid);
+  } catch {
+    // 进程已不在（ESRCH）等：照常等锁，acquireManageLock 会清理残留锁
+  }
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    let lock = null;
+    try {
+      lock = await acquire();
+    } catch {
+      lock = null; // 读写锁文件出错：当作没取到，下一轮再试
+    }
+    if (lock?.ok) return lock;
+    if (now() >= deadline) return null;
+    await sleep(200);
+  }
+}
+
+export function takeoverMessage(state) {
+  if (state === 'updating') return '那个窗口正在更新平台，等它完成后会自动重启，请用重启后的窗口。';
+  if (state === 'busy') return '那个窗口正在恢复 / 重置数据或下载运行时，等它完成再试。';
+  return '另一个管理台窗口正在上课，请用那个窗口；确实要换窗口，先在那边停止平台。';
 }

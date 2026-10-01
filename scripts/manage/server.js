@@ -6,22 +6,49 @@
 //     POST /api/platform/start 可带 { stopOld: <进程号> }（"停止它并启动"，只对判定为本项目的旧平台生效）
 //   M3：overview 增加 runningLesson（运行中平台启动时的课程，未运行 null）、lesson.missing（找不到，区别于写坏了读不出）、build.stale（运行中且课程源文件有更新，首页黄条"重启并应用"）；setup.lessonChosen 只看课程能否读出
 //   EventSource 不能带自定义请求头，故 GET /api/events 另接受查询参数 t（只此一处）
+//   S6：GET /api/ping 无鉴权 → { app: 'eduplatform-manage', root, pid, platformState, version }（不含 token 与其它信息）；
+//     platformState 更新中 'updating'、离线恢复 / 重置或运行时下载中 'busy'，否则平台状态；pingInfo() 同内容（测试用）
 //   L1：POST /api/lesson/check { path? } → { ok, errors, warnings, lesson, path, at }（check:lesson，worker 线程）；
 //     overview.check = 当前课最近一次检查结果（本接口或启动前的检查，取较新的），没有则 null；checkLesson(root, rel) 可注入
-//   M4：课程页接口 /api/lessons/overview、/templates、/template.{docx,md}、POST /api/lessons（新建）、
+//   M4：课程列表（第 1 步）接口 /api/lessons/overview、/templates、/template.{docx,md}、POST /api/lessons（新建）、
 //     /api/lessons/:scope/:name/{current,draft,open,opening}、DELETE /api/lessons/:scope/:name（lesson-admin.js）；
 //     openFolder(dir) 与 maxDraftBytes 可注入（测试用）
+//   G1（做课步骤引导规格 §2.3）：overview 增 platformDir（平台根目录绝对路径）；POST /api/platform/open → { ok }（openFolder(root)，打不开 500）
 //   K7：GET /api/settings 多一项 platformFiles（框架自描述规格 §4）：{ checked, version, builtAt?, total?, changes?, modified?, missing?, added? }
 //     ——版本.json 的 protected 清单与本机平台文件比对（三个数组各最多 PLATFORM_LIST_MAX 条）；没有 版本.json 时 checked: false、version 取 package.json
+//   R4（管理台更新规格 §2–§4）：POST /api/update/check → { current, dev, latest, checkedAt, error? }（Gitee → GitHub，结果写 data/update-check.json）；
+//     overview / settings 带 update: { current, dev, latest, checkedAt, running, result }（读缓存，不联网）；
+//     POST /api/update/apply { version } → 起 scripts/update-platform.mjs 子进程，逐行经 SSE update 事件广播，结束时 update { done, ok, code, version, backupDir?, tail }；
+//     成功 → 1 s 后调 onUpdated(version)（index.js 停平台、释放锁、以退出码 75 退出，入口脚本重启管理台）；
+//     scheduleUpdateCheck({ delayMs })：启动静默检查（缓存不足 24 小时跳过，失败不写缓存）；fetch / updateSources / updateCommand 可注入（测试用）；
+//     创建时先 recoverInterruptedUpdate（上次更新覆盖到一半被打断 → 按备份恢复），结果放 update.recovered（首页提示）；
+//     waitForUpdate(ms) → Promise<boolean>：更新子进程在跑就等它结束（index.js 关闭时用，最多 60 s），不在跑立即 true
+//   M6（名单与数据以课程为主体规格 §2.4、§2.5）：名单 / 备份 / 恢复 / 重置接口都带 ?lesson=<课程目录>（examples/x、lessons/x；'.' = 根目录开发课），
+//     缺省 = 平台正在跑的课，没在跑则 .env 当前课；找不到 404、读不出 400。选中课正在跑（库与正在跑的课是同一个）→ 走平台接口；
+//     否则直接读写它的库（平台停止时先 guardOffline；平台正在跑别的课时不用）。过渡状态 409。
+//     备份接口另接受 lesson=_unsorted（迁移时读不出课程的旧库与旧备份目录 backups/）：只能列出、下载、备份一份、恢复到指定课程
+//     （POST /api/backups/:file/restore?lesson=_unsorted { to: <课程目录>, allowOther? }）；恢复前读备份里的课程 id，与目标课不同且没带
+//     allowOther: true → 409 { error, from, fromTitle }；POST /api/unsorted/delete { confirm: true } 把未归类的旧库移到 backups/deleted-lessons/。
+//     overview.data 按正在跑 / 当前课，另带 custom（.env 自定义 DB_PATH）、unsorted { db, backups }；overview.migrated 见 migrate-db.js；
+//     /api/lessons/overview 每行 data（lesson-admin.js lessonRow）
+//   K8（AI 备用线路规格 §5）：POST /api/ai/test { which: 1 | 2, baseUrl, model, apiKey? } → { ok: true, ms } | { ok: false, reason, text }；
+//     参数不对 400 { error }；出站请求用注入的 fetch（ai-test.js）
+//   G3（管理台线性路径重设计规格 §2.4、§3）：/api/lessons、/api/lessons/overview 只列 lessons/（遗留的示例当前课例外）；
+//     overview.currentLesson（lesson-admin.js currentLessonRow）；LESSON_CONFIG 空值 = 还没有课程（overview.lesson { none: true }）；
+//     PUT /api/settings 的课程候选 = 我的课 + 根目录开发课 + 当前值；示例课不能设为当前课程（403）
+//   K9（AI 备用线路规格 §5.1）：POST /api/ai/models { which: 1 | 2, baseUrl, apiKey? } → { ok: true, models } | { ok: false, reason, text }；
+//     参数不对 400 { error }；GET <baseUrl>/models 用注入的 fetch（ai-models.js）
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings, downloadEnv } from './env-file.js';
-import { listLessonChoices, readLesson, lessonDir } from './lessons.js';
-import { createPlatform, checkRequires } from './process.js';
+import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings, downloadEnv, customDbPath } from './env-file.js';
+import { migrateDb, takeMigratedNotice } from './migrate-db.js';
+import { lessonIdError, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
+import { listLessons, listLessonChoices, readLesson, lessonDir, DEV_LESSON } from './lessons.js';
+import { createPlatform, checkRequires, MANAGE_APP } from './process.js';
 import { lanAddresses, probePort } from './net.js';
 import { qrSvg } from './qr.js';
 import { pipeLines, sourceStale } from './build.js';
@@ -30,14 +57,20 @@ import * as roster from './roster.js';
 import { checkLessonInWorker } from '../lib/check-in-worker.js';
 import * as lessonAdmin from './lesson-admin.js';
 import { readUpload } from './upload.js';
+import { parseAITest, runAITest } from './ai-test.js';
+import { parseAIModels, fetchModels } from './ai-models.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
+import { checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, RELEASE_API } from '../lib/update-platform.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, 'public');
 const userError = (message, status = 400) => Object.assign(new Error(message), { status, expose: true });
 export const PLATFORM_LIST_MAX = 20;
+export const UPDATE_CACHE = 'data/update-check.json';
+export const UPDATE_CHECK_TTL = 24 * 3_600_000;
+export const UPDATE_EXIT_DELAY = 1000;
 
-// K7：设置页"版本"一行（平台文件完好 / 有 N 处改动）
+// K7："平台"页"版本"一行（平台文件完好 / 有 N 处改动）
 export function platformFilesInfo(root) {
   const r = checkPlatformFiles(root);
   let version = r.version;
@@ -85,15 +118,101 @@ export function createManageServer({
   checkLesson = (projectRoot, rel) => checkLessonInWorker(rel, { root: projectRoot, componentsRoot: path.join(projectRoot, 'components') }),
   openFolder = (dir) => lessonAdmin.openFolder(dir),
   maxDraftBytes = lessonAdmin.MAX_DRAFT_BYTES,
+  fetch: fetchImpl = globalThis.fetch,
+  updateSources = RELEASE_API,
+  updateCommand,
+  onUpdated = () => {},
 }) {
   if (!token) throw new Error('token required');
   platform ??= createPlatform({ root, serverCommand, buildCommand, log, checkLesson });
   const lastChecks = new Map(); // L1：每门课最近一次 POST /api/lesson/check 的结果（课程路径 → 结果）
-  const backupDir = path.join(root, 'backups');
-  const dbPath = () => path.resolve(root, effectiveEnv(root).DB_PATH);
+  // V1：每张卡带该课最近一次检查的摘要（"检查课程"按钮或启动前的检查）
+  const allChecks = () => [...lastChecks.values(), platform.status().check];
+  // M6：名单 / 数据页选中的课。param = 课程目录（examples/x、lessons/x；'.' = 根目录开发课；缺省 = 正在跑的课，没在跑则 .env 当前课）；
+  //   allowUnsorted 时另可选 '_unsorted'（未归类的旧数据）。→ { dir, configRel, id, title, dbPath, backupDir, running, unsorted, custom }
+  //   running：平台在跑，且正在跑的课用的就是这个库（同 id 的两门课、自定义 DB_PATH 都算）
+  async function selectLesson(param, { allowUnsorted = false } = {}) {
+    await migrationDone;
+    const customDb = customDbPath(root);
+    const s = platform.status();
+    if (param === UNSORTED_ID) {
+      if (!allowUnsorted) throw userError('请先选一门课', 400);
+      return { dir: UNSORTED_ID, configRel: null, id: UNSORTED_ID, title: null, ...backups.lessonPaths(root, UNSORTED_ID), running: false, unsorted: true, custom: false };
+    }
+    let rel;
+    if (param === undefined || param === null || param === '') {
+      rel = s.state === 'running' && s.lessonConfig ? s.lessonConfig : effectiveEnv(root).LESSON_CONFIG;
+    } else {
+      if (typeof param !== 'string') throw userError('课程位置不对，请刷新页面后再试');
+      const want = param === '.' ? '' : param;
+      const hit = (await lessonCandidates()).find((c) => c.dir === want);
+      if (!hit) throw userError('找不到这门课程，可能已经删掉了；请刷新页面', 404);
+      rel = hit.path;
+    }
+    const l = await readLesson(root, rel).catch(() => null);
+    if (!l || lessonIdError(l.id)) throw userError('这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试', 400);
+    const paths = backups.lessonPaths(root, l.id, { customDb });
+    // M6 审查：比较库路径——平台启动时记下的实际库（status().dbPath）与选中课的库相同才算正在跑；记不到时保守判为正在跑
+    const running = s.state === 'running' && (!s.dbPath || path.resolve(paths.dbPath) === path.resolve(s.dbPath));
+    return { dir: lessonDir(rel) || '.', configRel: rel, id: l.id, title: l.title ?? null, ...paths, running, unsorted: false, custom: Boolean(customDb) };
+  }
+  const lessonParam = (req) => req.query?.lesson ?? req.body?.lesson;
+  // G3：可选的课 = 我的课 + .env 当前课（遗留示例课 / 根目录开发课）+ 平台正在跑的课（与当前课不同时）
+  async function lessonCandidates() {
+    const current = effectiveEnv(root).LESSON_CONFIG;
+    const out = await listLessonChoices(root, { warn: log, current });
+    const s = platform.status();
+    if (s.state === 'running' && s.lessonConfig && !lessonAdmin.sameLessonPath(s.lessonConfig, current)) {
+      for (const c of await listLessonChoices(root, { warn: () => {}, current: s.lessonConfig })) {
+        if (!out.some((o) => o.dir === c.dir)) out.push(c);
+      }
+    }
+    return out;
+  }
+  // M6（名单与数据以课程为主体规格 §2.2）：旧的全平台一个库 data/classroom.sqlite → data/lessons/<课程 id>.sqlite（一次）
+  // M6 审查：.env 的端口被占（平台多半正由别的窗口跑着、旧库在用）→ 这次不整理，记日志，下次启动再试
+  const migrationDone = (async () => {
+    try {
+      const p = Number(effectiveEnv(root).PORT);
+      if (Number.isInteger(p) && p > 0 && p <= 65535 && (await probePort(p)) === 'in-use') {
+        if (fs.existsSync(path.join(root, 'data', 'classroom.sqlite'))) log('[manage] 平台似乎正在别的窗口里运行，这次不整理旧课堂数据，下次启动管理台再试');
+        return;
+      }
+      migrateDb(root, { customDb: customDbPath(root), log });
+    } catch (err) {
+      log(`[manage] 整理旧课堂数据时出错：${err?.message ?? err}`);
+    }
+  })();
   const clients = new Set();
   const fetchState = { running: false, child: null, lines: [], result: null };
   let exclusive = null; // 正在恢复 / 离线重置时，禁止启动平台
+  // R4：更新子进程；waitingExit = 已更新成功、等管理台退出重启（期间同样禁止启动平台）
+  const updateState = { running: false, child: null, lines: [], result: null, waitingExit: false };
+  // 上次更新覆盖到一半被打断（Ctrl+C 之外的强行结束、断电、Windows 关窗口）→ 先恢复到更新前再开张
+  let recovered = null;
+  try {
+    const r = recoverInterruptedUpdate(root, { log });
+    // 'intact'（文件已完好）与 'running'（更新程序还在跑）不提示；恢复了或恢复失败才在首页说
+    if (r && (r.action === 'rolled-back' || r.action === 'failed')) recovered = { ok: r.ok, from: r.from, to: r.to, backupDir: r.backupDir, at: Date.now() };
+  } catch (err) {
+    log(`[manage] 检查上次更新是否完成时出错：${err?.message ?? err}`);
+  }
+  const updating = () => updateState.running || updateState.waitingExit;
+  const blockedBy = () => exclusive ?? (updating() ? '正在更新平台，请稍候' : null);
+  // S6：GET /api/ping 的内容。platformState：更新中或更新成功等重启 → 'updating'；离线恢复 / 重置中或 Python 运行时下载中 → 'busy'；
+  //   否则平台状态（stopped / building / starting / running / stopping）
+  const pingState = () => {
+    if (updating()) return 'updating';
+    if (exclusive || fetchState.running) return 'busy';
+    return platform.status().state;
+  };
+  const pingInfo = () => ({
+    app: MANAGE_APP,
+    root: path.resolve(root),
+    pid: process.pid,
+    platformState: pingState(),
+    version: currentVersion(root).current,
+  });
 
   // ===== SSE =====
   function broadcast(event, data) {
@@ -141,18 +260,22 @@ export function createManageServer({
     }
   }
 
-  // 名单 / 重置的目标：运行中走平台端点，已停止直接读写库（先 guardOffline），过渡状态请稍候
-  async function target() {
+  // 名单 / 重置的目标（M6：按选中课）：选中课正在跑 → 平台端点；平台停止 → 直接读写库（先 guardOffline）；
+  //   平台正在跑别的课 → 直接读写选中课的库；过渡状态请稍候
+  async function target(sel) {
     const s = platform.status();
-    if (s.state === 'running') return { port: s.port, online: true };
+    if (sel.running) return { port: s.port, online: true };
     if (s.state === 'stopped') {
       await guardOffline();
-      return { dbPath: dbPath(), online: false };
+      return { dbPath: sel.dbPath, online: false };
     }
+    if (s.state === 'running') return { dbPath: sel.dbPath, online: false };
     throw userError('平台正在启动或停止，请稍候再试', 409);
   }
 
   async function lessonInfo(rel) {
+    // G3：LESSON_CONFIG 空值 = 还没有课程
+    if (!rel) return { path: '', missing: true, none: true };
     try {
       const l = await readLesson(root, rel);
       if (!l) return { path: rel, id: null, title: null, dir: null, error: '找不到这门课程的配置文件', missing: true };
@@ -188,17 +311,28 @@ export function createManageServer({
   }
 
   async function dataInfo() {
-    const file = dbPath();
-    const list = backups.listBackups(backupDir);
+    const unsortedPaths = backups.lessonPaths(root, UNSORTED_ID);
+    const custom = Boolean(customDbPath(root));
+    const base = {
+      dbSize: 0, students: 0, rosterCount: 0, bound: 0, lastBackup: null, custom,
+      // 未归类的旧数据（迁移时读不出课程的旧库）与旧备份目录里的备份：数据页"未归类"一节
+      unsorted: { db: !custom && fs.existsSync(unsortedPaths.dbPath), backups: custom ? 0 : backups.listBackups(unsortedPaths.backupDir).length },
+    };
+    let sel;
+    try {
+      sel = await selectLesson();
+    } catch {
+      return base;
+    }
+    const file = sel.dbPath;
+    const list = backups.listBackups(sel.backupDir);
     const out = {
+      ...base,
       dbSize: fileSize(file) + fileSize(`${file}-wal`),
-      students: 0,
-      rosterCount: 0,
-      bound: 0,
       lastBackup: list.length ? { file: list[0].file, mtime: list[0].mtime } : null,
     };
     try {
-      const t = await target();
+      const t = await target(sel);
       const r = await roster.status(t);
       out.rosterCount = r.count;
       out.bound = r.bound;
@@ -223,6 +357,7 @@ export function createManageServer({
   // ===== Pyodide 下载 =====
   function startFetch() {
     if (fetchState.running) throw userError('已经在下载了，请稍候', 409);
+    if (updating()) throw userError('正在更新平台，请稍候', 409);
     const cmd = fetchCommand ?? [process.execPath, path.join(root, 'scripts', 'fetch-pyodide.mjs')];
     // .env 里的 RUNTIME_ZIP_URL / PYODIDE_MIRROR / PYPI_MIRROR / FONT_URL 传给下载脚本（国内镜像与 Gitee 同步规格 §4）
     const child = spawn(cmd[0], cmd.slice(1), { cwd: root, env: downloadEnv(root), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -242,6 +377,74 @@ export function createManageServer({
     });
   }
 
+  // ===== R4 平台更新 =====
+  const cacheFile = path.join(root, ...UPDATE_CACHE.split('/'));
+  function readUpdateCache() {
+    try {
+      const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      return c && typeof c === 'object' ? c : null;
+    } catch {
+      return null;
+    }
+  }
+  function updateInfo() {
+    const { current, dev } = currentVersion(root);
+    const c = readUpdateCache();
+    // 缓存里的"最新"不比本机新（例如刚更新完）→ 不算有新版本
+    const latest = c?.latest && current && compareVersions(c.latest.version, current) > 0 ? c.latest : null;
+    return {
+      current, dev, latest, checkedAt: c?.checkedAt ?? null,
+      running: updateState.running, result: updateState.result, recovered,
+    };
+  }
+  async function runUpdateCheck() {
+    const r = await checkUpdate({ root, fetch: fetchImpl, sources: updateSources, warn: log });
+    if (!r.error) {
+      fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+      fs.writeFileSync(cacheFile, `${JSON.stringify({ checkedAt: r.checkedAt, current: r.current, latest: r.latest }, null, 2)}\n`);
+    }
+    return r;
+  }
+  function startUpdate(version) {
+    const { dev } = currentVersion(root);
+    if (dev) throw userError('开发版不更新', 400);
+    if (updating()) throw userError('已经在更新了，请稍候', 409);
+    if (fetchState.running) throw userError('正在下载 Python 运行时，请等它完成再更新', 409);
+    if (exclusive) throw userError(exclusive, 409);
+    const s = platform.status().state;
+    if (s === 'running') throw userError('先停止平台再更新', 409);
+    if (s !== 'stopped') throw userError('平台正在启动或停止，请稍候再试', 409);
+    const latest = updateInfo().latest;
+    if (!latest || typeof version !== 'string' || latest.version !== version) throw userError('要更新的版本不对，请重新检查更新', 409);
+    const urls = (Array.isArray(latest.urls) && latest.urls.length ? latest.urls : [latest.url]).filter((u) => typeof u === 'string' && u);
+    const cmd = updateCommand ?? [process.execPath, path.join(root, 'scripts', 'update-platform.mjs')];
+    const args = [...cmd.slice(1), '--version', version, ...urls.flatMap((u) => ['--url', u]), '--root', root];
+    const child = spawn(cmd[0], args, { cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    Object.assign(updateState, { running: true, child, lines: [], result: null });
+    let backupDir = null;
+    const onLine = (line) => {
+      const m = /^(?:备份目录|更新前的文件备份在)：(.+)$/.exec(line);
+      if (m) backupDir = m[1].trim();
+      updateState.lines.push(line);
+      if (updateState.lines.length > 200) updateState.lines.shift();
+      broadcast('update', { line });
+    };
+    pipeLines(child.stdout, onLine);
+    pipeLines(child.stderr, onLine);
+    child.once('error', (err) => onLine(`更新程序无法启动：${err.message}`));
+    child.once('close', (code) => {
+      const ok = code === 0;
+      const result = { done: true, ok, code, version, backupDir, at: Date.now(), tail: updateState.lines.slice(-20) };
+      Object.assign(updateState, { running: false, child: null, result, waitingExit: ok });
+      broadcast('update', result);
+      staleCache = null;
+      if (ok) {
+        log(`[manage] 平台已更新到 v${version}，管理台即将重新启动`);
+        setTimeout(() => onUpdated(version), UPDATE_EXIT_DELAY);
+      }
+    });
+  }
+
   // ===== 路由 =====
   const app = express();
   app.disable('x-powered-by');
@@ -252,6 +455,8 @@ export function createManageServer({
   });
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.get('/ui-logic.js', (_req, res) => res.type('text/javascript').sendFile('ui-logic.js', { root: HERE }));
+  // S6：无鉴权 ping（新开的管理台窗口据此判断旧窗口是不是本项目的、能不能替换）；只回这五项，不含 token
+  app.get('/api/ping', (_req, res) => res.json(pingInfo()));
 
   const api = express.Router();
   api.use((req, res, next) => {
@@ -262,36 +467,53 @@ export function createManageServer({
   api.use(express.json({ limit: '2mb' }));
 
   api.get('/overview', async (_req, res) => {
+    await migrationDone;
     const env = effectiveEnv(root);
     const s = platform.status();
     const p = s.state === 'running' ? s.port : Number(env.PORT);
     const lesson = await lessonInfo(env.LESSON_CONFIG);
     // M3 审查：上课面板显示平台正在跑的课（启动时记录），.env 里换了课要重启才生效
     const runningLesson = s.state === 'running' && s.lessonConfig ? await lessonInfo(s.lessonConfig) : null;
+    // G3（管理台线性路径重设计规格 §3.1）：当前课的一行（lessonRow 同形；空值或找不到 null）
+    const currentLesson = await lessonAdmin.currentLessonRow(root, env.LESSON_CONFIG, { checks: allChecks() });
     res.json({
       platform: s,
       urls: urlsFor(p),
       lesson,
       runningLesson,
+      currentLesson,
       // 向导（M3）：密码已设、课程可读（根目录配置"我的课程（自定义）"也算已选）
-      setup: { passwordSet: Boolean(env.TEACHER_PASSWORD), lessonChosen: !lesson.error },
+      setup: { passwordSet: Boolean(env.TEACHER_PASSWORD), lessonChosen: !lesson.error && !lesson.none },
       pyodide: await pyodideInfo(env.LESSON_CONFIG),
       data: await dataInfo(),
       pendingRestart: platform.pendingRestart(),
       build: { stale: buildStale() },
       // L1：当前课最近一次检查结果（"检查课程"按钮或启动前的检查，取较新的；没查过为 null）
       check: [lastChecks.get(env.LESSON_CONFIG), s.check].filter((c) => c && c.path === env.LESSON_CONFIG).sort((a, b) => b.at - a.at)[0] ?? null,
+      update: updateInfo(),
+      // G1：平台文件夹的位置（课程卡片"做课步骤"第 3 步显示，AI 开发工具要打开的就是它）
+      platformDir: path.resolve(root),
+      // M6 §2.2：旧课堂数据刚按课程整理过 → 首页提示一次（{ at, lessonId, unsorted }），之后 null
+      migrated: takeMigratedNotice(root),
     });
   });
 
-  // L1：检查课程（check:lesson）。缺省查 .env 当前课；body.path 可查设置页下拉里的别的课（须在课程列表里）
+  // G1：课程卡片"做课步骤"第 3 步的"打开文件夹"——打开平台根目录
+  api.post('/platform/open', async (_req, res) => {
+    if (!(await openFolder(path.resolve(root)))) throw userError(lessonAdmin.MESSAGES.openFailed, 500);
+    res.json({ ok: true });
+  });
+
+  // L1：检查课程（check:lesson）。缺省查 .env 当前课；body.path 可查课程列表里的别的课（须在课程列表里）
   api.post('/lesson/check', async (req, res) => {
     const current = effectiveEnv(root).LESSON_CONFIG;
     const want = req.body?.path ?? current;
     if (typeof want !== 'string' || want === '') throw userError('课程路径不对');
     if (want !== current) {
-      const paths = (await listLessonChoices(root, { warn: log })).map((l) => l.path);
-      if (!paths.includes(want)) throw userError('没有这门课程');
+      // V1：读不出来的课（课程列表（第 1 步） broken 的行）也能查——查出来的正是它为什么读不出来
+      const choices = (await lessonCandidates()).map((l) => l.path);
+      const rows = (await lessonAdmin.lessonOverview(root, { current })).map((r) => r.path);
+      if (![...choices, ...rows].some((p) => lessonAdmin.sameLessonPath(p, want))) throw userError('没有这门课程');
     }
     const r = await checkLesson(root, want);
     const out = { ...r, path: want, at: Date.now() };
@@ -310,6 +532,7 @@ export function createManageServer({
       lowPortNeedsAdmin: process.platform === 'linux' && (typeof process.getuid !== 'function' || process.getuid() !== 0),
       pendingRestart: platform.pendingRestart(),
       platformFiles: platformFilesInfo(root),
+      update: updateInfo(),
     });
   });
 
@@ -317,7 +540,9 @@ export function createManageServer({
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     const patch = prepareSettingsPatch(body);
     const current = effectiveEnv(root).LESSON_CONFIG;
-    const lessonPaths = [...(await listLessonChoices(root, { warn: log })).map((l) => l.path), current];
+    // G3：候选 = 我的课 + 根目录开发课（有就算）+ 当前值；示例课不能选（遗留的当前值除外）
+    const dev = fs.existsSync(path.join(root, 'lesson.config.js')) ? [DEV_LESSON] : [];
+    const lessonPaths = [...(await listLessons(root, { warn: log })).map((l) => l.path), ...dev, current];
     const v = validateSettings(patch, { lessonPaths });
     if (!v.ok) return res.status(400).json({ errors: v.errors });
     try {
@@ -328,37 +553,41 @@ export function createManageServer({
     res.json({ ok: true, pendingRestart: platform.pendingRestart() });
   });
 
-  api.get('/lessons', async (_req, res) => {
-    res.json(await listLessonChoices(root, { warn: log }));
+  // K8：上课准备页"测一下"——用表单里的地址 / 模型（密钥留空用已保存的）发一次最小请求；不改 .env，平台运行与否都能测
+  api.post('/ai/test', async (req, res) => {
+    const p = parseAITest(req.body, readEnv(root).values);
+    if (p.error) return res.status(400).json({ error: p.error });
+    res.json(await runAITest(p.env, { fetch: fetchImpl }));
   });
 
-  // ===== M4 课程页（发布包与课程管理规格 §4）：:scope/:name 即课程目录 lessons/<名> 或 examples/<名> =====
+  // K9：上课准备页"获取模型"——用表单里的地址（密钥留空用已保存的）列一次模型；不改 .env
+  api.post('/ai/models', async (req, res) => {
+    const p = parseAIModels(req.body, readEnv(root).values);
+    if (p.error) return res.status(400).json({ error: p.error });
+    res.json(await fetchModels({ baseUrl: p.baseUrl, apiKey: p.apiKey, fetch: fetchImpl }));
+  });
+
+  // G3：只列我的课；当前课是遗留示例课 / 根目录开发课时多出那一项
+  api.get('/lessons', async (_req, res) => {
+    res.json(await listLessonChoices(root, { warn: log, current: effectiveEnv(root).LESSON_CONFIG }));
+  });
+
+  // ===== M4 课程列表（第 1 步）（发布包与课程管理规格 §4）：:scope/:name 即课程目录 lessons/<名> 或 examples/<名> =====
   const currentConfig = () => effectiveEnv(root).LESSON_CONFIG;
   api.get('/lessons/overview', async (_req, res) => {
-    res.json(await lessonAdmin.lessonOverview(root, { current: currentConfig() }));
+    await migrationDone;
+    res.json(await lessonAdmin.lessonOverview(root, { current: currentConfig(), checks: allChecks() }));
   });
-  api.get('/lessons/templates', (_req, res) => {
-    const t = lessonAdmin.templateFiles(root);
-    res.json({ docx: fs.existsSync(t.docx), md: fs.existsSync(t.md) });
-  });
-  for (const kind of ['docx', 'md']) {
-    api.get(`/lessons/template.${kind}`, (_req, res) => {
-      const file = lessonAdmin.templateFiles(root)[kind];
-      if (!fs.existsSync(file)) throw userError(lessonAdmin.MESSAGES.noTemplate, 404);
-      res.attachment(kind === 'docx' ? '教学设计模板.docx' : '教学设计模板.md');
-      // root + 文件名：路径里有点开头的目录（如 .claude/worktrees）时 send 默认会拒绝
-      res.sendFile(path.basename(file), { root: path.dirname(file) });
-    });
-  }
   // 新建：id 由服务端定，newLesson 顺带把它设为当前课程
   api.post('/lessons', async (req, res) => {
     const r = await serial(() => lessonAdmin.createLesson(root, { title: req.body?.title }));
     const lesson = await lessonAdmin.lessonRow(root, 'lessons', r.id, { current: currentConfig() });
     res.json({ ok: true, lesson, pendingRestart: platform.pendingRestart() });
   });
-  // 设为当前课程：与设置页一样写 .env 的 LESSON_CONFIG；平台运行中且与正在上的课不同 → differsFromRunning（重启后生效）
+  // 设为当前课程：与顶栏"当前课程"下拉一样写 .env 的 LESSON_CONFIG；平台运行中且与正在上的课不同 → differsFromRunning（重启后生效）
   api.post('/lessons/:scope/:name/current', async (req, res) => {
-    const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name);
+    // G3：示例课不能设为当前课程（示例课只是给 AI 照抄的范本）
+    const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name, { mineOnly: lessonAdmin.MESSAGES.exampleNoCurrent });
     const row = await lessonAdmin.lessonRow(root, d.scope, d.name);
     if (row.broken) throw userError(lessonAdmin.MESSAGES.broken, 400);
     writeEnv(root, { LESSON_CONFIG: d.configRel });
@@ -393,7 +622,17 @@ export function createManageServer({
     if (s.state === 'running' && lessonAdmin.sameLessonPath(s.lessonConfig, d.configRel)) {
       throw userError(lessonAdmin.MESSAGES.deleteRunning, 409);
     }
-    const r = await serial(async () => lessonAdmin.deleteLesson(root, d));
+    // M6 §2.3：这门课的库与备份一并移走——没有自定义 DB_PATH、且没有别的课与它同 id（同 id 共用一个库）时
+    const row = await lessonAdmin.lessonRow(root, d.scope, d.name);
+    const others = (await lessonAdmin.lessonOverview(root, { allExamples: true })).filter((x) => x.dir !== row.dir && x.id && x.id === row.id);
+    const dev = await readLesson(root, './lesson.config.js').catch(() => null);
+    const shared = others.length > 0 || (dev && dev.id === row.id);
+    const dataId = !customDbPath(root) && row.id && !row.broken && !shared ? row.id : null;
+    const r = await serial(async () => {
+      // M6 审查：要移库时，平台停止状态下先确认没有别的窗口在跑（端口被占则 409）
+      if (dataId && platform.status().state === 'stopped') await guardOffline();
+      return lessonAdmin.deleteLesson(root, d, { dataId });
+    });
     res.json({ ok: true, movedTo: r.movedTo });
   });
 
@@ -401,7 +640,7 @@ export function createManageServer({
   api.post('/platform/start', (req, res) => {
     const stopOld = req.body?.stopOld ?? null;
     if (stopOld !== null && !(Number.isInteger(stopOld) && stopOld > 0)) throw userError('进程号不对');
-    if (exclusive) return busy(res, exclusive);
+    if (blockedBy()) return busy(res, blockedBy());
     if (platform.status().state !== 'stopped') return busy(res, '平台已在运行或正在启动');
     platform.start({ stopOld }).catch((err) => log(`[manage] 启动出错：${err?.stack ?? err}`));
     res.json({ ok: true });
@@ -411,12 +650,13 @@ export function createManageServer({
     res.json({ ok: true });
   });
   api.post('/platform/restart', (_req, res) => {
-    if (exclusive) return busy(res, exclusive);
+    if (blockedBy()) return busy(res, blockedBy());
     platform.restart().catch((err) => log(`[manage] 重启出错：${err?.stack ?? err}`));
     res.json({ ok: true });
   });
   api.post('/platform/rebuild', (_req, res) => {
     if (platform.status().state !== 'stopped') return busy(res, '请先停止平台再重新构建');
+    if (updating()) return busy(res, '正在更新平台，请稍候');
     platform.rebuild().catch((err) => log(`[manage] 构建出错：${err?.stack ?? err}`));
     res.json({ ok: true });
   });
@@ -439,8 +679,8 @@ export function createManageServer({
   });
 
   // 名单
-  api.get('/roster', async (_req, res) => {
-    res.json(await roster.status(await target()));
+  api.get('/roster', async (req, res) => {
+    res.json(await roster.status(await target(await selectLesson(lessonParam(req)))));
   });
   api.post('/roster/preview', (req, res) => {
     const text = req.body?.text;
@@ -450,30 +690,36 @@ export function createManageServer({
   api.post('/roster', async (req, res) => {
     const names = req.body?.names;
     if (!Array.isArray(names)) throw userError('名单格式不对');
-    const r = await serial(async () => roster.importNames({ names, ...(await target()) }));
+    const r = await serial(async () => roster.importNames({ names, ...(await target(await selectLesson(lessonParam(req)))) }));
     res.json({ ok: true, count: r.count });
   });
-  api.post('/roster/clear', async (_req, res) => {
-    await serial(async () => roster.clear(await target()));
+  api.post('/roster/clear', async (req, res) => {
+    await serial(async () => roster.clear(await target(await selectLesson(lessonParam(req)))));
     res.json({ ok: true });
   });
-  api.post('/roster/reset-bindings', async (_req, res) => {
-    await serial(async () => roster.resetBindings(await target()));
+  api.post('/roster/reset-bindings', async (req, res) => {
+    await serial(async () => roster.resetBindings(await target(await selectLesson(lessonParam(req)))));
     res.json({ ok: true });
   });
 
   // 备份 / 恢复 / 重置
-  api.get('/backups', (_req, res) => {
-    res.json(backups.listBackups(backupDir));
+  api.get('/backups', async (req, res) => {
+    const sel = await selectLesson(lessonParam(req), { allowUnsorted: true });
+    // 未归类备份带来源课程（恢复到指定课程时对话框要说"这份备份来自《X》"）
+    res.json(backups.listBackups(sel.backupDir, { withLesson: sel.unsorted }));
   });
-  api.post('/backups', async (_req, res) => {
-    const r = await serial(() => backups.backup({ dbPath: dbPath(), backupDir, statfs }));
+  api.post('/backups', async (req, res) => {
+    const r = await serial(async () => {
+      const sel = await selectLesson(lessonParam(req), { allowUnsorted: true });
+      return backups.backup({ dbPath: sel.dbPath, backupDir: sel.backupDir, statfs });
+    });
     res.json({ file: r.file, size: r.size });
   });
-  api.get('/backups/:file', (req, res) => {
+  // 下载：备份目录由选中课决定（白名单：backups/lessons/<id>/ 或 backups/），文件名仍须过 isBackupName（拒绝 ..）
+  api.get('/backups/:file', async (req, res) => {
     const { file } = req.params;
     if (!backups.isBackupName(file)) throw userError('备份文件名不对');
-    const full = path.join(backupDir, file);
+    const full = path.join((await selectLesson(lessonParam(req), { allowUnsorted: true })).backupDir, file);
     let st;
     try {
       st = fs.lstatSync(full);
@@ -496,34 +742,71 @@ export function createManageServer({
     const { file } = req.params;
     if (!backups.isBackupName(file)) throw userError('备份文件名不对');
     const r = await serial(async () => {
-      if (platform.status().state !== 'stopped') throw userError('请先停止平台，再恢复备份', 409);
+      const src = await selectLesson(lessonParam(req), { allowUnsorted: true });
+      const to = req.body?.to;
+      let dest = src;
+      if (src.unsorted) {
+        if (typeof to !== 'string' || to === '' || to === UNSORTED_ID) throw userError('请选要恢复到哪门课', 400);
+        dest = await selectLesson(to);
+      } else if (to !== undefined && to !== null && to !== src.dir) {
+        throw userError('这份备份只能恢复到它自己的课', 400);
+      }
+      // 这门课没有在跑才能恢复（平台停止，或正在跑别的课）
+      const state = platform.status().state;
+      if (dest.running) throw userError('请先停止平台，再恢复备份', 409);
+      if (state !== 'stopped' && state !== 'running') throw userError('平台正在启动或停止，请稍候再试', 409);
+      if (updating()) throw userError('正在更新平台，请稍候', 409);
+      // 核对来源：备份里记的课与目标课不同，要教师确认（allowOther: true）
+      const from = dest.custom ? null : backups.backupLessonId(src.backupDir, file);
+      if (from && from !== dest.id && req.body?.allowOther !== true) {
+        const fromTitle = (await lessonCandidates()).find((c) => c.id === from)?.title ?? null;
+        throw Object.assign(userError(`这份备份来自《${fromTitle ?? '另一门课'}》，确定恢复到《${dest.title ?? '这门课'}》？`, 409), { from, fromTitle });
+      }
       exclusive = '正在恢复备份，请稍候';
       try {
-        await guardOffline();
-        return await backups.restore({ dbPath: dbPath(), backupDir, file, statfs });
+        if (state === 'stopped') await guardOffline();
+        const out = await backups.restore({ dbPath: dest.dbPath, backupDir: src.backupDir, snapshotDir: dest.backupDir, file, statfs });
+        return { ...out, to: dest.dir };
       } finally {
         exclusive = null;
       }
     });
-    res.json({ ok: true, file: r.file, snapshot: r.snapshot });
+    res.json({ ok: true, file: r.file, snapshot: r.snapshot, to: r.to });
   });
   api.post('/reset', async (req, res) => {
     if (req.body?.confirm !== true) throw userError('需要确认后才能重置');
     const r = await serial(async () => {
-      const t = await target();
-      if (t.online) return { ...(await backups.resetOnline({ port: t.port, dbPath: dbPath(), backupDir, statfs })), online: true };
+      if (updating()) throw userError('正在更新平台，请稍候', 409);
+      const sel = await selectLesson(lessonParam(req));
+      const t = await target(sel);
+      if (t.online) return { ...(await backups.resetOnline({ port: t.port, dbPath: sel.dbPath, backupDir: sel.backupDir, statfs })), online: true };
       exclusive = '正在重置数据，请稍候';
       try {
-        return { ...(await backups.resetOffline({ dbPath: dbPath(), backupDir, statfs })), online: false };
+        return { ...(await backups.resetOffline({ dbPath: sel.dbPath, backupDir: sel.backupDir, statfs })), online: false };
       } finally {
         exclusive = null;
       }
     });
     res.json({ ok: true, snapshot: r.snapshot, online: r.online });
   });
+  // M6 §2.2：未归类的旧数据"删除"——移到 backups/deleted-lessons/_unsorted-<时间>/（不直接删）
+  api.post('/unsorted/delete', async (req, res) => {
+    if (req.body?.confirm !== true) throw userError('需要确认后才能删除');
+    const r = await serial(async () => backups.removeUnsorted(root));
+    res.json({ ok: true, movedTo: r.movedTo });
+  });
 
   api.post('/pyodide/fetch', (_req, res) => {
     startFetch();
+    res.json({ ok: true });
+  });
+
+  // R4：检查更新（联网）/ 下载并更新
+  api.post('/update/check', async (_req, res) => {
+    res.json(await runUpdateCheck());
+  });
+  api.post('/update/apply', (req, res) => {
+    startUpdate(req.body?.version);
     res.json({ ok: true });
   });
 
@@ -532,7 +815,8 @@ export function createManageServer({
   api.use((err, _req, res, _next) => {
     const status = err.status ?? err.statusCode ?? 500;
     if (status >= 500 && !err.expose) log(`[manage] ${err?.stack ?? err}`);
-    res.status(status).json({ error: err.expose || status < 500 ? err.message : `操作失败：${err.message}` });
+    const extra = err.from ? { from: err.from, fromTitle: err.fromTitle ?? null } : {};
+    res.status(status).json({ error: err.expose || status < 500 ? err.message : `操作失败：${err.message}`, ...extra });
   });
   app.use('/api', api);
 
@@ -550,6 +834,33 @@ export function createManageServer({
       }
     },
     url: null,
+    // R4：启动静默检查（listen 成功后由 index.js 调用；缓存不足 24 小时跳过；失败不写缓存、不提示）
+    async scheduleUpdateCheck({ delayMs = 2000 } = {}) {
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs).unref?.());
+      const c = readUpdateCache();
+      if (c && Number.isFinite(c.checkedAt) && Date.now() - c.checkedAt < UPDATE_CHECK_TTL) return null;
+      try {
+        const r = await runUpdateCheck();
+        if (!r.error) broadcast('update', { checked: true, latest: updateInfo().latest });
+        return r;
+      } catch (err) {
+        log(`[manage] 检查更新出错：${err?.message ?? err}`);
+        return null;
+      }
+    },
+    isUpdating: () => updateState.running,
+    pingInfo,
+    waitForUpdate(ms = 60_000) {
+      const child = updateState.child;
+      if (!updateState.running || !child) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        const t = setTimeout(() => resolve(false), ms);
+        child.once('close', () => {
+          clearTimeout(t);
+          resolve(true);
+        });
+      });
+    },
     // listen(p?)：可换端口重试（入口在 3900–3909 间依次尝试）
     listen(p = port) {
       return new Promise((resolve, reject) => {

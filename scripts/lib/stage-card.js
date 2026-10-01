@@ -1,4 +1,4 @@
-// 阶段卡（STAGE.md）：模板与结构解析（L1）。模板取自教学设计模板第四部分（docs/01-教学设计模板_阶段卡版.md）
+// 阶段卡（STAGE.md）：模板与结构解析（L1）。模板取自阶段卡格式第四部分（docs/01-阶段卡格式.md）
 //   STAGE_CARD_COLUMNS：五栏标题（A 展示 … E 推进条件）
 //   parseStageCard(text) → { columns: { A: 行号 | null, … }, primitive: { line, value, token } | null }
 //     token：匹配原语那一行开头的原语名（小写、连字符），写的是"无 / 自写 / 投票"等说明时为 null

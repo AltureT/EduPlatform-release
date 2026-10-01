@@ -1,6 +1,6 @@
 // 平台文件改动检查（框架自描述规格 §4）：发布包 版本.json 的 protected 清单（相对路径 → sha256）与本机文件比对。
 //   打包（仓库根 scripts/pack-release.mjs）：protectedManifest(templateDir, 打包文件清单) 写进 版本.json 的 protected
-//   检查（check:lesson 第 12 项、管理台设置页）：checkPlatformFiles(平台目录) →
+//   检查（check:lesson 第 12 项、管理台"平台"页）：checkPlatformFiles(平台目录) →
 //     { checked: false, reason, version }（没有 版本.json / 没有 protected / 读不出，开发仓库即如此）
 //     { checked: true, version, builtAt, total, modified, missing, added, changes }（三个数组都是排好序的相对路径）
 //   受保护 = kernel/ components/ primitives/ scripts/ docs/ skills/ 下的文件 + index.html vite.config.js package.json + 各 AI 工具入口文件；

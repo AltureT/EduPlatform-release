@@ -125,21 +125,22 @@ export function diffRange(prev, next) {
 
 // ---------- 主题（浅色、平台令牌、固定） ----------
 
-export const EDITOR_THEME = {
+// P7（教师现场演示规格 §2）：size="md" 时字号用 --fs-md（教师大屏演示区；教师端作用域下按投影放大），缺省固定 16 px
+const themeSpec = (font) => ({
   '&': {
     flex: '1 1 0%',
     minHeight: '0',
     minWidth: '0',
     color: 'var(--ink)',
     backgroundColor: 'var(--surface)',
-    fontSize: FONT,
+    fontSize: font,
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': { fontFamily: MONO, lineHeight: '1.5', overflow: 'auto' },
-  '.cm-content': { fontSize: FONT, padding: '8px 0', caretColor: 'var(--ink)' },
+  '.cm-content': { fontSize: font, padding: '8px 0', caretColor: 'var(--ink)' },
   '.cm-line': { padding: '0 8px' },
   '.cm-gutters': {
-    fontSize: FONT,
+    fontSize: font,
     backgroundColor: 'var(--surface-alt)',
     color: 'var(--ink-dim)',
     borderRight: '1px solid var(--border)',
@@ -150,7 +151,7 @@ export const EDITOR_THEME = {
   '&.cm-focused .cm-matchingBracket': { backgroundColor: 'var(--good-soft)', outline: '1px solid var(--good)' },
   '&.cm-focused .cm-nonmatchingBracket': { backgroundColor: 'var(--bad-soft)', outline: '1px solid var(--bad)' },
   '.cm-tooltip': {
-    fontSize: FONT,
+    fontSize: font,
     backgroundColor: 'var(--surface)',
     border: '1px solid var(--border-strong)',
     borderRadius: 'var(--radius-sm)',
@@ -159,8 +160,10 @@ export const EDITOR_THEME = {
   '.cm-tooltip.cm-tooltip-autocomplete > ul': { fontFamily: MONO },
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li': { padding: '4px 8px' },
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--brand)', color: 'var(--surface)' },
-};
+});
+export const EDITOR_THEME = themeSpec(FONT);
 const theme = EditorView.theme(EDITOR_THEME, { dark: false });
+const themeMd = EditorView.theme(themeSpec('var(--fs-md)'), { dark: false });
 
 // U6（代码展示统一高亮规格 §3）：语法配色走 --code-* 令牌，与静态的 <CodeView> 用同一张 token 表（kernel/client/ui/codeTokens.js）
 export const CODE_HIGHLIGHT = HighlightStyle.define(CODE_TOKENS.map(({ name, tag }) => ({ tag, color: `var(--code-${name})` })));
@@ -184,7 +187,7 @@ const imeGuard = Prec.highest(EditorView.domEventHandlers({
 
 // ---------- 组件 ----------
 
-export default function Editor({ value = '', onChange, onRun, readOnly = false, ref, label = '代码', extraCompletions }) {
+export default function Editor({ value = '', onChange, onRun, readOnly = false, ref, label = '代码', extraCompletions, size }) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const cb = useRef({});
@@ -193,6 +196,7 @@ export default function Editor({ value = '', onChange, onRun, readOnly = false, 
   valueRef.current = value;
   const roRef = useRef(readOnly);
   const labelRef = useRef(label);
+  const sizeRef = useRef(size);   // P7：只在挂载时定
   const [roComp] = useState(() => new Compartment());
   const [attrComp] = useState(() => new Compartment());
 
@@ -233,7 +237,7 @@ export default function Editor({ value = '', onChange, onRun, readOnly = false, 
           imeGuard,
           attrComp.of(attrsExt(labelRef.current)),
           roComp.of(readOnlyExt(roRef.current)),
-          theme,
+          sizeRef.current === 'md' ? themeMd : theme,
           EditorView.updateListener.of((u) => {
             if (!u.docChanged) return;
             if (u.transactions.every((tr) => tr.annotation(External))) return;

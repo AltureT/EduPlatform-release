@@ -4,6 +4,9 @@
 //   按 lesson.config.components 顺序（report(name) 以该组件自己的 cctx 调用其 report(name, cctx)）；供 report 组件生成个人报告
 //   K6：cctx.ai 为内核统一 AI 接口（kernel/server/ai.js，缺省未配置实例），与阶段 ctx.ai 同一实例
 //   data 复用阶段的数据句柄（stageId = component:<id>），写入后内核照常发 stage:data-update / stage:my-data / stage:class-update
+//   C7：cctx.teacherData（教师专属存储）get(key) / set(key, value) / delete(key) / keys()：key 匹配 TEACHER_DATA_KEY_RE，
+//     value 可 JSON 化、序列化后 ≤ 200 KB（UTF-8），否则抛错；内存为 state.componentTeacherData（hydrate 载入，缺省惰性建），
+//     set / delete 同步写 component_teacher_data；不发任何事件、不进 join-ok / classroom:state / 导出；重置与换课清空
 //   anon 缺省为 state.anon（推进与重置时由 state 清空）；actions 缺省写 teacher_actions（stage_id = 当前阶段）
 // createComponentDispatcher({ contexts, log? }) → { handle(socket, event, payload), attach(socket), events() }
 //   按事件名第一段路由到组件；不受"仅当前阶段"限制；顺序：角色 → schema → handler；未注册事件静默
@@ -17,6 +20,55 @@ export const COMPONENT_HANDLERS = Symbol('componentHandlers');
 export const COMPONENT_HOOKS = Symbol('componentHooks');
 
 export const componentStageId = (id) => `component:${id}`;
+export const TEACHER_DATA_KEY_RE = /^[a-z][a-z0-9:_-]{0,63}$/;
+export const TEACHER_DATA_MAX_BYTES = 200 * 1024;
+
+function createTeacherData({ id, state, db }) {
+  const mine = () => {
+    if (!(state.componentTeacherData instanceof Map)) state.componentTeacherData = new Map();
+    let m = state.componentTeacherData.get(id);
+    if (!m) {
+      m = new Map();
+      state.componentTeacherData.set(id, m);
+    }
+    return m;
+  };
+  const checkKey = (key) => {
+    if (typeof key !== 'string' || !TEACHER_DATA_KEY_RE.test(key)) {
+      throw new Error(`component "${id}": teacherData key must match ${TEACHER_DATA_KEY_RE}, got ${JSON.stringify(key)}`);
+    }
+  };
+  return {
+    get(key) {
+      checkKey(key);
+      const json = mine().get(key);
+      return json === undefined ? undefined : JSON.parse(json);
+    },
+    set(key, value) {
+      checkKey(key);
+      let json;
+      try {
+        json = JSON.stringify(value);
+      } catch (err) {
+        throw new Error(`component "${id}": teacherData value must be JSON-serializable (${err.message})`);
+      }
+      if (typeof json !== 'string') throw new Error(`component "${id}": teacherData value must be JSON-serializable`);
+      const bytes = Buffer.byteLength(json, 'utf8');
+      if (bytes > TEACHER_DATA_MAX_BYTES) {
+        throw new Error(`component "${id}": teacherData value for "${key}" is ${bytes} bytes, over 200 KB`);
+      }
+      if (db) db.setComponentTeacherData(id, key, json);
+      mine().set(key, json);
+    },
+    delete(key) {
+      checkKey(key);
+      const had = mine().delete(key);
+      if (db) db.setComponentTeacherData(id, key, null);
+      return had;
+    },
+    keys: () => [...mine().keys()].sort(),
+  };
+}
 
 const dispatchStore = new AsyncLocalStorage();
 
@@ -120,6 +172,8 @@ export function createComponentContext({ id, options, io, state, db, log, thrott
     },
 
     data: createDataHandle({ io, state, db, stageId, throttle }),
+
+    teacherData: createTeacherData({ id, state, db }),
 
     actions: actions ?? {
       append(type, payload) {

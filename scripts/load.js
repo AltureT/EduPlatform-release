@@ -13,7 +13,7 @@ import { spawnServer as realSpawnServer } from '#kernel/test-utils/spawnServer.j
 import { teacherToken } from '#kernel/test-utils/teacherToken.js';
 import { virtualStudent } from '#kernel/test-utils/virtualStudent.js';
 import { virtualTeacher } from '#kernel/test-utils/virtualTeacher.js';
-import { parseArgs } from './lib/args.js';
+import { parseArgs, resolvePort } from './lib/args.js';
 import { importStageSimulate, lessonConfigPath, loadLesson as realLoadLesson } from './lib/lesson.js';
 import { EXIT, formatTable, percentile, resultLine } from './lib/report.js';
 import { disconnectAll, errMsg, randomPassword, removeDbFiles, runIfMain, tempDbPath, withTimeout } from './lib/session.js';
@@ -26,7 +26,7 @@ const MAX_ERRORS_SHOWN = 5;
 const fmt = (v) => (v === null ? '—' : String(Math.round(v)));
 
 export async function main(argv, deps = {}) {
-  const { spawnServer = realSpawnServer, loadLesson = realLoadLesson, log = console.log } = deps;
+  const { spawnServer = realSpawnServer, loadLesson = realLoadLesson, log = console.log, probePort } = deps;
   const finish = (code) => {
     log(resultLine(code));
     return code;
@@ -39,6 +39,7 @@ export async function main(argv, deps = {}) {
   let loadAction;
   try {
     opts = parseArgs(argv, { defaultStudents: 50 });
+    opts.port = await resolvePort(opts, { probe: probePort }); // S6：没给 --port 时探测空闲端口，避开 3001 / 3900–3909
     configPath = lessonConfigPath();
     const lesson = await loadLesson(configPath);
     stage = lesson.stages[0];

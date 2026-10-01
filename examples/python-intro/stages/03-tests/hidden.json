@@ -1,0 +1,4 @@
+[
+  { "name": "满分", "call": "grade(100)" },
+  { "name": "零分", "call": "grade(0)" }
+]

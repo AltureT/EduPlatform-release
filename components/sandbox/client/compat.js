@@ -1,9 +1,11 @@
 // 浏览器兼容检查（规格 §1 运行环境前提；S3）：加载 Pyodide 前判断，不满足时 pythonClient 直接进 failed 并给一句明确提示，
 // 而不是含糊的 init 失败。需要 WebAssembly、模块 Worker、BigInt、crypto.getRandomValues（下限 Chrome / Edge ≥ 85、Safari ≥ 15）；
-// Chromium 内核另按 UA 要求 ≥ 85；Safari 14 及以下没有模块 Worker，由探测判出
+// Chromium 内核另按 UA 要求 ≥ 85；Firefox 按 UA 要求 ≥ 114（K10：旧版 Firefox 先读 WorkerOptions.type 再抛错，
+// 模块 Worker 探测会误判为支持，最后落到 Pyodide 加载失败）；Safari 14 及以下没有模块 Worker，由探测判出
 // checkBrowser(env = globalThis) → { ok, reason }：reason 为缺失项（调试用，不给学生看）；学生看到的是 UNSUPPORTED_MESSAGE
 export const UNSUPPORTED_MESSAGE = '这台电脑的浏览器太旧，请换 Chrome 或 Edge（85 以上）；iPad 请把系统升级到 15 以上';
 export const MIN_CHROMIUM = 85;
+export const MIN_FIREFOX = 114;
 
 export const isUnsupportedError = (message) => message === UNSUPPORTED_MESSAGE;
 
@@ -48,6 +50,12 @@ export function chromiumMajor(ua) {
   return m ? Number(m[1]) : null;
 }
 
+// Firefox 主版本号（UA 里的 Firefox/NN）；不是 Firefox 返回 null
+export function firefoxMajor(ua) {
+  const m = /Firefox\/(\d+)/.exec(String(ua ?? ''));
+  return m ? Number(m[1]) : null;
+}
+
 export function checkBrowser(env = globalThis) {
   const e = env ?? {};
   if (typeof e.WebAssembly !== 'object' || e.WebAssembly === null || typeof e.WebAssembly.instantiate !== 'function') {
@@ -57,6 +65,8 @@ export function checkBrowser(env = globalThis) {
   if (typeof e.crypto?.getRandomValues !== 'function') return { ok: false, reason: 'crypto.getRandomValues' };
   const major = chromiumMajor(e.navigator?.userAgent);
   if (major != null && major < MIN_CHROMIUM) return { ok: false, reason: `Chromium ${major} < ${MIN_CHROMIUM}` };
+  const ff = firefoxMajor(e.navigator?.userAgent);
+  if (ff != null && ff < MIN_FIREFOX) return { ok: false, reason: `Firefox ${ff} < ${MIN_FIREFOX}` };
   if (!moduleWorkerOk(e)) return { ok: false, reason: 'module Worker' };
   return { ok: true, reason: null };
 }

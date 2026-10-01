@@ -33,7 +33,8 @@ export function advanceWith(socket, { force = false } = {}, timeout = ADVANCE_TI
 }
 
 export function virtualTeacher(base, token) {
-  const socket = io(base, { autoConnect: false, transports: ['websocket'] });
+  // K10：握手带 teacherToken，与教师端一致（连接时直接收教师版 classroom:state）
+  const socket = io(base, { autoConnect: false, transports: ['websocket'], auth: { teacherToken: token } });
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();

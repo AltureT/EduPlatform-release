@@ -1,13 +1,16 @@
 // <Split ratio="3:2" stackAt={900} stack="auto" gap resizable storageKey>：两栏；宽于 stackAt 时左右（各块内部滚动），窄于时上下：
 //   stack="auto"（缺省）两块各按内容高，Split 自身纵向滚动（课前页、题目 + 作答）
 //   stack="ratio" 上下按 ratio 分高度，各块内部滚动（代码 + 输出这类要一屏放下的）
+//   K10：stack="fill-last" 第一块按内容高（至多一半，超出内部滚动）、第二块撑满剩余高度；"fill-first" 反之（split 模板窄屏 Main 撑满用）
+// K10 stackBy="container"：按 Split 自身宽度（ResizeObserver）与 stackAt 比较决定上下 / 左右，而不是视口宽度
+//   （代码区套在 split 的 Main 里时视口宽但容器窄）；量不到宽度（0，未布局 / jsdom）时退回视口判断
 // single：只渲染第一块、单列占满（同一个网格容器，只改列与行）——在单列与两栏之间切换时第一块不重新挂载
 // P5（代码段布局与回看规格 §3）resizable：宽屏两栏时在两块之间放一条分隔柱（role="separator"），可拖宽：
 //   列 = minmax(0, Afr) <柱宽 = gapOf(gap)> minmax(0, Bfr)，此时 gap 置 0（柱就是原来的空隙）；
 //   pointer 拖动（setPointerCapture，触屏可用），两侧各不小于 15%；← → 各 2%，Home / End 到 15% / 85%；双击恢复 ratio。
 //   storageKey：比例记到 localStorage['ly-split:' + storageKey]（"a:b"，两个百分数整数），没给只在内存里记；
 //   ratio / storageKey 变化时重读记录，没有记录就跟随新 ratio。stacked / single 时不渲染分隔柱
-import { Children, useEffect, useRef, useState } from 'react';
+import { Children, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useMediaQuery } from './useNarrow.js';
 import { pickProps, cx, gapOf } from './props.js';
 
@@ -152,13 +155,38 @@ function Gutter({ pct, onDrag, onCommit, onReset, containerRef }) {
   );
 }
 
+// 容器宽度（stackBy="container" 时）：挂载时量一次，之后跟 ResizeObserver；没有 ResizeObserver 或量到 0 时返回 0
+function useContainerWidth(ref, enabled) {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!enabled) return undefined;
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const w = el.getBoundingClientRect?.().width;
+      setWidth(Number.isFinite(w) ? w : 0);
+    };
+    measure();
+    const RO = globalThis.ResizeObserver;
+    if (typeof RO !== 'function') return undefined;
+    const ro = new RO(() => measure());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, enabled]);
+  return enabled ? width : 0;
+}
+
 export default function Split({
-  ratio = '1:1', stackAt = 900, stack = 'auto', single = false, gap, resizable = false, storageKey, children, ...rest
+  ratio = '1:1', stackAt = 900, stack = 'auto', stackBy = 'viewport', single = false, gap, resizable = false, storageKey, children, ...rest
 }) {
   const p = pickProps(rest, 'Split');
   const at = Number.isFinite(Number(stackAt)) ? Number(stackAt) : 900;
-  const stacked = useMediaQuery(`(max-width: ${at - 1}px)`);
+  const containerRef = useRef(null);
+  const viewportStacked = useMediaQuery(`(max-width: ${at - 1}px)`);
+  const cw = useContainerWidth(containerRef, stackBy === 'container');
+  const stacked = cw > 0 ? cw < at : viewportStacked;
   const byRatio = stack === 'ratio';
+  const fillMode = stack === 'fill-first' || stack === 'fill-last' ? stack : null;
   const [a, b] = parseRatio(ratio);
   const key = typeof storageKey === 'string' && storageKey ? storageKey : null;
 
@@ -172,15 +200,19 @@ export default function Split({
     }
     setPct(resizable ? readPct(key) : null);
   }, [ratio, key, resizable]);
-  const containerRef = useRef(null);
 
   const all = Children.toArray(children);
   const items = single ? all.slice(0, 1) : all;
   const withGutter = resizable && !stacked && !single && items.length === 2;
   const tracks = `minmax(0, ${a}fr) minmax(0, ${b}fr)`;
-  const autoStack = stacked && !byRatio && !single;
+  const autoStack = stacked && !byRatio && !fillMode && !single;
   let rows = 'minmax(0, 1fr)';
-  if (stacked && !single) rows = byRatio ? tracks : 'auto auto';
+  if (stacked && !single) {
+    if (byRatio) rows = tracks;
+    else if (fillMode === 'fill-last') rows = 'fit-content(50%) minmax(0, 1fr)';
+    else if (fillMode === 'fill-first') rows = 'minmax(0, 1fr) fit-content(50%)';
+    else rows = 'auto auto';
+  }
   let columns = stacked ? 'minmax(0, 1fr)' : tracks;
   if (single) columns = 'minmax(0, 1fr)';
   if (withGutter) {
@@ -218,7 +250,8 @@ export default function Split({
       className={cx('ly-split', p.className)}
       data-ly="split"
       data-direction={stacked ? 'column' : 'row'}
-      data-stack={byRatio ? 'ratio' : 'auto'}
+      data-stack={byRatio ? 'ratio' : (fillMode ?? 'auto')}
+      data-stack-by={stackBy === 'container' ? 'container' : undefined}
       data-single={single ? 'true' : undefined}
       data-resizable={withGutter ? 'true' : undefined}
       style={{

@@ -31,3 +31,5 @@ export { Page, Fill, Split, Tiles, Tile, Stack, Row, Scroll, useNarrow } from '.
 // 规格 v0.2.1 §2.3：覆盖层 { variant: 'dialog'|'panel'|'drawer'|'menu', label, onDismiss, testId, children }，
 // 唯一允许 position: fixed 的地方；组件的弹层一律用它
 export { default as Overlay } from './shells/Overlay.jsx';
+// 学生输入自动保存（学生输入自动保存规格 §2.2）：学生输入一律 useDraft，不用裸 useState
+export { useDraft, draftKey, readDraft, writeDraft, clearDraft } from './drafts.js';

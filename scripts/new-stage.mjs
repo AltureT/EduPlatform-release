@@ -2,15 +2,16 @@
 // npm run new:stage -- --lesson <lesson.config 路径> --id <id> --label <名> --primitive <vote|quiz|free-text|code|data-analysis|none> [--after <已有阶段目录>]（L1）
 //   在 stagesDir 下生成 NN-<id>/（NN 为新阶段在课堂顺序里的序号，两位补零），并写进 lesson.config.js 的 stages
 //   （文本改写，保留注释；--after 时插在该目录之后）：
-//   - STAGE.md：教学设计模板第四部分的阶段卡五栏 + 标题填 label + **匹配原语**：<primitive>
+//   - STAGE.md：阶段卡格式（docs/01-阶段卡格式.md）第四部分的阶段卡五栏 + 标题填 label + **匹配原语**：<primitive>
 //   - 原语阶段：stage.config.js 从 primitives/<type>/README.md 的示例复制，id / label 换掉，options 里的示例值全部标 TODO
 //     （字符串加 TODO： 前缀；键 / 枚举 / 选项键答案保留原值、行尾加 TODO 注释，见 markExampleValues）；
 //     示例里 { from: './x' } 引用的文件生成占位；原语需要的组件（requiresComponents）不在 components 里时自动加上
 //   - none：stage.config.js（对象字面量，layout 'focus'、gate 放行、collect 空）、server.js（空 register）、
 //     Student.jsx（根 <Page template="focus">）、TeacherStats.jsx（契约 §四：统计视图不是 <Page>，只放 AlertBar + DataTable）、
 //     __tests__/server.test.js 与 simulate.js 最小可跑骨架，全部带 TODO： 注释指向契约章节
-//   生成后在 worker 线程里跑一次 check:lesson 并打印结果（新骨架应只有 TODO 警告）
-//   newStage({ root, lesson, id, label, primitive, after?, quiet? }) → { dirName, absDir, files, addedComponents, check }
+//   生成后在 worker 线程里跑一次 check:lesson 并打印结果（新骨架应只有 TODO 警告；code 骨架另有一条"有测试但没有参考答案"）
+//   newStage({ root, lesson, id, label, primitive, after?, quiet?, checkTests? }) → { dirName, absDir, files, addedComponents, check }
+//     checkTests: false 时生成后的检查不验证代码题测试（测试用，不起 Pyodide）
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -268,7 +269,7 @@ export function loadAction({ student }) {
 
 export async function newStage({
   root = process.cwd(), lesson, id, label, primitive, after, primitivesRoot = DEFAULT_PRIMITIVES_ROOT,
-  quiet = false, log = (l) => console.log(l),
+  quiet = false, log = (l) => console.log(l), checkTests = true,
 } = {}) {
   if (typeof lesson !== 'string' || !lesson) throw new Error('请用 --lesson 给出课程配置路径（如 ./lessons/prime/lesson.config.js）');
   if (typeof id !== 'string' || !STAGE_ID_RE.test(id)) {
@@ -343,7 +344,7 @@ export async function newStage({
 
   let check = null;
   try {
-    check = await checkLessonInWorker(absConfig, { root });
+    check = await checkLessonInWorker(absConfig, { root, tests: checkTests });
   } catch (err) {
     if (!quiet) log(`（check:lesson 没能完成：${err?.message ?? err}）`);
   }

@@ -31,7 +31,8 @@ const cardBtn = {
 };
 const src = (image) => `data:image/png;base64,${image}`;
 const hasImage = (r) => Array.isArray(r?.images) && r.images.length > 0;
-const hasFinalImage = (r) => hasImage(r?.final);
+// K10：自动记录推来的 final 可能只是摘要（lite: true，不含图）——图未知，出过图（firstImageAt）的按有图计
+const hasFinalImage = (r) => hasImage(r?.final) || (r?.finalAt != null && r?.final?.lite === true && r?.firstImageAt != null);
 
 // 教师端本地切片：服务端定向发来的整面墙（不进班级记录）
 export const WALL_INITIAL = Object.freeze({ wall: null, skipped: 0, openedAt: null });

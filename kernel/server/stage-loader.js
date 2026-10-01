@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { componentIdsOf } from './component-loader.js';
+import { lessonIdError } from './lesson-db-path.js';
 
 export const STAGE_ID_RE = /^[a-z][a-z0-9-]*$/;
 export const RESERVED_STAGE_IDS = ['prelogin', 'curtain'];
@@ -300,6 +301,9 @@ export async function loadLesson(configPath, { primitivesRoot = DEFAULT_PRIMITIV
   if (!fs.existsSync(absConfig)) throw new Error(`lesson config not found: ${absConfig}`);
   const lessonConfig = await importDefault(absConfig);
   if (!lessonConfig || typeof lessonConfig !== 'object') throw new Error(`lesson config must export default an object: ${absConfig}`);
+  // 名单与数据以课程为主体规格 §2.1：id 决定这门课的库（data/lessons/<id>.sqlite），必填且合法
+  const idErr = lessonIdError(lessonConfig.id);
+  if (idErr) throw new Error(idErr);
   if (!Array.isArray(lessonConfig.stages)) throw new Error('lesson config: stages must be an array of directory names');
 
   const stagesRoot = path.resolve(path.dirname(absConfig), lessonConfig.stagesDir ?? './stages');

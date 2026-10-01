@@ -27,6 +27,7 @@ dist/
 
 # 课堂数据：数据库、教师登录状态、名单、备份、平台日志都含学生信息，不进仓库
 data/*.sqlite*
+data/lessons/
 data/*.bak-*
 data/teacher_tokens.json
 data/rosters/
@@ -41,3 +42,8 @@ backups/
 
 # 本机开发用 token 文件
 data/*-tokens.json
+
+# check:lesson 第 14 关的结果缓存（可随时删除）
+data/check-cache.json
+data/check-cache.json.tmp
+data/update-check.json

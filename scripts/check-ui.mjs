@@ -14,6 +14,9 @@
 // 只看代码：注释、模板字面量整体跳过；字符串字面量只保留样式对象的键与值（如 { position: 'fixed' }）
 //   和纯数字的 JSX 属性值（height="300"），其余字符串与 JSX 文本跳过，不误报。
 // 行尾写 // check-ui-ignore-line 忽略该行的全部命中。
+// 提醒（warning，只打印、不影响退出码）：
+//   draft          D1（学生输入自动保存规格 §2.4）：自写段 stages/*/Student.jsx 里有 <textarea / <input 却没用 useDraft
+//                  （学生输入一律 useDraft，刷新、断线、关浏览器、换设备不丢）；原语不在此列
 // 用法：node scripts/check-ui.mjs [路径前缀…]   不带参数扫全部；带参数只报这些前缀下的文件（如 examples/minimal、primitives/vote）
 // 扫描范围里 0 个文件时退出 1（前缀写错或目录改名时不能静默通过）；U4：路径参数逐个校验，任一匹配不到文件即列出并退出 1
 import fs from 'node:fs';
@@ -344,6 +347,29 @@ export function scanSource(src, file, { requirePage } = {}) {
     .sort((a, b) => a.line - b.line);
 }
 
+// D1：自写段 Student.jsx 有输入框却没用 useDraft → 提醒（第一处输入框所在行）
+export function draftWarnings(src, file) {
+  if (path.posix.basename(file) !== 'Student.jsx' || !/(^|\/)stages\//.test(file)) return [];
+  const code = codeView(src);
+  if (/\buseDraft\b/.test(code)) return [];
+  const m = /<(textarea|input)\b/.exec(code);
+  if (!m) return [];
+  const line = code.slice(0, m.index).split('\n').length;
+  const raw = src.split('\n');
+  if ((raw[line - 1] || '').includes(IGNORE)) return [];
+  return [{
+    file, line, rule: 'draft', level: 'warning',
+    message: `有 <${m[1]}> 输入框但没用 useDraft：学生输入一律 useDraft（刷新、断线、关浏览器、换设备不丢），不用裸 useState`,
+    snippet: raw[line - 1].trim(),
+  }];
+}
+
+export function checkUiWarnings(root, only = []) {
+  const out = [];
+  for (const f of targetsFor(root, only)) out.push(...draftWarnings(fs.readFileSync(path.join(root, f), 'utf8'), f));
+  return out;
+}
+
 function walk(dir, rel, out) {
   let entries;
   try {
@@ -432,12 +458,14 @@ function main() {
   }
   const hits = checkUi(root, only);
   for (const h of hits) console.log(`${h.file}:${h.line}: [${h.rule}] ${h.message} — ${h.snippet}`);
+  const warnings = checkUiWarnings(root, only);
+  for (const w of warnings) console.log(`${w.file}:${w.line}: [提醒:${w.rule}] ${w.message} — ${w.snippet}`);
   if (hits.length) {
     const files = new Set(hits.map((h) => h.file)).size;
     console.log(`\ncheck:ui：${scope} 共 ${hits.length} 处命中（${files} 个文件）`);
     process.exit(1);
   }
-  console.log(`check:ui：${scope} 通过（${count} 个文件）`);
+  console.log(`check:ui：${scope} 通过（${count} 个文件${warnings.length ? `，${warnings.length} 条提醒` : ''}）`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main();

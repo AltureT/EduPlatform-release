@@ -4,6 +4,8 @@
 // P3：last.tests 带 cases（记录形状 [{ name, ok, reason }]，见 testReport.js），刷新后测试面板照样显示用例
 // P6（代码段教学功能规格 §4.2）：code 原语双起始代码——学生选的那份起点的 label 记在 starterKey（= draftKey + ':starter'），
 //   readStarter / writeStarter(key, null 即删)；clearDraft(key) 删一个草稿键（"换起点"用）；classroom:reset 时 clearLessonDrafts 按前缀一并清掉
+// P7（教师现场演示规格 §5）：学生"换成这份"采用教师下发的代码后，记下那次下发的 at：键 pushed:<lessonId>:<classEpoch>:<name>:<stageId>，
+//   readPushed(key) → 数字或 null；writePushed(key, at)（null 即删）。键含 classEpoch，课堂重置后自然换键（不在 sandbox: 前缀下，不随草稿清）
 import { reportCases } from './testReport.js';
 const STDOUT_TAIL = 20 * 1024;
 const TRACEBACK_MAX = 4000;
@@ -37,6 +39,33 @@ export function writeStarter(key, label) {
   if (!key) return;
   try {
     if (typeof label === 'string' && label !== '') globalThis.localStorage?.setItem(key, label);
+    else globalThis.localStorage?.removeItem(key);
+  } catch {
+    // 忽略
+  }
+}
+
+// P7：教师下发的采用标记
+export function pushedKey({ lessonId, classEpoch, name, stageId } = {}) {
+  if (!lessonId || !name || !stageId) return null;
+  return `pushed:${lessonId}:${classEpoch ?? null}:${name}:${stageId}`;
+}
+
+export function readPushed(key) {
+  if (!key) return null;
+  try {
+    const v = globalThis.localStorage?.getItem(key);
+    const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN;
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writePushed(key, at) {
+  if (!key) return;
+  try {
+    if (typeof at === 'number' && Number.isFinite(at)) globalThis.localStorage?.setItem(key, String(at));
     else globalThis.localStorage?.removeItem(key);
   } catch {
     // 忽略

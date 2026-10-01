@@ -36,6 +36,11 @@ const teacherJoinSchema = shape({ token: 'string' });
 const advanceSchema = shape({ force: 'optional:boolean' });
 const claimReleaseSchema = shape({ name: 'string:1-64' });
 const switchNameSchema = shape({ rejoin: 'optional:boolean' });
+// 学生草稿（学生输入自动保存规格 §2.3）：value 为 JSON 串或 null（删除）
+const draftSetSchema = shape({ stageId: 'string:1-64', field: 'string:1-40', value: 'optional:string' });
+export const DRAFT_FIELD_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+export const DRAFT_VALUE_MAX = 64 * 1024;
+export const DRAFT_TOTAL_MAX = 1024 * 1024;
 
 const errMsg = (err) => (err && err.message ? err.message : String(err));
 
@@ -232,6 +237,7 @@ export function createKernel({
       state: state.getPublicState(),
       myStageData: state.data.myStageData(finalName),
       classData: state.data.classData(),
+      myDrafts: db.loadDrafts(finalName, state.classEpoch),
     });
     // 9
     io.emit('student:joined', { name: finalName, counts: state.counts() });
@@ -310,6 +316,44 @@ export function createKernel({
     socket.emit('student:switch-name-ok', {});
   }
 
+  // ===== student:draft-set { stageId, field, value }（学生输入自动保存规格 §2.3）=====
+  // 只给本人回填：upsert 带当前 epoch；不广播、不回包、不写 stage_events
+  // 学生不看技术性红条（D1 审查）：未加入 / 身份不符的 socket、每人合计超过 1 MB 一律静默丢弃（不回 error）；
+  // 其余载荷错误（坏阶段、坏字段名、单格超 64 KB、不是 JSON）是开发错误，回 error:validation
+  async function handleDraftSet(socket, payload) {
+    const event = 'student:draft-set';
+    const fail = (message) => socket.emit('error:validation', { event, message });
+    if (socket.data?.role !== 'student' || typeof socket.data.name !== 'string') return;
+    let p;
+    try {
+      p = draftSetSchema(payload);
+    } catch (err) {
+      return fail(errMsg(err));
+    }
+    const { stageId, field } = p;
+    const value = p.value ?? null;
+    const okStage = stageId.startsWith('component:')
+      ? componentIds.includes(stageId.slice('component:'.length))
+      : isHookStage(stageId);
+    if (!okStage) return fail(`不认识的阶段 ${stageId}`);
+    if (!DRAFT_FIELD_RE.test(field)) return fail(`草稿字段名不合法：${field}`);
+    const name = socket.data.name;
+    if (value !== null) {
+      const bytes = Buffer.byteLength(value, 'utf8');
+      if (bytes > DRAFT_VALUE_MAX) return fail('草稿太大了');
+      try {
+        JSON.parse(value);
+      } catch {
+        return fail('草稿不是合法 JSON');
+      }
+      if (db.draftBytesExcept(name, stageId, field) + bytes > DRAFT_TOTAL_MAX) {
+        log.warn(`draft of "${name}" over ${DRAFT_TOTAL_MAX} bytes in total, dropped`);
+        return;
+      }
+    }
+    db.setDraft(name, stageId, field, value, state.classEpoch);
+  }
+
   // ===== disconnect（刷新竞态：socketId 不一致则忽略）=====
   async function handleDisconnect(socket) {
     studentSockets.delete(socket);
@@ -342,12 +386,17 @@ export function createKernel({
 
   function onConnection(socket) {
     socket.data = socket.data || {};
-    socket.emit('classroom:state', state.getPublicState());
+    // K10：握手带有效教师 token（auth.teacherToken）时直接发教师版，教师重连不再先收到学生版（"揭晓"按钮不闪）；
+    // 只决定这一次 state 的版本，入会仍靠 teacher:join
+    const hsToken = socket.handshake?.auth?.teacherToken;
+    const asTeacher = typeof hsToken === 'string' && hsToken !== '' && tokens.has(hsToken);
+    socket.emit('classroom:state', state.getPublicState(asTeacher ? 'teacher' : 'student'));
     safeOn(socket, 'student:join', handleStudentJoin);
     safeOn(socket, 'teacher:join', handleTeacherJoin);
     safeOn(socket, 'teacher:advance', handleAdvance);
     safeOn(socket, 'student:request-claim-release', handleRequestClaimRelease);
     safeOn(socket, 'student:switch-name', handleSwitchName);
+    safeOn(socket, 'student:draft-set', handleDraftSet);
     admin.attach(socket);
     dispatcher.attach(socket);
     componentDispatcher.attach(socket);
@@ -370,6 +419,7 @@ export function createKernel({
     handleTeacherJoin,
     handleRequestClaimRelease,
     handleSwitchName,
+    handleDraftSet,
     handleDisconnect,
   };
 }

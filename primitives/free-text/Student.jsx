@@ -3,8 +3,9 @@
 // 每题下方字数计数"已写 n / max"（有 min 时加"至少 min 字"，超上限或不到下限标红，提交不可点）；
 // 主按钮进操作条：未提交"提交"，已提交且 canChange"更新"（未改动不可点）；canChange=false 提交后只读。
 // 回看 / 镜像：只读显示已提交的原文。
-import { useEffect, useState } from 'react';
-import { useStudentStage, Btn, Fill, Page, Stack } from '#kernel/client/index.js';
+// 未提交的改动自动保存（useDraft 'answers'，学生输入自动保存规格 §2.4）：刷新、断线、关浏览器、换设备不丢；提交成功后清掉，显示已提交的原文。
+import { useEffect, useRef } from 'react';
+import { useStudentStage, useDraft, Btn, Fill, Page, Stack } from '#kernel/client/index.js';
 import PromptText from '../_shared/PromptText.jsx';
 import { countChars } from './prompts.js';
 
@@ -38,23 +39,32 @@ function Counter({ prompt, text }) {
 
 export default function Student({ stageId } = {}) {
   const { stage, options, myData, isLive, readOnly, send } = useStudentStage(stageId);
-  const [draft, setDraft] = useState(null);
+  const [draftRaw, setDraft, { clear: clearDraft }] = useDraft('answers', null, { stageId: stageId ?? stage?.id });
+  const draft = draftRaw && typeof draftRaw === 'object' && !Array.isArray(draftRaw) ? draftRaw : null;
   const submittedAt = myData?.submittedAt ?? null;
-  useEffect(() => setDraft(null), [submittedAt]);
+  // 提交成功（submittedAt 变了）后清草稿；挂载时不清（已提交后又改了、还没"更新"的内容要留着）
+  const seenAt = useRef(submittedAt);
+  useEffect(() => {
+    if (seenAt.current === submittedAt) return;
+    seenAt.current = submittedAt;
+    if (submittedAt != null) clearDraft();
+  }, [submittedAt, clearDraft]);
 
   if (!options) return <Page template="focus" />;
 
   const { prompts, canChange } = options;
   const saved = myData?.answers ?? {};
   const submitted = submittedAt != null;
-  const values = Object.fromEntries(prompts.map((p) => [p.id, draft?.[p.id] ?? saved[p.id] ?? '']));
   const locked = !isLive || readOnly || (canChange === false && submitted);
+  // 交了就不能改（canChange=false）时只显示已提交的原文，不显示草稿
+  const frozen = canChange === false && submitted;
+  const values = Object.fromEntries(prompts.map((p) => [p.id, (frozen ? undefined : draft?.[p.id]) ?? saved[p.id] ?? '']));
   const valid = prompts.some((p) => countChars(values[p.id]) > 0)
     && prompts.every((p) => { const n = countChars(values[p.id]); return n <= p.max && n >= p.min; });
   const dirty = prompts.some((p) => values[p.id].trim() !== (saved[p.id] ?? '').trim());
   const single = prompts.length === 1;
 
-  const edit = (id, v) => setDraft((d) => ({ ...(d ?? {}), [id]: v }));
+  const edit = (id, v) => setDraft((d) => ({ ...(d && typeof d === 'object' ? d : {}), [id]: v }));
   const submit = () => {
     if (locked || !valid) return;
     send('student:freetext-submit', { answers: Object.fromEntries(prompts.map((p) => [p.id, values[p.id]])) });

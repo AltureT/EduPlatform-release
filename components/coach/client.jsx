@@ -5,13 +5,23 @@
 //   draft：sandbox 编辑器草稿（localStorage，键由 draftKey 得到）；sandbox 没开或读不到就不带。
 // 教师端：teacherToolbar 已配置时是按钮"AI 助手 · 已答 N"，点一下发 coach:t-pause 暂停 / 恢复（未配置仍是芯片"AI 助手未配置"）；
 //   teacherSidebar（统计视图 Side，本段 coach 为真时）"求助"名单：每条问答前缀求助类型与 L1–L3，被拒的灰字标原因，"索答 N 次"标记。
+//   K8（§15）：perClass.aiNotice 为 route 2 → 按钮"… · 备用线路"，带 error → "… · 接口异常"，title 说明；备用线路回答的条目灰字"（备用）"。
 // U6（代码展示统一高亮规格 §4）：抽屉与教师侧栏里的回答按行分段——连续的"像代码的行"（codeLine.js 的 CODE_LINE，与服务端 sanitize 同一个正则）
 //   并成一个 <CodeView size="sm" wrap>，其余文字仍 pre-wrap；没有代码行时照旧一个 <span>。学生的提问 q 不处理。
+// C6（AI 对照要求逐条核规格 §3、§4.1）：
+//   学生抽屉：本段有要求清单且本人本段记录有代码时多一个芯片"我做完了，帮我看看"（kind check，问题可空）；
+//     check 的 ok 回答用 verdicts.parseVerdicts 按条渲染（✓ / ✗ / ？ + 要求原文 + 理由，rest 在下方），解析不出就按普通回答显示
+//   教师侧栏："求助"上方一节"AI 看一遍"（本段有要求清单且 AI 已配置）：idle 两次确认发 coach:t-review start；
+//     running "已看 k/N" + 停止；done / stopped 每条要求一行计数，点开是"没做到 / 没法确认"名单，失败的单独一行，"再看一遍"。
+//     状态来自服务端只发教师的 coach:review-state（教师切片 reviews[stageId]），挂载时发 coach:t-review-get 取回；学生端不显示任何 review
 import { useEffect, useState } from 'react';
-import { useComponent, useTeacherStage, Btn, Chip, CodeView, HelpTip, Overlay, Row, Stack } from '#kernel/client/index.js';
+import { useComponent, useTeacherStage, useDraft, Btn, Chip, CodeView, ConfirmAdvanceBtn, GroupTag, HelpTip, Overlay, Row, Stack } from '#kernel/client/index.js';
 import { draftKey, readDraft } from '#components/sandbox/client/ui/draftStorage.js';
 import { useCoachStage } from './stageConfig.js';
 import { codeSegments } from './codeLine.js';
+// C6 审查 2：教师端"已入会"信号（断线时 false，teacher:join-ok 后 true），重连后重取核对状态；公开入口没有这个信号
+import { coreTeacherStore } from '#kernel/client/stores/coreTeacherStore.js';
+import { parseVerdicts, codeOf, reviewNames as reviewEntries } from './verdicts.js';
 
 const ID = 'coach';
 export const DEFAULTS = Object.freeze({ maxPerStage: 5, cooldownMs: 20000, refusedCooldownMs: 60000 });
@@ -29,10 +39,19 @@ export const REFUSED_REPLY = Object.freeze({
 });
 
 // §12.1 求助类型：抽屉按钮文案 / 教师侧栏前缀
-export const KINDS = Object.freeze(['understand', 'think', 'debug', 'follow']);
+export const KINDS = Object.freeze(['understand', 'think', 'debug', 'follow', 'check']);
 export const DEFAULT_KIND = 'think';
-export const KIND_LABEL = Object.freeze({ understand: '看不懂题', think: '不知道怎么下手', debug: '报错 / 结果不对', follow: '追问上一条' });
-export const KIND_PREFIX = Object.freeze({ understand: '看不懂题', think: '怎么下手', debug: '报错', follow: '追问' });
+export const KIND_LABEL = Object.freeze({
+  understand: '看不懂题', think: '不知道怎么下手', debug: '报错 / 结果不对', follow: '追问上一条', check: '我做完了，帮我看看',
+});
+export const KIND_PREFIX = Object.freeze({ understand: '看不懂题', think: '怎么下手', debug: '报错', follow: '追问', check: '自查' });
+// C6：逐条判断的图标、颜色令牌与读屏文字
+export const VERDICT_ICON = Object.freeze({ done: '✓', missing: '✗', unsure: '？' });
+const VERDICT_COLOR = { done: 'var(--good)', missing: 'var(--bad)', unsure: 'var(--warn)' };
+const VERDICT_LABEL = { done: '做到了', missing: '没做到', unsure: '没法确认' };
+const REVIEW_ROW_TEXT_MAX = 20;
+// C6 审查 2：running 时每隔这么久再取一次核对状态兜底（断线期间漏掉的进度）
+export const REVIEW_POLL_MS = 15000;
 
 export const TEXT = Object.freeze({
   intro: '卡住了？可以问 AI 要个提示（只给提示，不给答案）',
@@ -49,14 +68,59 @@ export const TEXT = Object.freeze({
   remaining: (n) => `还能问 ${n} 次`,
   label: 'AI 助手',
   notConfigured: 'AI 助手未配置',
-  notConfiguredHelp: '到管理台"设置"页填 AI 接口',
+  notConfiguredHelp: '到管理台第 4 步"上课准备"填 AI 接口',
   answered: (n) => `AI 助手 · 已答 ${n}`,
   pausedBtn: 'AI 助手已暂停 · 点此恢复',
   toolbarHelp: '开了 AI 助手的段，学生点"问一下"向 AI 要提示（只给提示，不给答案）；统计页右侧"求助"看每人问了什么。随堂测验时可暂停：点一下暂停，再点恢复',
   flag: '多次求助未通过',
   refusedFlag: (n) => `索答 ${n} 次`,
   refusedTag: { answer: '（已拒绝：索要答案）', inject: '（已拒绝：无关请求）' },
+  // K8（coach 规格 §15）：AI 线路提示
+  answeredBackup: (n) => `AI 助手 · 已答 ${n} · 备用线路`,
+  answeredError: (n) => `AI 助手 · 已答 ${n} · 接口异常`,
+  backupTitle: (t) => `主接口从 ${t} 起不可用，已自动改用备用接口；课后到管理台设置页点"测一下"看看主接口`,
+  errorTitle: (why) => `AI 接口最近一次请求失败（${why}），学生会看到"AI 现在没回应"`,
+  backupTag: '（备用）',
+  // C6：学生 check 与教师"AI 看一遍"
+  checkHint: '可以不写，直接发',
+  checkNote: 'AI 的判断，可能有错；测试结果为准',
+  reviewTitle: 'AI 看一遍',
+  reviewNote: 'AI 的判断，可能有错，只作讲评参考',
+  reviewStart: (n) => `AI 帮我看一遍（${n} 人）`,
+  reviewConfirm: (n) => `确定：会问 ${n} 次 AI`,
+  reviewProgress: (k, n) => `已看 ${k}/${n}`,
+  reviewStop: '停止',
+  reviewStopped: (k, n) => `已停止（看了 ${k}/${n}）`,
+  reviewAgain: '再看一遍',
+  reviewRow: ({ n, text, done, missing, unsure }) => `第 ${n} 条 ${Array.from(String(text ?? '')).slice(0, REVIEW_ROW_TEXT_MAX).join('')}：✓ ${done} · ✗ ${missing} · ？ ${unsure}`,
+  reviewMissing: '没做到',
+  reviewUnsure: '没法确认',
+  reviewFailed: (names) => `没看成：${names.join('、')}`,
+  reviewReason: (name, reason) => `${name}：${reason || 'AI 没写理由'}`,
+  reviewTruncated: '结果太多，保存时理由被截短了',
 });
+
+// K8：AI 失败原因的中文（教师工具栏 title）；与内核 kernel/server/ai.js 的 AI_REASON_TEXT / aiReasonText 一致（管理台"测一下"用那份，有单测对照）
+export const REASON_TEXT = Object.freeze({
+  timeout: '超时',
+  network: '连不上',
+  'http-401': '密钥不对',
+  'http-403': '密钥不对',
+  'http-404': '地址或模型名不对',
+  'http-429': '太频繁',
+  'http-5xx': '服务商故障',
+  empty: '回复为空',
+});
+export function reasonText(reason) {
+  if (typeof reason !== 'string' || reason === '') return '出错了';
+  if (/^http-5\d\d$/.test(reason)) return REASON_TEXT['http-5xx'];
+  return REASON_TEXT[reason] ?? `出错了（${reason}）`;
+}
+export function hhmm(ms) {
+  const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) return '--:--';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonNegInt = (v, d) => (Number.isInteger(v) && v >= 0 ? v : d);
@@ -225,8 +289,30 @@ export function AnswerText({ text, style }) {
   );
 }
 
-function AskItem({ a }) {
+// C6：check 回答按条渲染（rows / rest 来自 parseVerdicts；调用方在解析不出任何一条时按普通回答显示）
+function VerdictList({ rows, rest, requirements }) {
+  return (
+    <div data-coach-verdicts="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)', background: 'var(--surface-alt)', borderRadius: 'var(--radius-sm)', padding: 'var(--sp-2) var(--sp-3)' }}>
+      <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>{TEXT.checkNote}</span>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
+        {rows.map((r) => (
+          <li key={r.n} data-coach-verdict={r.verdict} style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'baseline', fontSize: 'var(--fs-md)', color: 'var(--ink)' }}>
+            <span role="img" aria-label={VERDICT_LABEL[r.verdict]} style={{ color: VERDICT_COLOR[r.verdict], fontWeight: 600, flex: '0 0 auto' }}>{VERDICT_ICON[r.verdict]}</span>
+            <span style={{ minWidth: 0, wordBreak: 'break-word' }}>
+              {requirements[r.n - 1] ?? `第 ${r.n} 条`}
+              {r.note && <span style={{ color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)', marginLeft: 'var(--sp-2)' }}>{r.note}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {rest && <span data-coach-verdict-rest="" style={{ color: 'var(--ink)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{rest}</span>}
+    </div>
+  );
+}
+
+function AskItem({ a, requirements = [] }) {
   const failed = a.status !== 'ok';
+  const parsed = !failed && a.kind === 'check' ? parseVerdicts(a.a, requirements.length) : null;
   return (
     <li data-coach-ask={a.status} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)', paddingBottom: 'var(--sp-2)', borderBottom: '1px solid var(--border)' }}>
       <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{a.q || '（没写问题）'}</span>
@@ -234,6 +320,8 @@ function AskItem({ a }) {
         <span style={{ color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{a.a}</span>
       ) : failed ? (
         <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>{a.status === 'limited' ? TEXT.limited : TEXT.failed}</span>
+      ) : parsed && parsed.rows.length > 0 ? (
+        <VerdictList rows={parsed.rows} rest={parsed.rest} requirements={requirements} />
       ) : (
         <AnswerText text={a.a} style={{ background: 'var(--surface-alt)', borderRadius: 'var(--radius-sm)', padding: 'var(--sp-2) var(--sp-3)', color: 'var(--ink)', fontSize: 'var(--fs-md)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} />
       )}
@@ -267,17 +355,22 @@ function KindPicker({ kinds, value, onChange }) {
   );
 }
 
-function Drawer({ c, stageId }) {
+function Drawer({ c, stageId, coach }) {
   const rec = c.data.my;
   const limits = limitsOf(c.options);
   const paused = c.data.perClass?.paused === true;
   const asks = stageAsks(rec, stageId);
   const total = asksOf(rec).length;
   const left = Math.max(0, limits.maxPerStage - usedIn(rec, stageId));
-  const [question, setQuestion] = useState('');
+  // D1（学生输入自动保存规格 §2.4）：提问框自动保存（刷新、断线、关浏览器、换设备不丢），发送后清掉
+  const [questionRaw, setQuestion, { clear: clearQuestion }] = useDraft('question', '', { stageId: 'component:coach' });
+  const question = typeof questionRaw === 'string' ? questionRaw : '';
   const [picked, setPicked] = useState(DEFAULT_KIND);
   const hasOk = asks.some((a) => a.status === 'ok');
-  const kinds = hasOk ? KINDS : KINDS.filter((k) => k !== 'follow');
+  // C6：check 只在本段有要求清单且本人本段记录有代码时出现
+  const requirements = Array.isArray(coach?.requirements) ? coach.requirements : [];
+  const canCheck = requirements.length > 0 && coach?.hasCode === true;
+  const kinds = KINDS.filter((k) => (k !== 'follow' || hasOk) && (k !== 'check' || canCheck));
   const kind = kinds.includes(picked) ? picked : DEFAULT_KIND;
   const [now, setNow] = useState(() => Date.now());
   const pending = c.slice?.pending ?? null;
@@ -314,7 +407,7 @@ function Drawer({ c, stageId }) {
     if (draft !== undefined) payload.draft = draft;
     setLocal({ pending: { stageId, total, at: Date.now() } });
     c.send('coach:s-ask', payload);
-    setQuestion('');
+    clearQuestion();
   };
 
   return (
@@ -322,7 +415,7 @@ function Drawer({ c, stageId }) {
       <div style={{ width: '100%', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto', textAlign: 'left', color: 'var(--ink)' }}>
         <Stack gap={3}>
           <Row gap={2} wrap={false}>
-            <span data-coach-hint="" style={{ flex: 1, minWidth: 0, color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' }}>{kind === 'follow' ? TEXT.followHint : TEXT.hint}</span>
+            <span data-coach-hint="" style={{ flex: 1, minWidth: 0, color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' }}>{kind === 'follow' ? TEXT.followHint : kind === 'check' ? TEXT.checkHint : TEXT.hint}</span>
             <Chip tone={left > 0 ? 'brand' : 'warn'}><span data-coach-left="">{TEXT.remaining(left)}</span></Chip>
             <Btn variant="ghost" aria-label="收起" onClick={close}>✕</Btn>
           </Row>
@@ -332,6 +425,7 @@ function Drawer({ c, stageId }) {
             maxLength={QUESTION_MAX}
             rows={3}
             aria-label="你的问题"
+            placeholder={kind === 'check' ? TEXT.checkHint : undefined}
             onChange={(e) => setQuestion(e.target.value)}
             style={{
               width: '100%',
@@ -354,7 +448,7 @@ function Drawer({ c, stageId }) {
           </Row>
           {asks.length > 0 && (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-              {[...asks].reverse().map((a, i) => <AskItem key={a.id ?? i} a={a} />)}
+              {[...asks].reverse().map((a, i) => <AskItem key={a.id ?? i} a={a} requirements={requirements} />)}
             </ul>
           )}
         </Stack>
@@ -364,7 +458,7 @@ function Drawer({ c, stageId }) {
 }
 
 function StudentOverlay() {
-  const { c, stageId, ready, reviewing } = useStudentCoach();
+  const { c, stageId, coach, ready, reviewing } = useStudentCoach();
   const open = Boolean(c.slice?.open);
   const { setLocal } = c;
   // 回看时关掉抽屉（回到当前段不自动再开）
@@ -372,7 +466,7 @@ function StudentOverlay() {
     if (reviewing && open) setLocal({ open: false });
   }, [reviewing, open, setLocal]);
   if (!ready || !open) return null;
-  return <Drawer c={c} stageId={stageId} />;
+  return <Drawer c={c} stageId={stageId} coach={coach} />;
 }
 
 // ---------- 教师端 ----------
@@ -399,17 +493,29 @@ function TeacherToolbar() {
   }
   // §12.6 已配置：按钮，点一下暂停 / 恢复（等服务端 class-update 回来再变文案）
   const paused = c.data.perClass?.paused === true;
+  // K8 §15：aiNotice 带 error → 接口异常；route 2 → 备用线路（暂停时文字仍是"已暂停"）
+  const notice = isPlainObject(c.data.perClass?.aiNotice) ? c.data.perClass.aiNotice : null;
+  const kind = paused || !notice ? null : notice.error ? 'error' : notice.route === 2 ? 'backup' : null;
+  const n = answeredCount(c.data.perStudent);
+  const label = paused ? TEXT.pausedBtn
+    : kind === 'error' ? TEXT.answeredError(n)
+      : kind === 'backup' ? TEXT.answeredBackup(n)
+        : TEXT.answered(n);
+  const title = kind === 'error' ? TEXT.errorTitle(reasonText(notice.error))
+    : kind === 'backup' ? TEXT.backupTitle(hhmm(notice.since))
+      : undefined;
   return (
     <HelpTip text={TEXT.toolbarHelp}>
       <Btn
         variant="soft"
         size="sm"
         data-coach-chip={paused ? 'paused' : 'on'}
+        {...(kind ? { 'data-coach-route': kind, title } : {})}
         aria-pressed={paused}
         onClick={() => c.send('coach:t-pause', { paused: !paused })}
         style={paused ? { background: 'var(--warn-soft)', color: 'var(--warn)' } : undefined}
       >
-        {paused ? TEXT.pausedBtn : TEXT.answered(answeredCount(c.data.perStudent))}
+        {label}
       </Btn>
     </HelpTip>
   );
@@ -453,6 +559,7 @@ function HelpRow({ row, open, onToggle }) {
               <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {askMeta(a) && <span data-coach-meta="" style={{ color: 'var(--ink-soft)', fontWeight: 600, marginRight: 'var(--sp-2)' }}>{askMeta(a)}</span>}
                 {a.q || '（没写问题）'}
+                {a.route === 2 && <span data-coach-backup="" style={{ color: 'var(--ink-dim)', marginLeft: 'var(--sp-2)' }}>{TEXT.backupTag}</span>}
               </span>
               {a.status === 'ok' ? (
                 <AnswerText text={a.a} style={{ color: 'var(--ink)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} />
@@ -469,12 +576,165 @@ function HelpRow({ row, open, onToggle }) {
   );
 }
 
+// ---------- C6：教师"AI 看一遍" ----------
+
+export const reviewOf = (slice, stageId) => {
+  const r = slice?.reviews?.[stageId];
+  return isPlainObject(r) ? r : null;
+};
+// 第 n 条要求在各生回答里判为 verdict 的名单（只看 status ok 的学生，按名字排序）
+export const reviewNames = (perStudent, n, verdict) => reviewEntries(perStudent, n, verdict).map((e) => e.name);
+export const reviewFailedNames = (perStudent) => Object.entries(isPlainObject(perStudent) ? perStudent : {})
+  .filter(([, s]) => s?.status === 'failed')
+  .map(([name]) => name)
+  .sort((a, b) => a.localeCompare(b, 'zh'));
+
+const reviewRowBtn = {
+  display: 'flex',
+  alignItems: 'center',
+  width: '100%',
+  minHeight: 'var(--control-h)',
+  padding: 'var(--sp-1) 0',
+  background: 'none',
+  border: 'none',
+  color: 'var(--ink)',
+  font: 'inherit',
+  fontSize: 'var(--fs-sm)',
+  textAlign: 'left',
+  cursor: 'pointer',
+};
+
+const reviewNameBtn = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: 'var(--sp-1)',
+  background: 'none',
+  border: 'none',
+  borderRadius: 'var(--radius-sm)',
+  font: 'inherit',
+  cursor: 'pointer',
+};
+
+// C7：名字是按钮，点开 / 收起该生这一条的理由（picked 为当前展开的名字，只展开一个）
+function ReviewNames({ label, entries, color, attr, picked, onPick }) {
+  if (entries.length === 0) return null;
+  const hit = entries.find((e) => e.name === picked);
+  return (
+    <div {...{ [attr]: '' }} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)', fontSize: 'var(--fs-sm)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-1)', alignItems: 'center' }}>
+        <span style={{ color: 'var(--ink-soft)' }}>{label}</span>
+        {entries.map((e) => (
+          <button
+            key={e.name}
+            type="button"
+            data-coach-review-name={e.name}
+            aria-expanded={picked === e.name}
+            onClick={() => onPick(picked === e.name ? null : e.name)}
+            style={{ ...reviewNameBtn, background: picked === e.name ? 'var(--surface-alt)' : 'none' }}
+          >
+            <GroupTag label={e.name} color={color} size="md" />
+          </button>
+        ))}
+      </div>
+      {hit && (
+        <span data-coach-review-reason="" style={{ color: 'var(--ink)', wordBreak: 'break-word', paddingLeft: 'var(--sp-2)' }}>
+          {TEXT.reviewReason(hit.name, hit.reason)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ReviewPanel({ c, stageId }) {
+  const [open, setOpen] = useState(null);
+  // C7：展开的学生理由 { verdict, name }；换一条要求时收起
+  const [pick, setPick] = useState(null);
+  const r = reviewOf(c.slice, stageId);
+  const status = r?.status ?? 'idle';
+  const { send } = c;
+  // 审查 2：running 时每 15 s 取一次兜底
+  useEffect(() => {
+    if (status !== 'running') return undefined;
+    const t = setInterval(() => send('coach:t-review-get', { stageId }), REVIEW_POLL_MS);
+    return () => clearInterval(t);
+  }, [status, stageId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const records = c.stageData(stageId).perStudent ?? {};
+  const n = Object.values(records).filter((rec) => codeOf(rec) !== '').length;
+  const start = () => c.send('coach:t-review', { stageId, action: 'start' });
+  const startBtn = (label) => (
+    <ConfirmAdvanceBtn variant="soft" size="sm" disabled={n === 0} confirmLabel={TEXT.reviewConfirm(n)} onAdvance={start}>{label}</ConfirmAdvanceBtn>
+  );
+  const summary = Array.isArray(r?.summary) ? r.summary : [];
+  const failedNames = reviewFailedNames(r?.perStudent);
+  return (
+    <div data-coach-review={status} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', minWidth: 0 }}>
+      <span style={{ color: 'var(--ink)', fontSize: 'var(--fs-md)', fontWeight: 600 }}>{TEXT.reviewTitle}</span>
+      <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>{TEXT.reviewNote}</span>
+      {status === 'running' ? (
+        <Row gap={2} wrap={false}>
+          <span data-coach-review-progress="" style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-sm)', color: 'var(--ink)' }}>{TEXT.reviewProgress(r.done ?? 0, r.total ?? 0)}</span>
+          <Btn variant="soft" size="sm" onClick={() => c.send('coach:t-review', { stageId, action: 'stop' })}>{TEXT.reviewStop}</Btn>
+        </Row>
+      ) : status === 'done' || status === 'stopped' ? (
+        <>
+          {status === 'stopped' && <span style={{ color: 'var(--warn)', fontSize: 'var(--fs-sm)' }}>{TEXT.reviewStopped(r.done ?? 0, r.total ?? 0)}</span>}
+          {r.truncated === true && <span data-coach-review-truncated="" style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>{TEXT.reviewTruncated}</span>}
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {summary.map((row) => (
+              <li key={row.n} style={{ borderBottom: '1px solid var(--border)' }}>
+                <button type="button" data-coach-review-row={row.n} aria-expanded={open === row.n} onClick={() => { setOpen(open === row.n ? null : row.n); setPick(null); }} style={reviewRowBtn}>
+                  {TEXT.reviewRow(row)}
+                </button>
+                {open === row.n && (
+                  <div data-coach-review-names={row.n} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)', paddingBottom: 'var(--sp-2)' }}>
+                    {[['missing', TEXT.reviewMissing, 'var(--bad)'], ['unsure', TEXT.reviewUnsure, 'var(--warn)']].map(([v, label, color]) => (
+                      <ReviewNames
+                        key={v}
+                        label={label}
+                        entries={reviewEntries(r.perStudent, row.n, v)}
+                        color={color}
+                        attr={`data-coach-review-${v}`}
+                        picked={pick?.verdict === v ? pick.name : null}
+                        onPick={(name) => setPick(name ? { verdict: v, name } : null)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {failedNames.length > 0 && <span data-coach-review-failed="" style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)', wordBreak: 'break-word' }}>{TEXT.reviewFailed(failedNames)}</span>}
+          <Row gap={2}>{startBtn(TEXT.reviewAgain)}</Row>
+        </>
+      ) : (
+        <Row gap={2}>{startBtn(TEXT.reviewStart(n))}</Row>
+      )}
+    </div>
+  );
+}
+
 function TeacherSidebar({ stageId }) {
   const c = useComponent(ID);
   const coach = useCoachStage(stageId);
   const { roster } = useTeacherStage(stageId);
   const [open, setOpen] = useState(null);
-  if (c.role !== 'teacher' || !coach.on) return null;
+  const requirements = Array.isArray(coach.requirements) ? coach.requirements : [];
+  // C6："AI 看一遍"——本段有要求清单且 AI 已配置（不看本段是否开了学生求助）
+  const canReview = c.role === 'teacher' && requirements.length > 0 && c.data.perClass?.enabled === true;
+  const { send } = c;
+  // 挂载、换段、断线重连（joined 由 false 变 true）时取回核对状态
+  const joined = coreTeacherStore((st) => st.joined) === true;
+  useEffect(() => {
+    if (canReview && joined) send('coach:t-review-get', { stageId });
+  }, [canReview, stageId, joined]);   // eslint-disable-line react-hooks/exhaustive-deps
+  if (c.role !== 'teacher' || (!coach.on && !canReview)) return null;
+  if (!coach.on) {
+    return (
+      <div data-coach-sidebar="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', minWidth: 0 }}>
+        <ReviewPanel c={c} stageId={stageId} />
+      </div>
+    );
+  }
   const rows = helpRows({
     perStudent: c.data.perStudent,
     stageId,
@@ -485,6 +745,7 @@ function TeacherSidebar({ stageId }) {
   });
   return (
     <div data-coach-sidebar="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', minWidth: 0 }}>
+      {canReview && <ReviewPanel c={c} stageId={stageId} />}
       <span style={{ color: 'var(--ink)', fontSize: 'var(--fs-md)', fontWeight: 600 }}>求助</span>
       {rows.length === 0 ? (
         <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>还没有人问</span>
@@ -508,6 +769,16 @@ export default {
   },
   store: {
     student: { initial: { open: false, pending: null }, on: {} },
-    teacher: { initial: {}, on: {} },
+    // C6：coach:review-state（服务端只发教师）→ reviews[stageId]；classroom:reset 回 initial
+    teacher: {
+      initial: { reviews: {} },
+      on: {
+        'coach:review-state': (slice, p) => {
+          if (!isPlainObject(p) || typeof p.stageId !== 'string') return slice;
+          const base = isPlainObject(slice) ? slice : {};
+          return { ...base, reviews: { ...(isPlainObject(base.reviews) ? base.reviews : {}), [p.stageId]: p } };
+        },
+      },
+    },
   },
 };

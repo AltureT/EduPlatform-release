@@ -1,6 +1,7 @@
 // 快照与恢复（规格 §5、§8）
 // snapshot(state) → { lessonId, stagesHash, stageIndex, subPhase, savedAt }，存 sessions KV classroom_snapshot
 // hydrate(state, db) 顺序：class_epoch → classroom_snapshot → students → roster / bindings → stage_student_data → stage_class_data
+//   → component_teacher_data（C7：载入 state.componentTeacherData = Map<componentId, Map<key, JSON 串>>；换课时不载入并清表）
 import { createLog } from './log.js';
 
 export const SNAPSHOT_KEY = 'classroom_snapshot';
@@ -63,11 +64,23 @@ export function hydrate(state, db, log = createLog('restore')) {
   for (const r of db.loadStageStudentData()) state.data.set(r.stageId, r.name, r.data);
   for (const r of db.loadStageClassData()) state.data.setClass(r.stageId, r.data);
 
+  // 7. component_teacher_data（教师专属组件存储；换课清空）
+  const teacherData = new Map();
+  if (!lessonChanged) {
+    for (const r of db.loadComponentTeacherData?.() ?? []) {
+      if (!teacherData.has(r.componentId)) teacherData.set(r.componentId, new Map());
+      teacherData.get(r.componentId).set(r.key, r.value);
+    }
+  }
+  state.componentTeacherData = teacherData;
+
   if (lessonChanged) {
     log.warn('lesson changed, stage reset');
     db.transaction(() => {
       saveStudents(state, db);
       saveSnapshot(state, db);
+      db.clearDrafts?.(); // 草稿不跨课（学生输入自动保存规格 §2.3）
+      db.clearComponentTeacherData?.(); // 教师专属组件存储不跨课
     });
   }
   return { lessonChanged };

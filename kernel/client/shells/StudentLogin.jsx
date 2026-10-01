@@ -129,7 +129,7 @@ export default function StudentLogin({ banner = null }) {
 
   return (
     <Shell role="student" testId="student-login" banner={joined ? banner : null} header={<Brand glyph={lesson.glyph} title={lesson.title} size="sm" />}>
-      <Page template={hasSide ? 'split' : 'focus'} title={title}>
+      <Page template={hasSide ? 'split' : 'focus'} narrowOrder="main-first" title={title}>
         <Page.Main>
           {rosterMode ? (
             <Tiles min="120px" gap={2}>

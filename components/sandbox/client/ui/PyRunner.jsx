@@ -13,6 +13,10 @@
 //   code 原语双起始代码时传学生选的那份（受控用法下原语自己也按它算 code）
 // - P6 审查 B1：卸载后（如"换起点"时程序还卡在 input() / 死循环）在途的 run / test 返回时一律不再 setState、不写 localStorage、
 //   不调 onResult / onTest、不发草稿（mountedRef）；Worker 不随卸载停止，要停由阶段先调 usePython().stop()
+// - P7（教师现场演示规格 §4）：prop role="teacher"（缺省 "student"）——教师大屏"现场演示"用：不读不写草稿 localStorage、不发 draftEvent、
+//   不调 onRestore、不登记 reset 清草稿；不看镜像只读（教师外壳里 useStudentStage 拿不到 readOnly / myData 时本来就按非只读处理）；
+//   ensure 与运行前 writeFiles 照常；受控用法（code / onChange）由演示区使用；prop size="md" 编辑器字号用 --fs-md（大屏，挂载时定）。input() 照常：输入框由本实例显示，
+//   信箱 key 由教师外壳常驻的 teacherToolbar 槽位经 sandbox:t-stdin-key 登记（教师外壳没有 studentOverlay，不需要）
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, registerKernelHook, Btn, Chip, Fill, Split, Row } from '#kernel/client/index.js';
 import { usePython } from '../usePython.js';
@@ -94,6 +98,7 @@ function chipOf(snap, elapsed) {
 
 // 布局（界面整理规格 §3、§5）：<Fill> 撑满父级 → <Split ratio="3:2" stack="ratio">（wide 左右、narrow 上下按 3:2 分高）
 // P5（代码段布局与回看规格 §5）：内层 Split resizable、storageKey="sandbox:runner"——宽屏代码↔输出之间可拖宽，比例记在本机（各段共用）
+// K10：左右 / 上下按代码区容器宽度（< 900 上下）判断，不按视口——split 模板 Main 里的代码区在 1280 横屏下只有约 740 宽，此时上下排
 // 左 / 上编辑器，右 / 下输出（<Fill scroll> 内部滚动）；工具栏 <Row> 在下方。只读态同样撑满，没有工具栏
 // P3：captions 时两块各在上方加一行小标题（--fs-sm、--ink-dim）
 const captionStyle = { flexShrink: 0, fontSize: 'var(--fs-sm)', color: 'var(--ink-dim)', fontWeight: 600, lineHeight: 1.4, paddingBottom: 'var(--sp-1)' };
@@ -104,7 +109,7 @@ function Caption({ children }) {
 function Frame({ editor, output, controls, captions = true, outputCaption = '输出' }) {
   return (
     <Fill data-sandbox-runner="">
-      <Split ratio="3:2" stack="ratio" resizable storageKey="sandbox:runner">
+      <Split ratio="3:2" stack="ratio" stackBy="container" resizable storageKey="sandbox:runner">
         {captions ? <Fill><Caption>代码</Caption>{editor}</Fill> : editor}
         {captions
           ? <Fill><Caption>{outputCaption}</Caption><Fill scroll>{output}</Fill></Fill>
@@ -178,13 +183,13 @@ function InputLine({ prompt, onSend }) {
 
 // ---------- 可编辑 ----------
 
-function LiveRunner({ st, stageId, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, extraCompletions, captions = true }) {
+function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, extraCompletions, captions = true }) {
   const c = useComponent('sandbox');
   const py = usePython();
   const client = getPythonClient();
   const sb = useSandboxConfig(stageId) ?? EMPTY;
   const hasTests = !!(sb.tests && Object.keys(sb.tests).length > 0);
-  const isStudent = c.role === 'student';
+  const isStudent = role !== 'teacher' && c.role === 'student';
   const lessonId = c.lesson?.id ?? null;
   const key = isStudent ? draftKey({ lessonId, classEpoch: c.classEpoch, name: c.me?.name, stageId }) : null;
 
@@ -233,7 +238,7 @@ function LiveRunner({ st, stageId, code: codeProp, starter: starterProp, onChang
   useEffect(() => {
     const result = resultOfLast(saved?.last);
     // 旧版保存的最近结果没有运行时的代码：不知道配哪份代码，不回调（否则会和之后改过的代码配对，误启用提交）
-    if (!result || typeof onRestore !== 'function' || typeof saved.last.code !== 'string') return;
+    if (!result || !isStudent || typeof onRestore !== 'function' || typeof saved.last.code !== 'string') return;
     const code = saved.last.code;
     try {
       onRestore({ code, result });
@@ -509,7 +514,7 @@ function LiveRunner({ st, stageId, code: codeProp, starter: starterProp, onChang
     <Frame
       captions={captions}
       outputCaption={test ? '测试结果' : '输出'}
-      editor={<Editor ref={editorRef} value={code} onChange={setCode} onRun={runFromKey} extraCompletions={extraCompletions} />}
+      editor={<Editor ref={editorRef} value={code} onChange={setCode} onRun={runFromKey} extraCompletions={extraCompletions} size={size} />}
       controls={controls}
       output={(
         <PyOutput entries={entries} test={test} style={outputFill}>
@@ -522,6 +527,6 @@ function LiveRunner({ st, stageId, code: codeProp, starter: starterProp, onChang
 
 export default function PyRunner({ stageId, ...rest }) {
   const st = useStudentStage(stageId);
-  if (st.readOnly) return <ReadOnlyRunner myData={st.myData} captions={rest.captions !== false} />;
+  if (st.readOnly && rest.role !== 'teacher') return <ReadOnlyRunner myData={st.myData} captions={rest.captions !== false} />;
   return <LiveRunner st={st} stageId={stageId} {...rest} />;
 }

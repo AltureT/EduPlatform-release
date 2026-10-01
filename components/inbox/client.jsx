@@ -1,7 +1,7 @@
 // inbox 收件箱客户端（规格 §3.3）：教师工具栏按钮 + 抽屉；学生作答弹窗（无关闭按钮，只有教师能关）
 // 覆盖层（界面整理规格 §2.3）：教师抽屉走内核 Overlay 的 drawer 形态，学生作答框走 dialog 形态（不传 onDismiss，点遮罩不关）
 import { useState } from 'react';
-import { useComponent, useTeacherStage, useNarrow, Btn, Chip, Overlay, Row, Stack } from '#kernel/client/index.js';
+import { useComponent, useTeacherStage, useNarrow, useDraft, Btn, Chip, Overlay, Row, Stack } from '#kernel/client/index.js';
 
 const ID = 'inbox';
 
@@ -191,9 +191,17 @@ function TeacherToolbar({ stageId }) {
 
 function AnswerForm({ c, question, mine }) {
   const fields = question.fields ?? [];
-  const fromAnswers = (answers) => Object.fromEntries(fields.map((f) => [f.key, answers?.[f.key] ?? '']));
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(() => fromAnswers(mine?.answers));
+  const fromAnswers = (answers) => Object.fromEntries(fields.map((f) => [f.key, typeof answers?.[f.key] === 'string' ? answers[f.key] : '']));
+  // D1（学生输入自动保存规格 §2.4）：作答框自动保存；值 { q: 题目 id, answers }，题目换了就不用旧草稿；提交后清掉
+  const [saved, setSaved, { clear: clearSaved }] = useDraft('answers', null, { stageId: 'component:inbox' });
+  const hasSaved = saved && typeof saved === 'object' && saved.q === question.id && saved.answers && typeof saved.answers === 'object';
+  // 已提交后点过"修改"、改了没交就刷新：回来仍在修改状态
+  const [editing, setEditing] = useState(() => Boolean(mine) && Boolean(hasSaved));
+  const draft = hasSaved ? fromAnswers(saved.answers) : fromAnswers(mine?.answers);
+  const setDraft = (fn) => setSaved((prev) => {
+    const base = prev && typeof prev === 'object' && prev.q === question.id && prev.answers ? fromAnswers(prev.answers) : fromAnswers(mine?.answers);
+    return { q: question.id, answers: typeof fn === 'function' ? fn(base) : fn };
+  });
 
   const showSubmitted = Boolean(mine) && !editing;
   const allEmpty = fields.every((f) => (draft[f.key] ?? '').trim() === '');
@@ -201,10 +209,11 @@ function AnswerForm({ c, question, mine }) {
 
   const submit = () => {
     c.send('inbox:s-submit', { questionId: question.id, answers: { ...draft } });
+    if (saved != null) clearSaved();
     setEditing(false);
   };
   const edit = () => {
-    setDraft(fromAnswers(mine?.answers));
+    if (saved != null) clearSaved();
     setEditing(true);
   };
 

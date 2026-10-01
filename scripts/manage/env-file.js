@@ -1,28 +1,38 @@
 // .env 读写（管理台规格 §3）：管理台是 .env 的唯一编辑者；服务端仍用 dotenv 读取
 //   readEnv(root) → { values, exists }
 //   writeEnv(root, patch)：逐行读取；已知键原位替换值（重复出现的键每一处都替换），缺失的已知键追加到末尾，其余行原样保留；未知键忽略
-//   ensureEnv(root, platform?)：.env 缺失时从 .env.example 生成（PORT：darwin / win32 取 80，linux 等取 3001；LESSON_CONFIG 取 examples/ 下第一门课，minimal 优先）
-//   maskSecret / settingsView / prepareSettingsPatch / validateSettings：设置页的读出与提交
-//   R3：RUNTIME_ZIP_URL（设置页"Python 运行时 → 下载源（高级）"）；downloadEnv(root) = 下载子进程的环境（.env 里非空的 DOWNLOAD_KEYS 盖上去）；
+//   ensureEnv(root, platform?)：.env 缺失时从 .env.example 生成（PORT：darwin / win32 取 80，linux 等取 3001）；
+//     G3（管理台线性路径重设计规格 §2.4）：LESSON_CONFIG 取 lessons/ 下第一门课（目录名排序），没有则留空（= 还没有课程）；
+//     示例课 examples/ 只是给 AI 照抄的范本，不再默认
+//   effectiveEnv：.env 里写了 LESSON_CONFIG=（空值）就是"还没有课程"，不回落到根目录配置；没有这一行仍按缺省
+//   maskSecret / settingsView / prepareSettingsPatch / validateSettings：上课准备页的读出与提交
+//   R3：RUNTIME_ZIP_URL（"平台"页"下载源（高级）"）；downloadEnv(root) = 下载子进程的环境（.env 里非空的 DOWNLOAD_KEYS 盖上去）；
 //     platformEnv(root) = 去掉 DOWNLOAD_KEYS 的有效配置（process.js 判断"有改动未生效"用）
+//   M6（名单与数据以课程为主体规格 §2.1）：DB_PATH 不再有缺省（每门课 data/lessons/<id>.sqlite）；.env 里 DB_PATH 等于旧缺省
+//     data/classroom.sqlite 视为没设置（effectiveEnv 不带它；writeEnv 顺手删掉那一行）；其它显式值仍尊重：customDbPath(root) → 那个值或 null
 import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import { isOldDefaultDbPath } from '../../kernel/server/lesson-db-path.js';
 
 export const KNOWN_KEYS = [
   'PORT', 'DB_PATH', 'TEACHER_PASSWORD', 'AUTH_TOKEN_FILE', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'RUNTIME_ZIP_URL',
+  'AI_BASE_URL_2', 'AI_API_KEY_2', 'AI_MODEL_2',
 ];
-// 设置页可见、可改的键（DB_PATH / AUTH_TOKEN_FILE 保持 .env.example 默认，不展示）
-export const EDITABLE_KEYS = ['TEACHER_PASSWORD', 'PORT', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'RUNTIME_ZIP_URL'];
+// 上课准备页可见、可改的键（DB_PATH / AUTH_TOKEN_FILE 保持 .env.example 默认，不展示）
+export const EDITABLE_KEYS = [
+  'TEACHER_PASSWORD', 'PORT', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'RUNTIME_ZIP_URL', 'AI_BASE_URL_2', 'AI_API_KEY_2', 'AI_MODEL_2',
+];
+// 上课准备页脱敏显示的密钥（K8：第二组备用接口的密钥同样处理）
+export const SECRET_KEYS = ['AI_API_KEY', 'AI_API_KEY_2'];
 // 下载 Python 运行时用的键（国内镜像与 Gitee 同步规格 §4）：管理台起下载子进程时从 .env 传入；平台本身不用，改了不需要重启平台
 export const DOWNLOAD_KEYS = ['RUNTIME_ZIP_URL', 'PYODIDE_MIRROR', 'PYPI_MIRROR', 'FONT_URL'];
 export const DEFAULTS = {
   PORT: '80',
-  DB_PATH: 'data/classroom.sqlite',
   AUTH_TOKEN_FILE: 'data/teacher_tokens.json',
   LESSON_CONFIG: './lesson.config.js',
 };
-const MASK = '••••';
+export const MASK = '••••';
 
 const envFile = (root) => path.join(root, '.env');
 
@@ -36,8 +46,18 @@ export function readEnv(root) {
 export function effectiveEnv(root) {
   const { values } = readEnv(root);
   const out = { ...values };
-  for (const [k, v] of Object.entries(DEFAULTS)) if (!out[k]) out[k] = v;
+  if (!out.DB_PATH || isOldDefaultDbPath(out.DB_PATH)) delete out.DB_PATH;
+  for (const [k, v] of Object.entries(DEFAULTS)) {
+    // G3：LESSON_CONFIG 显式写成空值 = 还没有课程（不回落到根目录配置）
+    if (k === 'LESSON_CONFIG' && out[k] === '') continue;
+    if (!out[k]) out[k] = v;
+  }
   return out;
+}
+
+// .env 里显式的、不是旧缺省的 DB_PATH（开发与测试用）；没有则 null（按课程分库）
+export function customDbPath(root) {
+  return effectiveEnv(root).DB_PATH ?? null;
 }
 
 // 下载子进程的环境：base（管理台自己的环境）+ .env 里非空的 DOWNLOAD_KEYS（.env 优先）
@@ -87,7 +107,9 @@ export function writeEnv(root, patch) {
   const trailing = lines.length > 0 && lines[lines.length - 1] === '';
   if (trailing) lines.pop();
   const written = new Set();
-  const out = lines.map((line) => {
+  // M6：旧缺省 DB_PATH=data/classroom.sqlite 那一行顺手删掉（按课程分库后它没有意义）
+  const kept = lines.filter((line) => !(lineKey(line) === 'DB_PATH' && isOldDefaultDbPath(dotenv.parse(line).DB_PATH)));
+  const out = kept.map((line) => {
     const key = lineKey(line);
     if (key && pending.has(key)) {
       written.add(key);
@@ -110,15 +132,15 @@ export function ensureEnv(root, platform = process.platform) {
   const text = fs.existsSync(example) ? fs.readFileSync(example, 'utf8') : '';
   fs.writeFileSync(envFile(root), text);
   const patch = { PORT: platform === 'win32' || platform === 'darwin' ? '80' : '3001' };
-  // 新装默认课程：examples/ 下第一门（minimal 优先，不需要 Python 运行时），不用根目录的开发者配置
+  // G3：新装默认课程 = lessons/ 下第一门；没有就留空（还没有课程）。不用示例课，也不用根目录的开发者配置
   const lesson = defaultLessonPath(root);
-  if (lesson) patch.LESSON_CONFIG = lesson;
+  patch.LESSON_CONFIG = lesson ?? '';
   writeEnv(root, patch);
   return { created: true, lesson: lesson || null };
 }
 
 export function defaultLessonPath(root) {
-  const dir = path.join(root, 'examples');
+  const dir = path.join(root, 'lessons');
   let names;
   try {
     names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
@@ -127,8 +149,7 @@ export function defaultLessonPath(root) {
   }
   const withConfig = names.filter((n) => fs.existsSync(path.join(dir, n, 'lesson.config.js')));
   if (withConfig.length === 0) return null;
-  const pick = withConfig.includes('minimal') ? 'minimal' : withConfig[0];
-  return `./examples/${pick}/lesson.config.js`;
+  return `./lessons/${withConfig[0]}/lesson.config.js`;
 }
 
 export function maskSecret(v) {
@@ -141,22 +162,22 @@ export function maskSecret(v) {
 export function settingsView(values) {
   const out = {};
   for (const k of EDITABLE_KEYS) out[k] = values[k] ?? '';
-  out.AI_API_KEY = maskSecret(values.AI_API_KEY);
+  for (const k of SECRET_KEYS) out[k] = maskSecret(values[k]);
   return out;
 }
 
-// PUT 提交 → 待写入的 patch：值转字符串；AI_API_KEY 缺省 / null / 脱敏值表示不改，"" 表示清空
+// PUT 提交 → 待写入的 patch：值转字符串；AI_API_KEY / AI_API_KEY_2 缺省 / null / 脱敏值表示不改，"" 表示清空
 export function prepareSettingsPatch(body) {
   const out = {};
   for (const [k, v] of Object.entries(body || {})) {
     if (v === undefined || v === null) continue;
-    if (k === 'AI_API_KEY' && typeof v === 'string' && v.startsWith(MASK)) continue;
+    if (SECRET_KEYS.includes(k) && typeof v === 'string' && v.startsWith(MASK)) continue;
     out[k] = typeof v === 'number' ? String(v) : v;
   }
   return out;
 }
 
-// 校验（规格 §3 表）；lessonPaths 给出时 LESSON_CONFIG 须在其中
+// 校验（规格 §3 表）；lessonPaths 给出时 LESSON_CONFIG 非空值须在其中（G3：空值 = 还没有课程，允许）
 export function validateSettings(patch, { lessonPaths } = {}) {
   const errors = {};
   for (const [k, raw] of Object.entries(patch || {})) {
@@ -186,13 +207,12 @@ export function validateSettings(patch, { lessonPaths } = {}) {
     } else if (k === 'PORT') {
       const n = Number(v);
       if (!/^\d+$/.test(v.trim()) || !Number.isInteger(n) || n < 1 || n > 65535) errors[k] = '端口须是 1 到 65535 之间的整数';
-    } else if (k === 'AI_BASE_URL') {
+    } else if (k === 'AI_BASE_URL' || k === 'AI_BASE_URL_2') {
       if (v !== '' && !/^https?:\/\//i.test(v)) errors[k] = '地址须以 http:// 或 https:// 开头';
     } else if (k === 'RUNTIME_ZIP_URL') {
       if (v !== '' && !/^https?:\/\/\S+$/i.test(v)) errors[k] = '地址须以 http:// 或 https:// 开头，中间不能有空格';
     } else if (k === 'LESSON_CONFIG') {
-      if (v === '') errors[k] = '请选择课程';
-      else if (lessonPaths && !lessonPaths.includes(v)) errors[k] = '找不到这门课程';
+      if (v !== '' && lessonPaths && !lessonPaths.includes(v)) errors[k] = '找不到这门课程';
     }
   }
   return { ok: Object.keys(errors).length === 0, errors };

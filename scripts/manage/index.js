@@ -4,13 +4,20 @@
 // 环境变量 MANAGE_PORT（可选，M2）：起始端口，改为在 MANAGE_PORT 起的 10 个端口里找（测试与本地验证用）
 // 关闭本窗口 / Ctrl+C / 程序出错时先停平台再退出（平台是本进程的子进程，不做后台运行）；
 // 进程无论以何种方式退出，'exit' 里都会同步结束平台子进程并释放锁
+// R4（管理台更新规格 §4）：listen 成功后 2 s 静默检查一次更新（缓存 24 小时）；"下载并更新"成功 → 先停平台、释放锁，以退出码 75 退出，
+//   入口脚本（管理台.command / 管理台.bat，设 EDU_LAUNCHER=1）见 75 就重新启动管理台；没有 EDU_LAUNCHER（直接 npm run manage）的，最后打印一句"请重新运行"
+// 更新子进程正在覆盖文件时关窗口 / Ctrl+C：先等它结束（最多 60 s，它自己屏蔽了这些信号），再停平台退出
+// S6：锁被活着的旧管理台持有时，GET 旧窗口的 /api/ping（1 s 超时），按 decideTakeover 判定：
+//   本项目管理台、pid 与锁一致、平台已停止且手上没活 → 对锁里的 pid 发结束信号，最多等 10 s 锁释放后正常启动；
+//   平台没停 / 正在更新 / 正在恢复重置或下载运行时 → 不接管，按状态提示（takeoverMessage）；ping 不通 / 不是本项目 → 原提示不变。
+//   参数 --no-replace（npm run manage -- --no-replace）关闭接管；只有这时才显示"kill <pid> && npm run manage"那段引导
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureEnv } from './env-file.js';
 import { createManageServer } from './server.js';
 import { openBrowser } from './net.js';
-import { acquireManageLock, LOCK_FILE } from './process.js';
+import { acquireManageLock, LOCK_FILE, pingManage, decideTakeover, replaceOldManage, takeoverMessage } from './process.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const START_PORT = (() => {
@@ -19,6 +26,7 @@ const START_PORT = (() => {
 })();
 const PORTS = Array.from({ length: 10 }, (_, i) => START_PORT + i);
 const TITLE = '课堂互动平台';
+const NO_REPLACE = process.argv.slice(2).includes('--no-replace');
 
 process.title = TITLE;
 if (process.stdout.isTTY) process.stdout.write(`\x1b]0;${TITLE}\x07`);
@@ -31,15 +39,34 @@ try {
   console.error(`管理台无法启动：${err?.message ?? err}`);
   process.exit(1);
 }
+let takeover = { action: 'none', reason: 'no-replace' };
+if (!lock.ok && !NO_REPLACE) {
+  const pingResult = lock.other.starting ? null : await pingManage(lock.other.port, { timeoutMs: 1000 });
+  takeover = decideTakeover({ other: lock.other, pingResult, root: ROOT });
+  if (takeover.action === 'replace') {
+    console.log('');
+    console.log('  检测到之前没关的管理台窗口，正在替换…');
+    const next = await replaceOldManage({ pid: takeover.pid, acquire: () => acquireManageLock(ROOT), timeoutMs: 10_000 });
+    if (next) lock = next;
+    else console.log('  旧窗口 10 秒内没有关闭。');
+  }
+}
 if (!lock.ok) {
   console.log('');
+  if (takeover.action === 'busy') {
+    console.log(`  ${takeoverMessage(takeover.state)}`);
+    console.log('  那个窗口的管理台地址（复制到浏览器打开）：');
+    console.log(`  ${lock.other.url ?? `http://127.0.0.1:${lock.other.port}/`}`);
+    console.log('');
+    process.exit(1);
+  }
   if (lock.other.starting) {
     console.log('  另一个管理台窗口正在启动，请稍等片刻后使用那个窗口打开的页面。');
   } else {
     console.log('  这个平台文件夹已经有一个管理台窗口在运行了，请直接使用它。');
     console.log('  管理台地址（复制到浏览器打开）：');
     console.log(`  ${lock.other.url ?? `http://127.0.0.1:${lock.other.port}/`}`);
-    if (lock.other.pid) {
+    if (NO_REPLACE && lock.other.pid) {
       console.log('');
       console.log('  刚更新过平台、想换成新版本？先关掉旧窗口再启动（复制整行运行）：');
       console.log(process.platform === 'win32'
@@ -62,7 +89,8 @@ const token = crypto.randomBytes(24).toString('base64url');
 const { created } = ensureEnv(ROOT);
 if (created) console.log('已生成配置文件 .env（请在管理台的"设置"里填写教师密码）');
 
-const srv = createManageServer({ root: ROOT, token });
+const UPDATED_EXIT_CODE = 75;
+const srv = createManageServer({ root: ROOT, token, onUpdated: () => shutdown('平台已更新', UPDATED_EXIT_CODE) });
 manage = srv;
 let listening = false;
 for (const port of PORTS) {
@@ -99,17 +127,30 @@ async function shutdown(reason, code = 0) {
   if (exiting) return;
   exiting = true;
   console.log(`\n正在关闭平台（${reason}）…`);
-  const force = setTimeout(() => process.exit(code), 12000);
+  const bye = () => {
+    if (code === UPDATED_EXIT_CODE && process.env.EDU_LAUNCHER !== '1') {
+      console.log('');
+      console.log('平台已更新，请重新运行 npm run manage（依赖有变化时先 npm install）');
+    }
+    process.exit(code);
+  };
+  if (manage.isUpdating()) {
+    console.log('正在更新平台文件，等它完成（最多 1 分钟）…');
+    await manage.waitForUpdate(60_000);
+  }
+  const force = setTimeout(bye, 12000);
   try {
     await manage.close();
   } catch (err) {
     console.error(err?.message ?? err);
   }
   clearTimeout(force);
-  process.exit(code);
+  bye();
 }
 // SIGHUP：Mac 关闭终端窗口；Windows 关闭控制台窗口时 Node 也以 SIGHUP 通知
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => shutdown(sig === 'SIGINT' ? '收到 Ctrl+C' : '窗口关闭'));
+// SIGTERM：新窗口接管（S6）或手动 kill <pid>，原因写中性
+const REASONS = { SIGINT: '收到 Ctrl+C', SIGTERM: '收到结束信号（可能是新开的管理台窗口替换了它）', SIGHUP: '窗口关闭' };
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => shutdown(REASONS[sig]));
 // 管理台自身出错：先停平台再退出，不留下无人管理的平台进程
 const onFatal = (err) => {
   console.error(`管理台出错：${err?.stack ?? err}`);
@@ -117,6 +158,8 @@ const onFatal = (err) => {
 };
 process.on('uncaughtException', onFatal);
 process.on('unhandledRejection', onFatal);
+
+srv.scheduleUpdateCheck().catch(() => {});
 
 const opened = await openBrowser(manage.url);
 if (!opened) console.log('  （没能自动打开浏览器，请手动复制上面的地址）');

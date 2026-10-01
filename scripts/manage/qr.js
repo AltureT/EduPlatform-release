@@ -1,4 +1,4 @@
-// 小型二维码生成（M2 Task 3）：管理台首页"学生地址"的二维码，服务端生成 SVG，不新增 npm 依赖
+// 小型二维码生成（M2 Task 3）：管理台"启动上课"页"学生地址"的二维码，服务端生成 SVG，不新增 npm 依赖
 //   qrMatrix(text) → boolean[][]（true 为深色）| null（超出容量）；字节模式、纠错等级 M、版本 1–10（最多 213 字节）
 //   qrSvg(text, { margin = 4 }) → '<svg …>' | null
 // 算法照 QR Code Model 2 标准，编码结果与 qrcode.react 内置的 Nayuki qrcodegen（等级 M、不提升等级）逐模块一致（测试比对）

@@ -1,4 +1,4 @@
-// 段 3 · 过测试：写 grade(score)，让三个测试用例全部通过
+// 段 3 · 过测试：写 grade(score)，让五个测试用例全部通过（正常三档 + 90、60 两个分界值），另有两条隐藏用例（满分、零分）
 export const TASK = '写 grade(score)：90 分及以上返回"优秀"，60 分及以上返回"及格"，否则返回"不及格"，让测试全部通过';
 
 const STARTER = [
@@ -21,11 +21,48 @@ const TEST_GRADE = [
   '',
   '',
   'def test_pass():',
-  "    assert grade(60) == '及格'",
+  "    assert grade(75) == '及格'",
   '',
   '',
   'def test_fail():',
+  "    assert grade(30) == '不及格'",
+  '',
+  '',
+  'def test_boundary_90():',
+  "    assert grade(90) == '优秀'",
+  "    assert grade(89) == '及格'",
+  '',
+  '',
+  'def test_boundary_60():',
+  "    assert grade(60) == '及格'",
   "    assert grade(59) == '不及格'",
+  '',
+].join('\n');
+
+// 隐藏用例（代码题批改规格 §3）：tests/test_hidden.py 的全文，由 npm run prep:tests 从 hidden.json 生成、只存期望值的哈希；
+// 自写段的 sandbox.tests 只收文本，所以原样抄成字符串（check:lesson 会比对，过期会提醒重跑）
+const TEST_HIDDEN = [
+  '# 由 npm run prep:tests 生成，不要手改；期望值只存哈希',
+  'import hashlib',
+  '',
+  '',
+  'def _h(v):',
+  '    return hashlib.sha256(repr(v).encode()).hexdigest()[:16]',
+  '',
+  '',
+  'def _call(expr):',
+  '    import main',
+  '    return eval(expr, vars(main))',
+  '',
+  '',
+  'def test_hidden_1():',
+  '    """隐藏用例：满分"""',
+  '    assert _h(_call("grade(100)")) == \'f289732bfe855c2c\'',
+  '',
+  '',
+  'def test_hidden_2():',
+  '    """隐藏用例：零分"""',
+  '    assert _h(_call("grade(0)")) == \'bf2de843e5d68fb5\'',
   '',
 ].join('\n');
 
@@ -49,7 +86,7 @@ export default {
   coach: true,                 // AI 助手：学生卡住时可以问 AI 要提示（只给提示，不给答案）
 
   sandbox: {
-    tests: { 'test_grade.py': TEST_GRADE },
+    tests: { 'test_grade.py': TEST_GRADE, 'test_hidden.py': TEST_HIDDEN },
     starter: STARTER,
   },
 

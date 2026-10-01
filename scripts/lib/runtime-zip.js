@@ -6,7 +6,8 @@
 //     第 0 来源：vendor/ 下的 EduPlatform-runtime-v<version>.zip（U 盘拷来的，不联网）；再是 RUNTIME_ZIP_URL；再是 RUNTIME_SOURCES
 //   verifyRuntimeDir(pyodideDir) → { manifest, errors }：manifest.json 在、列出的每个文件都在且 sha256 对得上
 //   runtimeReady(pyodideDir, { version, core }) → 已装好且校验通过（"检查并补全"时不再下载整包）
-//   downloadZip(url, dest, { fetch, log })：下到 dest.part，支持 Range 续传（服务端不支持就重下），完成后改名为 dest
+//   downloadZip(url, dest, { fetch, log, maxBytes? })：下到 dest.part，支持 Range 续传（服务端不支持就重下），完成后改名为 dest；
+//     maxBytes（可选，R4 平台更新用 50 MB）：登记长度或边下边累计超过就停、删 .part、不重试；不传不限
 //   installRuntimeZip(zipFile, { vendorDir, version, core, log })：解压到 vendor/.cache/runtime-staging/ →
 //     按解压出的 manifest 逐文件 sha256 校验 + 内核文件对 core（fetch-pyodide.mjs 的 CORE 常量）→ 通过才替换 vendor/pyodide/，不通过整体丢弃
 //   fetchRuntime({ sources, vendorDir, version, core, files, fetch, log }) → { ok, source }：按序尝试，任一成功即完成；
@@ -118,7 +119,9 @@ export function runtimeReady(pyodideDir, { version, core }) {
 const httpError = (m, fatal = false) => Object.assign(new Error(m), { fatal });
 
 // 一次下载尝试（可续传）；dest.part 已有 n 字节时带 Range: bytes=n-；服务端回 200 就从头写
-async function downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleMs }) {
+const tooBig = (maxBytes) => Object.assign(httpError(`文件超过 ${mb(maxBytes)}，不像要下载的包`, true), { tooBig: true });
+
+async function downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleMs, maxBytes }) {
   let have = fs.existsSync(part) ? fs.statSync(part).size : 0;
   const ac = new AbortController();
   let timer = setTimeout(() => ac.abort(new Error(`${connectMs / 1000} 秒没连上`)), connectMs);
@@ -149,6 +152,10 @@ async function downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleM
     if (!append) have = 0;
     const len = Number(r.headers.get('content-length'));
     const total = Number.isFinite(len) && len > 0 ? have + len : null;
+    if (total && total > maxBytes) {
+      await r.body?.cancel?.();
+      throw tooBig(maxBytes);
+    }
     if (append) log(`  接着上次的 ${mb(have)} 继续下载`);
     fd = fs.openSync(part, append ? 'a' : 'w');
     let got = have;
@@ -157,6 +164,7 @@ async function downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleM
     arm();
     for await (const chunk of r.body) {
       arm();
+      if (got + chunk.length > maxBytes) throw tooBig(maxBytes);
       fs.writeSync(fd, chunk);
       got += chunk.length;
       if (total) {
@@ -183,10 +191,12 @@ async function downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleM
 
 export async function downloadZip(url, dest, {
   fetch: fetchImpl = globalThis.fetch, log = () => {}, connectMs = 30_000, idleMs = 60_000, retries = RETRIES, retryDelayMs = 1000,
+  maxBytes = Infinity,
 } = {}) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   const part = `${dest}.part`;
   if (/^file:/i.test(url)) {
+    if (fs.statSync(fileURLToPath(url)).size > maxBytes) throw tooBig(maxBytes);
     fs.copyFileSync(fileURLToPath(url), part);
     fs.renameSync(part, dest);
     return fs.statSync(dest).size;
@@ -194,11 +204,12 @@ export async function downloadZip(url, dest, {
   let lastErr;
   for (let i = 1; i <= retries; i += 1) {
     try {
-      const n = await downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleMs });
+      const n = await downloadOnce(url, part, { fetch: fetchImpl, log, connectMs, idleMs, maxBytes });
       fs.renameSync(part, dest);
       return n;
     } catch (err) {
       lastErr = err;
+      if (err?.tooBig) fs.rmSync(part, { force: true });
       if (err?.fatal || i === retries) break;
       log(`  断了（${err?.message ?? err}），${i * retryDelayMs / 1000} 秒后接着下…`);
       await new Promise((res) => setTimeout(res, i * retryDelayMs));

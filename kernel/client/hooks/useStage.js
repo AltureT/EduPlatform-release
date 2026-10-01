@@ -53,7 +53,7 @@ const TEACHER_RESERVED_EXACT = new Set([
   'teacher:release-binding', 'teacher:get-student-detail', 'teacher:student-detail',
 ]);
 const STUDENT_RESERVED_PREFIX = ['student:join', 'student:request-claim-release'];
-const STUDENT_RESERVED_EXACT = new Set(['student:switch-name']);
+const STUDENT_RESERVED_EXACT = new Set(['student:switch-name', 'student:draft-set']);
 
 export function isReservedEvent(event) {
   if (typeof event !== 'string') return false;

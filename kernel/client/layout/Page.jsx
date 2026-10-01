@@ -8,6 +8,9 @@
 // - P3：split 的 ratio（Main : Side，缺省 '3:2'）；窄屏的学生视图（外壳 PageStageContext.view === 'student'，含镜像）里
 //   Side 排在 Main 之上并可折叠：顶部一行"<sideLabel> ▾ / ▸"（sideLabel 缺省"题目"），缺省展开，折叠状态记在 sessionStorage（键 page-side:<阶段 id>）；
 //   宽屏与外壳页面（登录页等）不变。换位用带 key 的子节点，Main 不重新挂载
+// - K10：split 窄屏顺序由 narrowOrder 决定：'side-first'（缺省，Side 在上）| 'main-first'（外壳页面登录页 / 教师课前页传这个）；
+//   有阶段信息（PageStageContext）的视图窄屏上下排时 Main 撑满剩余高度、Side 按内容高至多一半（Split stack="fill-last" / "fill-first"），
+//   外壳页面仍按内容高、整体滚动（stack="auto"）
 // - P5（代码段布局与回看规格 §4）：split 的 side='right'（缺省）| 'left'：left 时宽屏顺序 [Side, Main]，传给 Split 的 ratio 反转
 //   （ratio 写的仍是 Main : Side）；窄屏顺序不变。resizable 透传给 Split，storageKey 由 Page 生成：
 //   page-split:<lessonId>:<config.primitive ?? config.id>（lessonId 由外壳经 PageStageContext 提供；拿不到就不带 storageKey，只在内存里记）
@@ -208,7 +211,7 @@ function splitKeyOf(stageCtx) {
 }
 
 export default function Page({
-  template, title, hint, ratio = '3:2', side = 'right', resizable = false, sideLabel = '题目', children, ...rest
+  template, title, hint, ratio = '3:2', side = 'right', narrowOrder = 'side-first', resizable = false, sideLabel = '题目', children, ...rest
 }) {
   const p = pickProps(rest, 'Page');
   const stageCtx = useContext(PageStageContext);
@@ -272,16 +275,20 @@ export default function Page({
     const sideEl = showSide
       ? <SideRegion key="side" empty={sideEmpty} fold={foldable ? { open: sideOpen, toggle: toggleSide } : null} label={sideLabel}>{r.side}{asideNode}</SideRegion>
       : null;
-    // side="left"：宽屏 [Side, Main]、ratio 反转；窄屏顺序不变（学生视图 Side 在上、可折叠，其余 Main 在上）
-    const sideFirst = side === 'left' && !narrow;
+    // side="left"：宽屏 [Side, Main]、ratio 反转；窄屏顺序只看 narrowOrder（缺省 Side 在上）
+    const wideSideFirst = side === 'left' && !narrow;
+    const sideFirst = narrow ? narrowOrder !== 'main-first' : wideSideFirst;
+    // K10：阶段视图窄屏上下排时 Main 撑满剩余高度（Split 断点与 useNarrow 同为 900）
+    const fillStack = narrow && showSide && !!stageCtx ? (sideFirst ? 'fill-last' : 'fill-first') : 'auto';
     body = (
       <Split
-        ratio={sideFirst ? reverseRatio(ratio) : ratio}
+        ratio={wideSideFirst ? reverseRatio(ratio) : ratio}
+        stack={fillStack}
         single={!showSide}
         resizable={!!resizable}
         storageKey={resizable ? splitKeyOf(stageCtx) : undefined}
       >
-        {foldable || sideFirst ? [sideEl, mainEl] : [mainEl, sideEl]}
+        {sideFirst ? [sideEl, mainEl] : [mainEl, sideEl]}
       </Split>
     );
   } else if (t === 'table') {

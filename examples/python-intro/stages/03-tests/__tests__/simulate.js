@@ -11,7 +11,7 @@ function fakeRecord() {
     stdout: '',
     error: null,
     images: [],
-    tests: { passed: 3, failed: 0, errors: 0, total: 3 },
+    tests: { passed: 7, failed: 0, errors: 0, total: 7 },
     runs: 2 + (n % 5),
     ms: 30 + (n % 50),
   };

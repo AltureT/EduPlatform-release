@@ -99,7 +99,7 @@ export function createAdmin({ io, state, db, throttle, tokens = new Set(), log =
     io.emit('classroom:name-claim-update', { claimedNames: state.getClaimedNames() });
   }
 
-  // 规格 §5.3：丢弃节流队列；新 epoch；清 students / device_bindings / stage_*_data（保留 roster、events、actions）；
+  // 规格 §5.3：丢弃节流队列；新 epoch；清 students / device_bindings / stage_*_data / drafts / component_teacher_data（保留 roster、events、actions）；
   // 阶段回 0、subPhase null；清空学生 socket.data（重新 join 前的阶段事件按 forbidden 拒绝）；
   // 全员广播 classroom:reset 与 classroom:state
   function resetClassroom() {
@@ -107,6 +107,7 @@ export function createAdmin({ io, state, db, throttle, tokens = new Set(), log =
     throttle?.dropAll();
     const epoch = db.resetClassroom();
     state.reset(epoch);
+    state.componentTeacherData?.clear();   // 教师专属组件存储（库里已由 db.resetClassroom 清表）
     onReset?.();
     saveSnapshot(state, db);
     db.appendTeacherAction('reset-classroom', null, null, oldEpoch);

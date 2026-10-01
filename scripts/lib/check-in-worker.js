@@ -1,14 +1,19 @@
 // 在 worker 线程里跑 check:lesson（L1）：同一进程、不另起子进程，但模块缓存是新的——
 // 课程文件改过之后再查，读到的是改后的内容（主线程里 import 过的 stage.config.js 会被缓存，内核加载器不带缓存参数）。
-//   checkLessonInWorker(configPath, { root, componentsRoot?, timeoutMs, onWorker? }) → Promise<{ ok, errors, warnings, lesson }>；
+//   checkLessonInWorker(configPath, { root, componentsRoot?, timeoutMs, onWorker?, testsBudgetMs = 45000, tests = true }) → Promise<{ ok, errors, warnings, lesson, tests, infos }>；
+//   第 14 关每段预算 testsBudgetMs（缺省 45 秒，留在 60 秒超时之内）；tests: false 时第 14 关按"运行时不可用"（测试 / 脚手架用，不起 Pyodide）
 //   校验器自身出错或超时则 reject（调用方决定是否放行）；超时时先 terminate 该 worker 再 reject
 import { Worker } from 'node:worker_threads';
 
 const WORKER = new URL('./check-lesson-worker.js', import.meta.url);
 
-export function checkLessonInWorker(configPath, { root = process.cwd(), componentsRoot, timeoutMs = 60_000, onWorker } = {}) {
+export const WORKER_TESTS_BUDGET_MS = 45_000;
+
+export function checkLessonInWorker(configPath, {
+  root = process.cwd(), componentsRoot, timeoutMs = 60_000, onWorker, testsBudgetMs = WORKER_TESTS_BUDGET_MS, tests = true,
+} = {}) {
   return new Promise((resolve, reject) => {
-    const w = new Worker(WORKER, { workerData: { configPath, root, componentsRoot } });
+    const w = new Worker(WORKER, { workerData: { configPath, root, componentsRoot, testsBudgetMs, tests } });
     onWorker?.(w); // 测试用：拿到 worker 以确认超时后已结束
     let settled = false;
     const done = (fn, v) => {

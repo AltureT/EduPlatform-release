@@ -4,14 +4,26 @@
 //     备份文件改为单文件格式（journal_mode=DELETE），不留 -wal / -shm，可直接下载
 //   snapshot({ ..., prefix: 'pre_restore' | 'pre_reset' })：同 backup，供恢复 / 重置前自动快照
 //   listBackups(backupDir) → [{ file, size, mtime }]，按时间倒序，只列白名单文件
-//   restore({ dbPath, backupDir, file }) → { file, snapshot }：调用方须保证平台已停止
-//   resetOffline({ dbPath, backupDir }) → { snapshot, deleted }：快照后删除库与 -wal / -shm（名单一起清除）
+//   restore({ dbPath, backupDir, file, snapshotDir? }) → { file, snapshot }：调用方须保证这个库没有在用；pre_restore 快照放 snapshotDir（缺省 backupDir；M6 从未归类备份恢复到某门课时放那门课的目录）
+//   resetOffline({ dbPath, backupDir }) → { snapshot, cleared }：快照后清课堂数据、保留名单（与在线一致：resetClassroom + VACUUM）；库不存在 cleared: false
 //   resetOnline({ port, dbPath, backupDir }) → { snapshot }：快照后 POST /api/admin/reset（名单保留）
 // 拒绝：库文件或备份文件为符号链接、磁盘剩余 < 源文件 × 2（statfs 可注入替身）、快照失败
+// M6（名单与数据以课程为主体规格 §2.3）：
+//   lessonPaths(root, id, { customDb }) → { dbPath, backupDir }：课程 → data/lessons/<id>.sqlite 与 backups/lessons/<id>/；
+//     id = '_unsorted'（迁移时读不出课程的旧库）→ data/lessons/_unsorted.sqlite 与 backups/（旧备份所在，"未归类备份"）；
+//     customDb（.env 显式 DB_PATH）→ 那个库与 backups/（全平台一个库，照旧）
+//   listBackups(backupDir, { withLesson }) 的每项可带 lessonId（备份里 classroom_snapshot.lessonId，恢复到指定课程时核对来源）
+//   backupLessonId(backupDir, file) → 同上，单个文件
+//   dataSummary({ dbPath, backupDir }) → { roster, dbBytes, lastBackup } | null（库不存在）：课程列表（第 1 步）卡片"名单 N 人 · 数据 M KB · 最近备份"
+//   moveLessonData(root, id, destDir) → { moved: [...] }：删课连带——data/lessons/<id>.sqlite* 与 backups/lessons/<id>/ 移到 destDir/data/
+//   removeUnsorted(root, { now }) → { movedTo }：未归类的旧数据"删除"——移到 backups/deleted-lessons/_unsorted-<ts>/data/（不直接删）
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { openDb } from '../../kernel/server/db.js';
+import { lessonDbPath, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
+import { snapshotLessonId } from './migrate-db.js';
 
 const BACKUP_RE = /^(classroom|pre_restore|pre_reset)_[^/\\]*\.db$/;
 
@@ -138,7 +150,25 @@ async function safetySnapshot(prefix, { dbPath, backupDir, statfs, now }) {
   }
 }
 
-export function listBackups(backupDir) {
+export const LESSON_BACKUPS_DIR = 'backups/lessons';
+export const DELETED_DIR = 'backups/deleted-lessons';
+
+export function lessonPaths(root, id, { customDb = null } = {}) {
+  const flat = path.join(root, 'backups');
+  if (customDb) return { dbPath: path.resolve(root, customDb), backupDir: flat };
+  if (id === UNSORTED_ID) return { dbPath: lessonDbPath(root, UNSORTED_ID), backupDir: flat };
+  return { dbPath: lessonDbPath(root, id), backupDir: path.join(root, ...LESSON_BACKUPS_DIR.split('/'), id) };
+}
+
+export function backupLessonId(backupDir, file) {
+  if (!isBackupName(file)) return null;
+  const f = path.join(backupDir, file);
+  const st = lstatOrNull(f);
+  if (!st || !st.isFile()) return null;
+  return snapshotLessonId(f);
+}
+
+export function listBackups(backupDir, { withLesson = false } = {}) {
   let names;
   try {
     names = fs.readdirSync(backupDir);
@@ -150,12 +180,14 @@ export function listBackups(backupDir) {
     if (!isBackupName(file)) continue;
     const st = lstatOrNull(path.join(backupDir, file));
     if (!st || !st.isFile()) continue;
-    out.push({ file, size: st.size, mtime: st.mtimeMs });
+    const item = { file, size: st.size, mtime: st.mtimeMs };
+    if (withLesson) item.lessonId = snapshotLessonId(path.join(backupDir, file));
+    out.push(item);
   }
   return out.sort((a, b) => b.mtime - a.mtime || (a.file < b.file ? 1 : -1));
 }
 
-export async function restore({ dbPath, backupDir, file, statfs = fs.statfsSync, now }) {
+export async function restore({ dbPath, backupDir, file, snapshotDir = backupDir, statfs = fs.statfsSync, now }) {
   if (!isBackupName(file)) throw userError('备份文件名不对');
   const src = path.join(backupDir, file);
   const srcSt = rejectSymlink(src, '备份文件');
@@ -176,7 +208,7 @@ export async function restore({ dbPath, backupDir, file, statfs = fs.statfsSync,
   }
   let snap;
   try {
-    snap = await safetySnapshot('pre_restore', { dbPath, backupDir, statfs, now });
+    snap = await safetySnapshot('pre_restore', { dbPath, backupDir: snapshotDir, statfs, now });
   } catch (err) {
     removeQuiet(tmp, ...sidecars(tmp));
     throw err;
@@ -190,11 +222,85 @@ export async function restore({ dbPath, backupDir, file, statfs = fs.statfsSync,
 
 export async function resetOffline({ dbPath, backupDir, statfs = fs.statfsSync, now }) {
   rejectSymlink(dbPath, '数据库文件');
+  if (!lstatOrNull(dbPath)) return { snapshot: null, cleared: false };
   const snap = await safetySnapshot('pre_reset', { dbPath, backupDir, statfs, now });
-  const targets = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
-  const deleted = targets.some((f) => lstatOrNull(f));
-  for (const f of targets) fs.rmSync(f, { force: true });
-  return { snapshot: snap, deleted };
+  // 与在线重置同一口径：清学生、设备绑定、阶段数据，换新 class_epoch；名单保留
+  const db = openDb(dbPath);
+  try {
+    db.resetClassroom();
+    db.raw.exec('VACUUM');
+  } finally {
+    db.close();
+  }
+  return { snapshot: snap, cleared: true };
+}
+
+function fileSize(f) {
+  try {
+    return fs.statSync(f).size;
+  } catch {
+    return 0;
+  }
+}
+
+// 只读数名单人数（平台运行中也能读：WAL 允许并发读）；读不出按 0
+function rosterCount(dbPath) {
+  let db;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    return db.prepare('SELECT COUNT(*) AS n FROM roster').get().n;
+  } catch {
+    return 0;
+  } finally {
+    db?.close();
+  }
+}
+
+export function dataSummary({ dbPath, backupDir }) {
+  const st = lstatOrNull(dbPath);
+  if (!st || !st.isFile()) return null;
+  const list = listBackups(backupDir);
+  return {
+    roster: rosterCount(dbPath),
+    dbBytes: st.size + fileSize(`${dbPath}-wal`),
+    lastBackup: list.length ? { file: list[0].file, mtime: list[0].mtime } : null,
+  };
+}
+
+// 删课连带：这门课的库（连 -wal / -shm）与备份目录移到 destDir/data/（库文件名不变，备份放 destDir/data/backups/）
+export function moveLessonData(root, id, destDir) {
+  const { dbPath, backupDir } = lessonPaths(root, id);
+  const dataDir = path.join(destDir, 'data');
+  const moved = [];
+  const move = (from, to) => {
+    if (!lstatOrNull(from)) return;
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    moved.push(path.relative(root, from).split(path.sep).join('/'));
+  };
+  for (const sfx of ['', '-wal', '-shm']) move(dbPath + sfx, path.join(dataDir, path.basename(dbPath) + sfx));
+  move(backupDir, path.join(dataDir, 'backups'));
+  return { moved };
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const stamp = (d) => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+
+// 未归类的旧数据"删除"：整份移到 backups/deleted-lessons/_unsorted-<ts>/data/，不直接删
+export function removeUnsorted(root, { now = new Date() } = {}) {
+  const { dbPath } = lessonPaths(root, UNSORTED_ID);
+  rejectSymlink(dbPath, '数据库文件');
+  if (!lstatOrNull(dbPath)) throw userError('没有未归类的旧数据', 404);
+  const parent = path.join(root, ...DELETED_DIR.split('/'));
+  const baseName = `${UNSORTED_ID}-${stamp(now)}`;
+  let name = baseName;
+  for (let i = 2; fs.existsSync(path.join(parent, name)); i += 1) name = `${baseName}_${i}`;
+  const dataDir = path.join(parent, name, 'data');
+  fs.mkdirSync(dataDir, { recursive: true });
+  for (const sfx of ['', '-wal', '-shm']) {
+    if (lstatOrNull(dbPath + sfx)) fs.renameSync(dbPath + sfx, path.join(dataDir, path.basename(dbPath) + sfx));
+  }
+  return { movedTo: `${DELETED_DIR}/${name}` };
 }
 
 export async function resetOnline({ port, dbPath, backupDir, statfs = fs.statfsSync, now }) {

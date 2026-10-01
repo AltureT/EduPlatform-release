@@ -11,22 +11,40 @@
 //                        所以撤回后再运行 true 仍保留——历史标记）；公布中到达的 student:code-final 写 final.afterSolution: true（final 整体覆盖）
 //   P6（§4.3）：多份起始代码（options.starters）时两个学生事件都可带 starterLabel（1–12 字），是 starters 里的某个 label 才写进记录顶层
 //                        （code-final 也写顶层，表示学生现在用的起点）；不认识的 label 丢掉不拒绝（旧页面 / 改过课也能照常记录）
+//   P7（教师现场演示规格 §3、§5）：teacher:push-code { code | null }：code 为字符串（≤ 20000 字）→ perClass.pushedCode = { code, at }；
+//                        null / 缺省 → pushedCode = null（撤回）。defaults.onLeave 与 classroom:reset（内核清阶段数据）清掉它。
+//                        两个学生事件可带 fromTeacher（布尔）：true 时写进记录顶层（历史标记，合并写入，之后不带也不清）；
+//                        多份起始代码时 starterLabel 另认 PUSHED_LABEL"老师下发"（学生在选择页选了老师刚发的代码）
+//   V2（代码题批改规格 §4.3）：有 options.mistakes 时，两个学生事件的载荷带 tests.cases 就按失败集合匹配错误类型，
+//                        写 mistake: { id, label } | null（code-final 写 final.mistake）；tests 为 null（改了代码没再测）时记录顶层的 mistake 保留上一次；
+//                        没有 mistakes 选项时不写该字段
+//   K10（_shared/finalLite.js）：上交最终稿之后的 student:code-submit 推送（教师 data-update、本人 my-data）里 final 只带摘要
+//                        { at, stale?, afterSolution?, mistake?, lite: true }，存储仍完整；被投屏的学生照推完整；teacher:feature 投某生时补推一次完整记录
 import { shape } from '#kernel/server/schema.js';
 import { recordShapeWith } from '#components/sandbox/record-shape.js';
 import { allPassed, finalPatch } from './record.js';
+import { matchMistake } from './mistakes.js';
+import { PUSHED_LABEL, pushCodeShape, pushedPatch } from '../_shared/pushCode.js';
+import { pushLite } from '../_shared/finalLite.js';
 
-const withLabel = { starterLabel: 'optional:string:1-12' };
+const withLabel = { starterLabel: 'optional:string:1-12', fromTeacher: 'optional:boolean' };
 const submitShape = recordShapeWith(withLabel);
 const finalShape = recordShapeWith({ stale: 'optional:boolean', ...withLabel });
 
 export function register(ctx, options) {
   const withSolution = !!options?.solution;
   const labels = new Set(Array.isArray(options?.starters) ? options.starters.map((s) => s.label) : []);
-  // 载荷里的 starterLabel：认识的留下，其余去掉
+  if (labels.size > 0) labels.add(PUSHED_LABEL);
+  // 载荷里的 starterLabel：认识的留下，其余去掉；fromTeacher 只在为 true 时写
   const labelOf = (p) => {
-    const { starterLabel, ...rest } = p;
-    return { rest, label: typeof starterLabel === 'string' && labels.has(starterLabel) ? { starterLabel } : {} };
+    const { starterLabel, fromTeacher, ...rest } = p;
+    const label = typeof starterLabel === 'string' && labels.has(starterLabel) ? { starterLabel } : {};
+    if (fromTeacher === true) label.fromTeacher = true;
+    return { rest, label };
   };
+  // V2：错误库匹配（只在载荷带 tests.cases 时算；返回 undefined 表示不写）
+  const mistakes = options?.mistakes ?? null;
+  const mistakeFor = (p) => (mistakes && Array.isArray(p?.tests?.cases) ? matchMistake(p.tests.cases, mistakes) : undefined);
   // 参考答案是否正在公布（班级记录里有 solutionPublishedAt）
   const published = () => ctx.data.getClass()?.solutionPublishedAt != null;
 
@@ -35,13 +53,18 @@ export function register(ctx, options) {
     const now = Date.now();
     const first = allPassed(p.tests) && ctx.data.get(actor.name)?.firstPassedAt == null ? { firstPassedAt: now } : {};
     const mark = withSolution && published() ? { afterSolution: true } : {};
-    ctx.data.set(actor.name, { ...p, submittedAt: now, ...first, ...mark, ...label });
+    const mistake = mistakeFor(p);
+    ctx.data.set(actor.name, { ...p, submittedAt: now, ...first, ...mark, ...label, ...(mistake !== undefined ? { mistake } : {}) }, {
+      push: pushLite(() => ctx.data.getClass()?.featured === actor.name),
+    });
   });
 
   ctx.on('student:code-final', finalShape, (socket, payload, actor) => {
     const { rest: p, label } = labelOf(payload);
     const patch = finalPatch(p, Date.now());
     if (withSolution && published()) patch.final.afterSolution = true;
+    const mistake = mistakeFor(p);
+    if (mistake !== undefined) patch.final.mistake = mistake;
     ctx.data.set(actor.name, { ...patch, ...label });
   });
 
@@ -49,6 +72,12 @@ export function register(ctx, options) {
     const name = p.name ?? null;
     if (name != null && !ctx.data.get(name)) return ctx.reject(socket, `${name} 还没有运行记录`);
     ctx.data.setClass({ featured: name });
+    // K10：教师端这位学生的 final 可能是摘要，补推一次完整记录给大屏
+    if (name != null) ctx.data.set(name, {});
+  });
+
+  ctx.on('teacher:push-code', pushCodeShape, (socket, p) => {
+    ctx.data.setClass(pushedPatch(p, Date.now()));
   });
 
   if (withSolution) {

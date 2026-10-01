@@ -13,6 +13,7 @@ import { runKernelHooks } from './kernelHooks.js';
 import { bindStageSlices, resetSlices } from './stageStores.js';
 import { bindComponentSlices, resetComponentSlices } from './componentRegistry.js';
 import { mapPublicState, EMPTY_LESSON, EMPTY_COUNTS } from './publicState.js';
+import { bumpDraftGeneration, clearLessonDrafts, clearKeysWithPrefix } from './draftStorage.js';
 
 const NAME_KEY = 'student_name';
 const EPOCH_KEY = 'class_epoch';
@@ -90,6 +91,8 @@ export const coreStudentStore = create((set, get) => ({
   me: { ...EMPTY_ME, name: savedName || null },
   myStageData: {},
   classData: {},
+  // 学生输入自动保存（规格 §2.2）：join-ok.myDrafts { [stageId]: { [field]: value } }，只给 useDraft 回填
+  myDrafts: {},
 
   connect() {
     bindStageSlices(socket);
@@ -199,6 +202,7 @@ function bindListeners(set, get) {
       me: meFrom(data.student, finalName),
       myStageData: plainObject(data.myStageData),
       classData: plainObject(data.classData),
+      myDrafts: plainObject(data.myDrafts),
     });
   });
 
@@ -233,6 +237,13 @@ function bindListeners(set, get) {
   });
 
   socket.on('classroom:reset', (payload = {}) => {
+    // 学生输入自动保存（规格 §2.2）：重置代数 +1（useDraft 不再写回），清本课 draft: 与 sandbox: 前缀（含 stale-session）
+    bumpDraftGeneration();
+    const lessonId = get().lesson && get().lesson.id;
+    if (lessonId) {
+      clearLessonDrafts(lessonId);
+      clearKeysWithPrefix(`sandbox:${lessonId}:`);
+    }
     safeRemove(NAME_KEY);
     safeRemove(EPOCH_KEY);
     set({
@@ -243,6 +254,7 @@ function bindListeners(set, get) {
       me: { ...EMPTY_ME },
       myStageData: {},
       classData: {},
+      myDrafts: {},
       validationError: null,
       resetNotice: resetNoticeFor(payload),
     });

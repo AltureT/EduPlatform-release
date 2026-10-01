@@ -60,6 +60,28 @@ const MIGRATIONS = [
     class_epoch TEXT
   );
   `,
+  // v2：学生草稿（学生输入自动保存规格 §2.3）；只给本人回填，教师端 / 报告 / 导出不读
+  `
+  CREATE TABLE IF NOT EXISTS drafts (
+    student_name TEXT NOT NULL,
+    stage_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    class_epoch TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (student_name, stage_id, field)
+  );
+  `,
+  // v3：教师专属组件存储（组件契约"教师专属存储"）；value 为 JSON 串；永不发学生、不进导出；重置与换课清空
+  `
+  CREATE TABLE IF NOT EXISTS component_teacher_data (
+    component_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (component_id, key)
+  );
+  `,
 ];
 
 const toJson = (v) => (v === undefined ? null : JSON.stringify(v));
@@ -133,6 +155,22 @@ export function openDb(dbPath) {
       'SELECT stage_id, type, payload, ts FROM stage_events WHERE student_name = ? AND class_epoch = ? ORDER BY id',
     ),
     deleteStudent: raw.prepare('DELETE FROM students WHERE name = ?'),
+    upsertDraft: raw.prepare(`
+      INSERT INTO drafts (student_name, stage_id, field, value, class_epoch, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(student_name, stage_id, field) DO UPDATE SET
+        value = excluded.value, class_epoch = excluded.class_epoch, updated_at = excluded.updated_at`),
+    deleteDraft: raw.prepare('DELETE FROM drafts WHERE student_name = ? AND stage_id = ? AND field = ?'),
+    loadDrafts: raw.prepare('SELECT stage_id, field, value FROM drafts WHERE student_name = ? AND class_epoch IS ? ORDER BY stage_id, field'),
+    draftBytesExcept: raw.prepare(
+      'SELECT COALESCE(SUM(LENGTH(CAST(value AS BLOB))), 0) AS n FROM drafts WHERE student_name = ? AND NOT (stage_id = ? AND field = ?)',
+    ),
+    clearDrafts: raw.prepare('DELETE FROM drafts'),
+    upsertTeacherData: raw.prepare(`
+      INSERT INTO component_teacher_data (component_id, key, value, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(component_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`),
+    deleteTeacherData: raw.prepare('DELETE FROM component_teacher_data WHERE component_id = ? AND key = ?'),
+    loadTeacherData: raw.prepare('SELECT component_id, key, value FROM component_teacher_data ORDER BY component_id, key'),
+    clearTeacherData: raw.prepare('DELETE FROM component_teacher_data'),
     appendAction: raw.prepare(
       'INSERT INTO teacher_actions (type, stage_id, payload, ts, class_epoch) VALUES (?, ?, ?, ?, ?)',
     ),
@@ -182,6 +220,8 @@ export function openDb(dbPath) {
       DELETE FROM device_bindings;
       DELETE FROM stage_student_data;
       DELETE FROM stage_class_data;
+      DELETE FROM drafts;
+      DELETE FROM component_teacher_data;
     `);
     const epoch = newEpoch();
     setSession('class_epoch', epoch);
@@ -254,6 +294,42 @@ export function openDb(dbPath) {
       })),
     appendTeacherAction: (type, stageId, payload, epoch) => {
       st.appendAction.run(type, stageId ?? null, toJson(payload), Date.now(), epoch ?? null);
+    },
+
+    // 草稿（学生输入自动保存规格 §2.3）：value 为 JSON 串，null 删除
+    setDraft: (name, stageId, field, value, epoch) => {
+      if (value == null) st.deleteDraft.run(name, stageId, field);
+      else st.upsertDraft.run(name, stageId, field, value, epoch ?? null, Date.now());
+    },
+    // → { [stageId]: { [field]: 解析后的值 } }；只取给定 epoch；解析失败的行跳过
+    loadDrafts: (name, epoch) => {
+      const out = {};
+      for (const r of st.loadDrafts.all(name, epoch ?? null)) {
+        let v;
+        try {
+          v = JSON.parse(r.value);
+        } catch {
+          continue;
+        }
+        (out[r.stage_id] ??= {})[r.field] = v;
+      }
+      return out;
+    },
+    // 该生除 (stageId, field) 这一格以外的草稿字节数（UTF-8）
+    draftBytesExcept: (name, stageId, field) => st.draftBytesExcept.get(name, stageId, field).n,
+    clearDrafts: () => {
+      st.clearDrafts.run();
+    },
+
+    // 教师专属组件存储（组件契约"教师专属存储"）：value 为已序列化的 JSON 串，null 删除
+    setComponentTeacherData: (componentId, key, value) => {
+      if (value == null) st.deleteTeacherData.run(componentId, key);
+      else st.upsertTeacherData.run(componentId, key, value, Date.now());
+    },
+    loadComponentTeacherData: () =>
+      st.loadTeacherData.all().map((r) => ({ componentId: r.component_id, key: r.key, value: r.value })),
+    clearComponentTeacherData: () => {
+      st.clearTeacherData.run();
     },
 
     getOrCreateClassEpoch: () => {

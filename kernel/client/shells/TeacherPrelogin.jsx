@@ -113,7 +113,7 @@ export default function TeacherPrelogin() {
   );
 
   return (
-    <Page template="split" title={title} hint={hint}>
+    <Page template="split" narrowOrder="main-first" title={title} hint={hint}>
       <Page.Main>
         <Tiles min="160px" gap={2}>
           {rosterMode

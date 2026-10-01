@@ -1,17 +1,22 @@
-import { useEffect, useState } from 'react';
-import { useStudentStage, Btn, Page, Fill } from '#kernel/client/index.js';
+import { useEffect, useRef } from 'react';
+import { useStudentStage, useDraft, Btn, Page, Fill } from '#kernel/client/index.js';
 import { MAX_LENGTH } from './stage.config.js';
 
 // 页面样式 focus（stage.config.js 的 layout）：输入框进 Main 并撑满，字数进 hint，主按钮"保存"进 Actions（外壳操作条）
 export default function Student() {
   const { stage, isLive, myData, send } = useStudentStage('freeform');
   const saved = myData?.text ?? '';
-  const [draft, setDraft] = useState(saved);
+  // 学生输入一律 useDraft（刷新、断线、关浏览器、换设备不丢）：没改过时显示已保存的内容
+  const [draftRaw, setDraft, { clear }] = useDraft('text', null, { stageId: 'freeform' });
+  const draft = typeof draftRaw === 'string' ? draftRaw : saved;
 
-  // 服务端回执或刷新恢复时回填
+  // 服务端回执（已保存的内容变了）后清掉草稿，显示已保存的内容；挂载时不清
+  const seen = useRef(saved);
   useEffect(() => {
-    setDraft(saved);
-  }, [saved]);
+    if (seen.current === saved) return;
+    seen.current = saved;
+    clear();
+  }, [saved, clear]);
 
   // 与服务端 schema 一致：按 UTF-16 .length 计数与截断
   const length = draft.length;

@@ -4,7 +4,8 @@
 //   columns:   [{ key, label, render?(record, student), value?(record, student), align? }]
 //              "姓名"列由骨架自动放在最前；value 用于排序（缺省取 record[key]）；record 可能为 undefined（未作答）
 //   summary:   (records, students) → [{ label, value }]，records = { [name]: record }，students = roster；渲染为顶部一行芯片
-//   rowDetail: (record, student) → ReactNode；点行打开 DetailModal，"记录"页签渲染它，"事件"页签列出该生事件
+//   rowDetail: (record, student, { fromSnapshot }) → ReactNode；点行打开 DetailModal，"记录"页签渲染它，"事件"页签列出该生事件；
+//              K10：fromSnapshot 为真表示 record 来自 teacher:student-detail 拉到的完整记录，假表示退回了教师端推送来的记录
 //
 // 外壳已为统计视图套 table 模板（契约 §四：TeacherStats 不是 <Page>），这里只提供摘要芯片、AlertBar、DataTable、DetailModal。
 // 只用 #kernel/client/index.js 的公开导出。
@@ -39,8 +40,9 @@ export default function StatsPage({ stageId, columns = [], summary, rowDetail })
       id: 'record',
       label: '记录',
       render: (snap) => {
-        const record = snap?.stageData?.[stageId] ?? perStudent[detail];
-        if (typeof rowDetail === 'function') return rowDetail(record, detailStudent);
+        const snapRecord = snap?.stageData?.[stageId];
+        const record = snapRecord ?? perStudent[detail];
+        if (typeof rowDetail === 'function') return rowDetail(record, detailStudent, { fromSnapshot: snapRecord != null });
         return pre(record ?? null);
       },
     },

@@ -32,7 +32,7 @@ export function componentEventPrefixes(ids = []) {
 }
 const RESERVED_EXACT = new Set([
   'stage:change', 'stage:sub-phase', 'stage:data-update', 'stage:class-update', 'stage:my-data',
-  'student:joined', 'student:left', 'student:switch-name',
+  'student:joined', 'student:left', 'student:switch-name', 'student:draft-set',
   'teacher:student-detail', 'teacher:get-student-detail', 'teacher:release-binding', 'teacher:reset-classroom',
   'teacher:import-roster', 'teacher:clear-roster',
 ]);
@@ -67,15 +67,22 @@ export function createDataHandle({ io, state, db, stageId, throttle }) {
   };
   return {
     get: (name) => state.data.get(stageId, name),
-    set(name, patch) {
+    // K10：opts.push(record) → 推送用的投影（教师 stage:data-update 与本人 stage:my-data 都发它）；存储、get / all、写库、
+    // join-ok / teacher:join-ok / teacher:get-student-detail、导出与报告仍是完整记录。投影不是普通对象时照发完整记录
+    set(name, patch, opts) {
       if (typeof name !== 'string' || !name) throw new Error('data.set: name must be a non-empty string');
       if (!isPlainObject(patch)) throw new Error('data.set: patch must be an object');
       const record = { ...(state.data.get(stageId, name) ?? {}), ...patch, updatedAt: Date.now() };
       state.data.set(stageId, name, record);
       if (db) db.setStageStudentData(stageId, name, record);
-      tq.push(`${stageId}\u0000${name}`, { stageId, name, data: record });
+      let out = record;
+      if (isPlainObject(opts) && typeof opts.push === 'function') {
+        const projected = opts.push(record);
+        if (isPlainObject(projected)) out = projected;
+      }
+      tq.push(`${stageId}\u0000${name}`, { stageId, name, data: out });
       const sid = socketIdOf(name);
-      if (sid) io.to(sid).emit('stage:my-data', { stageId, data: record });
+      if (sid) io.to(sid).emit('stage:my-data', { stageId, data: out });
       return record;
     },
     all: () => state.data.all(stageId),

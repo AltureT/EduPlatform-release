@@ -6,7 +6,7 @@
 // 答案与解析到达学生的途径：student-after-submit 提交时本人记录写得分 / 逐题对错 / 解析（不写答案本身）；
 // reveal 揭晓时班级记录写 answerKey / explanations、已提交者记录写得分与逐题对错；never 都不写。
 import { shape } from '#kernel/server/schema.js';
-import { declarativeGate, validateGateSpec } from '../_shared/gate.js';
+import { averageOf, declarativeGate, validateGateSpec } from '../_shared/gate.js';
 import { validatePrompt } from '../_shared/prompt.js';
 import { BLANK_MAX, ID_RE, KEYS, TYPES, formatNumbers, median, scoreOf, wrongNumbers, isAnswered } from './items.js';
 
@@ -114,26 +114,11 @@ function validate(o) {
   return o;
 }
 
-// gate.correct = 在线学生的平均得分率（未提交算 0，离线不计）。_shared/gate.js 只能按"满足条件的人数 / 在线人数"计，
-// 表达不了平均值，所以这一指标在这里实现（提示文字与 declarativeGate 同形）
-function scoreRateGate(spec, o) {
-  const ratio = spec.correct;
-  const soft = spec.soft === true;
-  const need = ratio === 'all' ? 1 : ratio;
-  const pct = Math.round(need * 100);
-  return function gate(ctx) {
-    const online = ctx.state.connected();
-    if (online.length === 0) return { ok: true };
-    let sum = 0;
-    for (const s of online) {
-      const g = scoreOf(o, ctx.data.get(s.name));
-      if (g && g.total > 0) sum += g.score / g.total;
-    }
-    const avg = sum / online.length;
-    if (avg + 1e-9 < need) return { ok: false, soft, reason: `平均得分率 ${Math.round(avg * 100)}%，未到 ${pct}%` };
-    return { ok: true };
-  };
-}
+// gate.correct = 在线学生的平均得分率（未提交算 0，离线不计）：_shared/gate.js 的平均比率写法（K10）
+const scoreRate = (o) => averageOf((r) => {
+  const g = scoreOf(o, r);
+  return g && g.total > 0 ? g.score / g.total : 0;
+}, '平均得分率');
 
 function idleText(ms) {
   return ms >= 60_000 && ms % 60_000 === 0 ? `${ms / 60_000} 分钟未提交` : `${Math.round(ms / 1000)} 秒未提交`;
@@ -149,9 +134,7 @@ export default {
   options: validate,
   normalize,
   defaults: {
-    gate: (o) => (isPlainObject(o.gate) && 'correct' in o.gate
-      ? scoreRateGate(o.gate, o)
-      : declarativeGate(o.gate, { submitted })),
+    gate: (o) => declarativeGate(o.gate, { submitted, correct: scoreRate(o) }),
 
     collect: (o) => ({
       perStudent: {

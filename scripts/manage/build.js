@@ -28,7 +28,7 @@ export function newestSourceMtime(root) {
     }
     for (const e of entries) {
       if (e.name.startsWith('.')) continue;
-      if (e.name.startsWith(DRAFT_PREFIX)) continue; // M4：课程页上传的教学设计原稿不参与打包
+      if (e.name.startsWith(DRAFT_PREFIX)) continue; // M4：教案页（第 2 步）上传的教学设计原稿不参与打包
       const full = path.join(dir, e.name);
       if (e.isDirectory()) {
         if (!SKIP_DIR.has(e.name)) visit(full);

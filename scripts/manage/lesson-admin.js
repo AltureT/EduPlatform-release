@@ -8,9 +8,15 @@
 //     文件名不取用户输入）；已有的原稿（任何扩展名，含 docx 抽出的 .txt）先改名 <原名>.bak；.docx 抽纯文本另存 .txt
 //     （docx-text.js：document.xml 解压后 > 30 MB 不抽；mammoth 在 worker 里跑，512 MB 内存上限、30 s 超时；失败 textError）
 //   openingText({ title, rel, draft })：复制给 AI 的开场话（规格 §4 句式）
-//   lessonOverview(root, { current }) → 课程页列表行（我的课在前，示例课在后；读不出来的课也列出，broken: true）
+//   lessonOverview(root, { current, checks }) → 课程列表（第 1 步）列表行（只列 lessons/；读不出来的课也列出，broken: true）
+//     G3（管理台线性路径重设计规格 §2.4）：示例课不列，只有当前课还指着 examples/<x>（旧安装）时多出那一行（kind: 'example'）
+//     每行 check（V1 代码题测试验证规格 §5）：checks（检查结果数组，{ path, at, ok, errors, warnings, tests }）里同一门课最新的一条的摘要
+//     { ok, errors: 条数, warnings: 条数, at, tests }；没查过 null
+//     M6：每行 data = 这门课的库与备份摘要 { roster, dbBytes, lastBackup } | null（库还不存在、读不出来的课）
+//   currentLessonRow(root, rel, { checks })（G3）：overview.currentLesson，见函数前注释
 //   createLesson(root, { title, now }) → 生成 id（scripts/lib/lesson-id.js）并调用 newLesson（写 .env，成为当前课程）
-//   deleteLesson(root, resolved, { now }) → 移到 backups/deleted-lessons/<目录名>-<YYYYMMDD_HHMMSS>/（不直接删）
+//   deleteLesson(root, resolved, { now, dataId }) → 移到 backups/deleted-lessons/<目录名>-<YYYYMMDD_HHMMSS>/（不直接删）；
+//     M6：dataId（这门课的 id，且没有别的课共用、没有自定义 DB_PATH 时由调用方给）→ 它的库与备份一并移到该目录的 data/
 //   folderCommand / openFolder：Mac open、Windows explorer、其它 xdg-open
 //   MESSAGES：给教师看的一句话（__tests__/lessons-copy.test.js 过禁词）
 import { spawn } from 'node:child_process';
@@ -20,6 +26,9 @@ import { readLesson, lessonStatus } from './lessons.js';
 import { pickLessonId } from '../lib/lesson-id.js';
 import { newLesson } from '../new-lesson.mjs';
 import { docxTextTooBig, docxToTextInWorker } from './docx-text.js';
+import { moveLessonData, dataSummary, lessonPaths } from './backup.js';
+import { customDbPath } from './env-file.js';
+import { lessonIdError, lessonDbPath } from '../../kernel/server/lesson-db-path.js';
 
 export const DRAFT_BASE = '教学设计原稿';
 export const DRAFT_EXTS = ['.md', '.txt', '.docx', '.pdf'];
@@ -31,21 +40,21 @@ const DELETED_DIR = 'backups/deleted-lessons';
 export const MESSAGES = {
   badDir: '课程位置不对，请刷新页面后再试',
   notFound: '找不到这门课程，可能已经删掉了；请刷新页面',
-  exampleNoUpload: '示例课不能上传教学设计；想照着它做一门，请先新建课程',
+  exampleNoUpload: '示例课不能上传教案；想照着它做一门，请先新建课程',
   exampleNoDelete: '示例课不能删除',
+  exampleNoCurrent: '示例课只给 AI 照着做，不能设为当前课程；请先新建自己的课',
   exampleNoOpening: '示例课已经做好，可以直接上；想照着它做一门，请先新建课程',
   deleteCurrent: '这是当前课程，不能删除；请先把别的课设为当前课程',
   deleteRunning: '平台正在上这门课，请先停止平台再删除',
   deletePreparing: '平台正在准备，稍后再删',
   deleteFailed: '没能删除：这门课的文件夹可能正在别的窗口里打开，关掉后再试',
   badExt: '只能上传 Word（.docx）、PDF、Markdown（.md）或纯文本（.txt）文件',
-  tooBig: '文件太大了，教学设计原稿不能超过 20 MB',
+  tooBig: '文件太大了，教案不能超过 20 MB',
   noFile: '没有收到文件，请重新选择后上传',
   uploadFailed: '上传没有完成，请再试一次',
   badTitle: `请填写课名（一行文字，不超过 ${MAX_TITLE_LEN} 个字）`,
   broken: '这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试',
   openFailed: '没能打开文件夹，请在平台文件夹里手动找到它',
-  noTemplate: '没有找到这份模板',
 };
 
 export const userError = (message, status = 400) => Object.assign(new Error(message), { status, expose: true });
@@ -149,7 +158,15 @@ function subdirs(root, scope) {
   }
 }
 
-export async function lessonRow(root, scope, name, { current } = {}) {
+// 某门课最近一次检查的摘要（checks 里路径写法不同也认）
+export function checkSummaryFor(configRel, checks = []) {
+  const c = (checks ?? []).filter((x) => x && typeof x.path === 'string' && sameLessonPath(x.path, configRel))
+    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0];
+  if (!c) return null;
+  return { ok: Boolean(c.ok), errors: c.errors?.length ?? 0, warnings: c.warnings?.length ?? 0, at: c.at ?? null, tests: Array.isArray(c.tests) ? c.tests : [] };
+}
+
+export async function lessonRow(root, scope, name, { current, checks } = {}) {
   const rel = `${scope}/${name}`;
   const configRel = `./${rel}/lesson.config.js`;
   const base = {
@@ -159,23 +176,55 @@ export async function lessonRow(root, scope, name, { current } = {}) {
     status: lessonStatus(root, rel),
     current: sameLessonPath(configRel, current),
     draft: scope === 'lessons' ? findDraft(path.join(root, scope, name)) : null,
+    check: checkSummaryFor(configRel, checks),
   };
   try {
     const l = await readLesson(root, configRel);
     if (!l) throw new Error('missing');
     const stages = l.config?.stages;
-    return { ...base, id: l.id, title: l.title, stages: Array.isArray(stages) ? stages.length : 0 };
+    const data = lessonIdError(l.id) ? null : dataSummary(lessonPaths(root, l.id, { customDb: customDbPath(root) }));
+    return { ...base, id: l.id, title: l.title, stages: Array.isArray(stages) ? stages.length : 0, data };
   } catch (err) {
-    return { ...base, id: null, title: null, stages: 0, broken: true, error: String(err?.message ?? err) };
+    return { ...base, id: null, title: null, stages: 0, broken: true, error: String(err?.message ?? err), data: null };
   }
 }
 
-export async function lessonOverview(root, { current } = {}) {
+export async function lessonOverview(root, { current, checks, allExamples = false } = {}) {
   const rows = [];
-  for (const scope of ['lessons', 'examples']) {
-    for (const name of subdirs(root, scope)) rows.push(await lessonRow(root, scope, name, { current }));
+  for (const name of subdirs(root, 'lessons')) rows.push(await lessonRow(root, 'lessons', name, { current, checks }));
+  // G3：示例课不列；旧安装的当前课还指着 examples/<x> 时只多这一行（allExamples：服务端内部查同 id 共用库时全列）
+  const ex = /^examples\/([^/]+)\/lesson\.config\.js$/.exec(current ? normLessonPath(current) : '');
+  for (const name of subdirs(root, 'examples')) {
+    if (allExamples || (ex && ex[1] === name)) rows.push(await lessonRow(root, 'examples', name, { current, checks }));
   }
   return rows;
+}
+
+// G3（管理台线性路径重设计规格 §3.1）：overview.currentLesson——当前课的一行（lessonRow 同形）
+//   lessons/<x>、examples/<x>（遗留）→ lessonRow；根目录开发课（或别的路径）→ kind 'dev'、status none、draft null；
+//   空值或找不到 → null；文件在但读不出来 → broken: true
+export async function currentLessonRow(root, rel, { checks } = {}) {
+  if (!rel) return null;
+  const n = normLessonPath(rel);
+  const m = /^(lessons|examples)\/([^/]+)\/lesson\.config\.js$/.exec(n);
+  if (m) {
+    if (!subdirs(root, m[1]).includes(m[2])) return null;
+    return lessonRow(root, m[1], m[2], { current: rel, checks });
+  }
+  if (!fs.existsSync(path.resolve(root, n))) return null;
+  const dir = path.posix.dirname(n);
+  const base = {
+    path: rel, dir: dir === '.' ? '' : dir, kind: 'dev', status: { kind: 'none' }, current: true, draft: null, check: checkSummaryFor(rel, checks),
+  };
+  try {
+    const l = await readLesson(root, rel);
+    if (!l) return null;
+    const stages = l.config?.stages;
+    const data = lessonIdError(l.id) ? null : dataSummary(lessonPaths(root, l.id, { customDb: customDbPath(root) }));
+    return { ...base, id: l.id, title: l.title, stages: Array.isArray(stages) ? stages.length : 0, data };
+  } catch (err) {
+    return { ...base, id: null, title: null, stages: 0, broken: true, error: String(err?.message ?? err), data: null };
+  }
 }
 
 // ===== 新建 =====
@@ -200,7 +249,15 @@ export async function createLesson(root, { title, now = new Date() } = {}) {
       }
     }
   }
-  const taken = (id) => usedIds.has(id) || Object.keys(SCOPES).some((s) => fs.existsSync(path.join(root, s, id)));
+  // M6 审查：已删课程留下的库（或未整理的同名库）也算占用，新课不会接手旧数据
+  const hasDb = (id) => {
+    try {
+      return fs.existsSync(lessonDbPath(root, id));
+    } catch {
+      return false;
+    }
+  };
+  const taken = (id) => usedIds.has(id) || Object.keys(SCOPES).some((s) => fs.existsSync(path.join(root, s, id))) || hasDb(id);
   const id = pickLessonId({ title: t, taken, now });
   const r = await newLesson({ root, id, title: t, dir: 'lessons', env: true });
   return { id, rel: `lessons/${id}`, configRel: r.configRel };
@@ -210,7 +267,7 @@ export async function createLesson(root, { title, now = new Date() } = {}) {
 const pad = (n) => String(n).padStart(2, '0');
 const stamp = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 
-export function deleteLesson(root, resolved, { now = new Date() } = {}) {
+export function deleteLesson(root, resolved, { now = new Date(), dataId = null } = {}) {
   if (resolved.kind !== 'mine') throw userError(MESSAGES.exampleNoDelete, 403);
   const parent = path.join(root, ...DELETED_DIR.split('/'));
   fs.mkdirSync(parent, { recursive: true });
@@ -222,7 +279,8 @@ export function deleteLesson(root, resolved, { now = new Date() } = {}) {
   } catch {
     throw userError(MESSAGES.deleteFailed, 409);
   }
-  return { movedTo: `${DELETED_DIR}/${name}` };
+  const data = dataId ? moveLessonData(root, dataId, path.join(parent, name)).moved : [];
+  return { movedTo: `${DELETED_DIR}/${name}`, data };
 }
 
 // ===== 打开文件夹 =====
@@ -247,12 +305,4 @@ export function openFolder(dir, { platform = process.platform, spawnFn = spawn }
     child.once('spawn', () => resolve(true));
     child.unref?.();
   });
-}
-
-// ===== 模板 =====
-export function templateFiles(root) {
-  return {
-    docx: path.join(root, '教学设计模板.docx'),
-    md: path.join(root, 'docs', '01-教学设计模板_阶段卡版.md'),
-  };
 }

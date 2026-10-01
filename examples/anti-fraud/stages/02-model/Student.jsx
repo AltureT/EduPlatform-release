@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useStudentStage, Page, Stack, Row, Card, Btn, Chip, Scroll } from '#kernel/client/index.js';
+import { useEffect, useRef } from 'react';
+import { useStudentStage, useDraft, Page, Stack, Row, Card, Btn, Chip, Scroll } from '#kernel/client/index.js';
 import { FEATURES, FEATURE_KEYS, MESSAGES, LINE, WEIGHT_MAX, scoreOf, step1Weights } from './data.js';
 
 const cell = { padding: '6px 8px', borderBottom: '1px solid var(--border)', textAlign: 'center', fontSize: 'var(--fs-sm)' };
@@ -47,18 +47,28 @@ export default function Student() {
   const { stage, isLive, myData, classData, send } = useStudentStage('model');
   const released = classData.released === true;
 
-  const [picked, setPicked] = useState(myData?.step1Features ?? []);
-  const [weights, setWeights] = useState(myData?.weights ?? defaultWeights());
+  // 学生输入一律 useDraft（刷新、断线、关浏览器、换设备不丢）；没改过时显示记录里的值
+  const [pickedDraft, setPicked, { clear: clearPicked }] = useDraft('picked', null, { stageId: 'model' });
+  const [weightsDraft, setWeights, { clear: clearWeights }] = useDraft('weights', null, { stageId: 'model' });
+  const recPicked = myData?.step1Features ?? [];
+  const recWeights = myData?.weights ?? defaultWeights();
+  const picked = Array.isArray(pickedDraft) ? pickedDraft : recPicked;
+  const weights = weightsDraft && typeof weightsDraft === 'object' ? weightsDraft : recWeights;
 
-  // 刷新恢复或服务端回执时回填
+  // 服务端回执（记录里的值变了）后清掉对应草稿，显示记录；挂载时不清
+  const seen = useRef({ p: JSON.stringify(myData?.step1Features ?? null), w: JSON.stringify(myData?.weights ?? null) });
+  const pKey = JSON.stringify(myData?.step1Features ?? null);
+  const wKey = JSON.stringify(myData?.weights ?? null);
   useEffect(() => {
-    if (myData?.step1Features) setPicked(myData.step1Features);
-  }, [myData?.step1Features]);
-  useEffect(() => {
-    if (myData?.weights) setWeights(myData.weights);
-  }, [myData?.weights]);
+    if (seen.current.p !== pKey) clearPicked();
+    if (seen.current.w !== wKey) clearWeights();
+    seen.current = { p: pKey, w: wKey };
+  }, [pKey, wKey, clearPicked, clearWeights]);
 
-  const toggle = (k) => setPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
+  const toggle = (k) => setPicked((d) => {
+    const p = Array.isArray(d) ? d : recPicked;
+    return p.includes(k) ? p.filter((x) => x !== k) : [...p, k];
+  });
   const step1Scores = MESSAGES.map((m) => scoreOf(m, step1Weights(picked)));
   const step2Scores = MESSAGES.map((m) => scoreOf(m, weights));
 
@@ -107,7 +117,7 @@ export default function Student() {
                     value={weights[f.key]}
                     disabled={!isLive || !released}
                     aria-label={`${f.label} 权重`}
-                    onChange={(e) => setWeights((w) => ({ ...w, [f.key]: Number(e.target.value) }))}
+                    onChange={(e) => { const v = Number(e.target.value); setWeights((w) => ({ ...(w && typeof w === 'object' ? w : recWeights), [f.key]: v })); }}
                     style={{ flex: 1 }}
                   />
                   <span style={{ flex: '0 0 3em', textAlign: 'right' }}>{weights[f.key]}</span>

@@ -4,7 +4,9 @@
 import { shape } from '#kernel/server/schema.js';
 import { declarativeGate, validateGateSpec } from '../_shared/gate.js';
 import { validateTaskItem } from '../_shared/taskItem.js';
+import { clearPushed } from '../_shared/pushCode.js';
 import { errorHead, finalOf, hasTestsIn, ran, submitted, testsPassed, testsText } from './record.js';
+import { parseMistakes } from './mistakes.js';
 
 export const DEFAULT_STARTER = "# 在这里写你的代码\n\n\nif __name__ == '__main__':\n    pass\n";
 const IDLE_MS = 8 * 60_000;
@@ -62,6 +64,8 @@ export function normalize(raw) {
     o.starter = o.starters[0].code;
   }
   if (o.gate === undefined) o.gate = hasTestsIn(o) ? { testsPassed: 'all', soft: true } : { ran: 0.7, soft: true };
+  // V2（代码题批改规格 §4.3）：mistakes 由加载器读成文本（{ from } 引用 prep:tests 生成的 JSON），这里解析并校验形状
+  if (o.mistakes !== undefined) o.mistakes = parseMistakes(o.mistakes);
   return o;
 }
 
@@ -73,6 +77,7 @@ const baseShape = shape({
   files: 'optional:object',
   tests: 'optional:object',
   solution: 'optional:string:1-20000',
+  mistakes: 'optional:object',
   idleAlertMs: 'integer:0-86400000',
 });
 
@@ -100,6 +105,7 @@ function validate(o) {
   }
   const withTests = hasTestsIn(o);
   if (isPlainObject(gate) && 'testsPassed' in gate && !withTests) throw new Error('gate.testsPassed 需要先写 tests');
+  if (o.mistakes !== undefined && !withTests) throw new Error('mistakes 需要先写 tests');
   validateGateSpec(gate, withTests ? ['submitted', 'ran', 'testsPassed'] : ['submitted', 'ran']);
   return o;
 }
@@ -129,8 +135,8 @@ export default {
   // P5（代码段布局与回看规格 §6.1）：回看时可滚动、编辑、运行、测试（不记录、不能上交，由视图保证）；阶段写 reviewInteractive: false 可关
   reviewInteractive: true,
   requiresComponents: ['sandbox'],
-  // 保密选项：参考答案只发教师；sandbox 配置里没有它
-  secretOptions: ['solution'],
+  // 保密选项：参考答案与错误库（V2）只发教师；sandbox 配置里没有它们
+  secretOptions: ['solution', 'mistakes'],
   options: validate,
   normalize,
   defaults: {
@@ -152,12 +158,19 @@ export default {
         afterSolution: 'boolean',
         // P6（§4.3）：多份起始代码时学生选的那份的 label
         starterLabel: 'text',
+        // V2（代码题批改规格 §4.3）：有错误库时服务端按测试失败集合匹配的错误类型 { id, label } | null（最终稿写在 final.mistake）。
+        // collect 只声明列名（契约 §二"只用于导出列名、详情弹窗字段名、报告筛选；内核只透传"），没有可空写法，值为 null 照常
+        // （同 perClass.featured）；导出为空格，个人报告走本原语的 summarize，不带这个字段
+        ...(o.mistakes ? { mistake: 'object' } : {}),
       },
       perClass: {
         featured: 'text',
         ...(o.solution ? { showSolution: 'boolean', solution: 'text', solutionPublishedAt: 'integer' } : {}),
       },
     }),
+
+    // P7（教师现场演示规格 §3）：段切换时清掉教师下发的代码（perClass.pushedCode）
+    onLeave: clearPushed,
 
     alerts: (o) => {
       if (!(o.idleAlertMs > 0)) return [];

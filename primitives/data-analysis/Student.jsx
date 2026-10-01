@@ -9,12 +9,19 @@
 // 操作条第一个 Chip 为"回看 · 运行不记录"（镜像只读时不显示），已有记录时"已记录 …"仍在后面。
 // P6（代码段教学功能规格 §2.3）：教师公布参考答案后（perClass.solution），Side 在题目 Tile 之后加"参考答案"面板（_shared/SolutionPanel，可放大）；撤回即消失。
 // 数据文件、starter、包来自 stage.sandbox（PyRunner 自己读）；只读态（镜像）由 PyRunner 处理。窄屏时 Side 在上、可折叠，Tile 不再重复"题目"标题。
+// P7（教师现场演示规格 §5）：班级记录有老师下发的代码（perClass.pushedCode）且本段是当前段、这次下发还没采用 → 操作条
+// "老师发来一份代码"芯片 +"看一看"（_shared/PushedCode）；"换成这份"：程序在跑先 stop()、世代 +1 丢弃旧回调、编辑器换成下发的代码；
+// 采用后 student:data-submit / data-final 带 fromTeacher: true。
+// D1（学生输入自动保存规格 §2.4）：任务勾选 useDraft('checked', [])；代码除 PyRunner 的本地草稿外，另用 useDraft('code', null, { local: false })
+// 只走服务端层。起始代码取值链：本地 sandbox 草稿（PyRunner 挂载时交回）→ 服务端 code 草稿 → myData.final?.code ?? myData.code → starter；
+// PyRunner onChange 同时写服务端草稿（≤ 20000 字）。
 import { useMemo, useRef, useState } from 'react';
-import { useStudentStage, useNarrow, Btn, Chip, Fill, Overlay, Page, Row, Stack, Tile } from '#kernel/client/index.js';
-import { PyRunner, buildRecord } from '@components/sandbox/index.js';
+import { useStudentStage, useComponent, useNarrow, useDraft, Btn, Chip, Fill, Overlay, Page, Row, Stack, Tile } from '#kernel/client/index.js';
+import { PyRunner, buildRecord, usePython } from '@components/sandbox/index.js';
 import FinalSubmit, { finalRecord } from '../_shared/FinalSubmit.jsx';
 import SolutionPanel from '../_shared/SolutionPanel.jsx';
 import TaskList from '../_shared/TaskList.jsx';
+import { PushedCodeOffer, usePushedCode } from '../_shared/PushedCode.jsx';
 import DataPreview from './DataPreview.jsx';
 import { parseCsv } from './csv.js';
 
@@ -25,6 +32,7 @@ const EXTRA_COMPLETIONS = [
   'pd', 'plt', 'DataFrame', 'Series', 'read_csv', 'head', 'describe', 'mean', 'groupby', 'sort_values', 'columns',
   'plot', 'bar', 'hist', 'show', 'figure', 'xlabel', 'ylabel', 'title', 'legend', 'savefig', 'set_index',
 ];
+const CODE_DRAFT_MAX = 20000;   // 服务端代码草稿上限（字）
 const note = { color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' };
 // 题目与数据卡按内容高；上交按钮贴在 Side 底部（sticky：Side 内容长、要滚动时按钮也一直看得见）
 const noShrink = { flexShrink: 0, display: 'flex', flexDirection: 'column' };
@@ -66,13 +74,25 @@ export default function Student({ stageId } = {}) {
   const id = stageId ?? stage?.id;
   const sandbox = stage?.sandbox ?? null;
   const [draft, setDraft] = useState(null);
-  const [checked, setChecked] = useState(() => new Set());
+  const [serverCode, setServerCode] = useDraft('code', null, { stageId: id, local: false });
+  const [checkedRaw, setCheckedList] = useDraft('checked', [], { stageId: id });
+  const checked = useMemo(() => new Set(Array.isArray(checkedRaw) ? checkedRaw.filter((i) => Number.isInteger(i)) : []), [checkedRaw]);
   const runsBase = useRef(null);
   const lastRun = useRef(null);                   // 本页最近一次运行 { code, result }
   const [showAll, setShowAll] = useState(false);
-  const code = draft ?? sandbox?.starter ?? '';
+  const recordCode = typeof myData?.final?.code === 'string' ? myData.final.code : (typeof myData?.code === 'string' ? myData.code : null);
+  const code = draft ?? (typeof serverCode === 'string' ? serverCode : recordCode) ?? sandbox?.starter ?? '';
   const codeRef = useRef(code);
   codeRef.current = code;
+
+  // P7：老师下发的代码
+  const comp = useComponent('sandbox');
+  const keyArgs = { lessonId: comp.lesson?.id ?? null, classEpoch: comp.classEpoch, name: comp.me?.name, stageId: id };
+  const pushedCode = usePushedCode({ classData, isLive, readOnly, keyArgs });
+  const py = usePython();
+  const running = py.status === 'running' || py.status === 'waiting-input';
+  const genRef = useRef(0);   // 换成下发代码的世代：之前那次 render 交出去的 onResult 丢弃
+  const gen = genRef.current;
 
   const path = options?.dataset?.path ?? null;
   const content = path && sandbox?.files ? sandbox.files[path] : undefined;
@@ -80,27 +100,42 @@ export default function Student({ stageId } = {}) {
 
   if (!options) return <Page template="split" />;
 
+  const mark = (rec) => (pushedCode.fromTeacher ? { ...rec, fromTeacher: true } : rec);
   const onResult = (result, info) => {
+    if (gen !== genRef.current) return;
     lastRun.current = { code: codeRef.current, result };
     if (!isLive || (result?.interrupted && !result.error)) return;
     if (runsBase.current == null) runsBase.current = Number(myData?.runs) || 0;
-    send('student:data-submit', buildRecord(result, { code: codeRef.current, runs: runsBase.current + (info?.runs ?? 0) }));
+    send('student:data-submit', mark(buildRecord(result, { code: codeRef.current, runs: runsBase.current + (info?.runs ?? 0) })));
+  };
+  const adoptPushed = (p) => {
+    genRef.current += 1;
+    if (running) py.stop();
+    lastRun.current = null;
+    onCodeChange(p.code);
+    pushedCode.markAdopted();
   };
   const onRestore = ({ code: ranCode, result }) => {
     if (result?.kind !== 'test') lastRun.current = { code: ranCode, result };
   };
-  const prepareFinal = () => finalRecord({ code: codeRef.current, run: lastRun.current?.result ?? null, runCode: lastRun.current?.code, myData });
+  const prepareFinal = () => {
+    const rec = finalRecord({ code: codeRef.current, run: lastRun.current?.result ?? null, runCode: lastRun.current?.code, myData });
+    return rec ? mark(rec) : rec;
+  };
   const submitFinal = (payload) => {
     if (!isLive || !payload) return;
     send('student:data-final', payload);
   };
   const finalProps = { finalAt: myData?.finalAt ?? null, prepare: prepareFinal, onConfirm: submitFinal, hideButton: !isLive || readOnly };
-  const toggle = (i) => setChecked((prev) => {
-    const next = new Set(prev);
-    if (next.has(i)) next.delete(i);
-    else next.add(i);
-    return next;
+  const toggle = (i) => setCheckedList((prev) => {
+    const list = Array.isArray(prev) ? prev : [];
+    return list.includes(i) ? list.filter((x) => x !== i) : [...list, i].sort((a, b) => a - b);
   });
+  // 编辑器改动：本页状态 + 服务端草稿（≤ 20000 字；本地草稿由 PyRunner 自己写）
+  const onCodeChange = (v) => {
+    setDraft(v);
+    if (typeof v === 'string' && v.length <= CODE_DRAFT_MAX) setServerCode(v);
+  };
 
   const reviewing = !isLive && !readOnly;
   const tasks = options.tasks ?? [];
@@ -155,7 +190,7 @@ export default function Student({ stageId } = {}) {
       </Page.Side>
       <Page.Main>
         {sandbox && id ? (
-          <PyRunner stageId={id} code={code} onChange={setDraft} onResult={onResult} onRestore={onRestore} extraCompletions={EXTRA_COMPLETIONS} />
+          <PyRunner stageId={id} code={code} onChange={onCodeChange} onResult={onResult} onRestore={onRestore} extraCompletions={EXTRA_COMPLETIONS} />
         ) : (
           <div style={{ color: 'var(--ink-dim)' }}>正在准备运行环境…</div>
         )}
@@ -165,6 +200,7 @@ export default function Student({ stageId } = {}) {
         {myData?.submittedAt != null
           ? <Chip tone={hasImg ? 'good' : 'warn'}>已记录 {fmtTime(myData.submittedAt)} · {hasImg ? '有图' : '无图'}</Chip>
           : (reviewing ? null : <Chip tone="neutral">运行后自动记录</Chip>)}
+        <PushedCodeOffer offer={pushedCode.offer} running={running} onAdopt={adoptPushed} />
         {narrow && <FinalSubmit {...finalProps} inline />}
       </Page.Actions>
     </Page>

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useStudentStage, Page, Stack, Row, Card, Btn, Chip } from '#kernel/client/index.js';
+import { useEffect, useRef } from 'react';
+import { useStudentStage, useDraft, Page, Stack, Row, Card, Btn, Chip } from '#kernel/client/index.js';
 import { Sliders, ScoreAxis, Trajectory, Contribution, ResultChips, DEFAULT_WEIGHTS, DEFAULT_THRESHOLD } from './Panel.jsx';
 
 const TREND_OPTIONS = [
@@ -41,16 +41,27 @@ export default function Student() {
   const last = myData?.last ?? null;
   const tests = myData?.tests ?? 0;
 
-  const [weights, setWeights] = useState(last?.weights ?? DEFAULT_WEIGHTS);
-  const [threshold, setThreshold] = useState(last?.threshold ?? DEFAULT_THRESHOLD);
-  const [predict, setPredict] = useState(emptyPredict);
+  // 学生输入一律 useDraft（刷新、断线、关浏览器、换设备不丢）；没改过时显示最后一次检验的设置
+  const [weightsDraft, setWeightsDraft, { clear: clearWeights }] = useDraft('weights', null, { stageId: 'tune' });
+  const [thresholdDraft, setThresholdDraft, { clear: clearThreshold }] = useDraft('threshold', null, { stageId: 'tune' });
+  const [predictDraft, setPredictDraft, { clear: clearPredict }] = useDraft('predict', null, { stageId: 'tune' });
+  const weights = weightsDraft && typeof weightsDraft === 'object' ? weightsDraft : (last?.weights ?? DEFAULT_WEIGHTS);
+  const threshold = typeof thresholdDraft === 'number' ? thresholdDraft : (last?.threshold ?? DEFAULT_THRESHOLD);
+  const predict = predictDraft && typeof predictDraft === 'object' ? { ...emptyPredict, ...predictDraft } : emptyPredict;
+  const setWeights = (v) => setWeightsDraft(typeof v === 'function' ? v(weights) : v);
+  const setThreshold = (v) => setThresholdDraft(typeof v === 'function' ? v(threshold) : v);
+  const setPredict = (v) => setPredictDraft(typeof v === 'function' ? v(predict) : v);
 
-  // 刷新恢复：回填最后一次检验的设置；每次检验后清空预测
+  // 每次检验后（last.at 变了）清掉草稿：设置回到这次检验的值、预测清空；挂载时不清
+  const seenAt = useRef(last?.at ?? null);
   useEffect(() => {
-    if (last?.weights) setWeights(last.weights);
-    if (last?.threshold != null) setThreshold(last.threshold);
-    setPredict(emptyPredict);
-  }, [last?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+    const at = last?.at ?? null;
+    if (seenAt.current === at) return;
+    seenAt.current = at;
+    clearWeights();
+    clearThreshold();
+    clearPredict();
+  }, [last?.at, clearWeights, clearThreshold, clearPredict]);
 
   const needPredict = tests > 0;
   const predictFilled =

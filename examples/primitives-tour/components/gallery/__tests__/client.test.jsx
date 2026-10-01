@@ -78,6 +78,15 @@ describe('教师端', () => {
     expect(q('[data-gallery-open]')).not.toBeNull();
   });
 
+  test('K10：最终稿在教师端只是摘要（lite，不含图）时，出过图（firstImageAt）的人仍计入；没出过图的不计', () => {
+    const records = {
+      张三: { images: [], final: { at: 1, lite: true }, finalAt: 1, firstImageAt: 1 },
+      李四: { images: [], final: { at: 1, lite: true }, finalAt: 1 },
+      王五: { images: [] },
+    };
+    expect(imageCount(records)).toBe(1);
+  });
+
   test('store：gallery:wall 写进教师端本地切片，gallery:closed 回到初始；学生端没有处理函数', () => {
     expect(gallery.store.teacher.initial).toEqual(WALL_INITIAL);
     expect(WALL_HANDLERS['gallery:wall'](WALL_INITIAL, { wall: WALL, skipped: 2, openedAt: 5 })).toEqual({ wall: WALL, skipped: 2, openedAt: 5 });

@@ -7,6 +7,7 @@
 import { shape } from '#kernel/server/schema.js';
 import { declarativeGate, validateGateSpec } from '../_shared/gate.js';
 import { validateTaskItem } from '../_shared/taskItem.js';
+import { clearPushed } from '../_shared/pushCode.js';
 import { parseCsv } from './csv.js';
 import { xlsxToCsv } from './xlsx.js';
 
@@ -28,7 +29,8 @@ export const everImage = (r) => r?.firstImageAt != null;
 export const ran = (r) => Number(r?.runs) >= 1 && !r?.error;
 // P3：submitted = 上交过最终稿（finalAt）
 export const submitted = (r) => r?.finalAt != null;
-export const finalOf = (r) => (isPlainObject(r?.final) ? r.final : null);
+// K10：推送里的摘要 final（lite: true，不含代码与输出）返回 null
+export const finalOf = (r) => (isPlainObject(r?.final) && r.final.lite !== true ? r.final : null);
 
 // Python 单引号字符串字面量
 const pyStr = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')}'`;
@@ -158,6 +160,9 @@ export default {
         ...(o.solution ? { showSolution: 'boolean', solution: 'text', solutionPublishedAt: 'integer' } : {}),
       },
     }),
+
+    // P7（教师现场演示规格 §3）：段切换时清掉教师下发的代码（perClass.pushedCode）
+    onLeave: clearPushed,
 
     alerts: (o) => {
       if (!(o.idleAlertMs > 0)) return [];

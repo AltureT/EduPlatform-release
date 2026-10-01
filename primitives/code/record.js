@@ -39,8 +39,8 @@ export function testsText(t) {
   return isPlainObject(t) ? `${Number(t.passed) || 0} / ${Number(t.total) || 0}` : '';
 }
 
-// 最终稿（P3）：记录里的 final 子对象；没有则 null
-export const finalOf = (r) => (isPlainObject(r?.final) ? r.final : null);
+// 最终稿（P3）：记录里的 final 子对象；没有则 null。K10：推送里的摘要 final（lite: true，不含代码与输出）也返回 null
+export const finalOf = (r) => (isPlainObject(r?.final) && r.final.lite !== true ? r.final : null);
 
 // 学生点"上交最终稿"时服务端写入的字段（覆盖式）；p.stale === true（代码在最近一次运行之后改过）时 final 带 stale: true
 export function finalPatch(p, now) {

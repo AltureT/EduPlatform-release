@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // npm run check:lesson（L1，契约 §七"校验器"）：课程校验器。AI 生成或改完课程后跑一次，指到 文件:行 并给出怎么改。
-//   node scripts/check-lesson.mjs [lesson.config 路径] [--json]
-//     路径缺省读 .env 的 LESSON_CONFIG，再缺省 ./lesson.config.js；有错误退出 1；--json 输出 { ok, errors, warnings, lesson }
+//   node scripts/check-lesson.mjs [lesson.config 路径] [--json] [--no-cache]
+//     路径缺省读 .env 的 LESSON_CONFIG，再缺省 ./lesson.config.js；有错误退出 1；--json 输出 { ok, errors, warnings, lesson, tests, infos }
 //   每条 = { level: 'error' | 'warning', file（相对 root 的 posix 路径）, line | null, message, fix, rule }
 //   文本输出每条一行：错误 | 警告  <文件>:<行>  <一句话>  → 怎么改；末尾"通过"或"N 处错误 M 处警告"
 //
@@ -18,6 +18,7 @@
 //   6 组件：阶段里 @components/<id>、#components/<id> 引用的组件须在 lesson.config.components 里打开
 //   7 保密：原语 secretOptions 的值（≥ 8 字的字符串）不得出现在阶段目录的 .jsx / STAGE.md 里
 //   8 UI 规则：阶段目录的 .jsx 过 check-ui.mjs 的 scanSource（同一进程）
+//      D1（学生输入自动保存规格 §2.4）：自写段 Student.jsx 有输入框却没用 useDraft → 警告 draft-missing
 //   9 模拟片段：自写阶段缺 __tests__/simulate.js → 警告
 //   10 AI 助手（coach 组件规格 §2）：stage.config.js 顶层 coach 只能是 boolean 或 { intro: ≤ 60 字 }（否则错误）；
 //     写了 coach 为真而 lesson.config.components 没有 'coach' → 警告
@@ -33,7 +34,13 @@
 //     server.js 有则导出 register，cctx.on('…') 的事件前缀必须是自己的 id；client.jsx 有则过 check:ui、slots 只用契约槽位名；
 //     代码文件过第 11 项；README.md 缺失 → 警告；没在 lesson.config.js 的 components 里打开 → 警告。
 //     阶段顶层写已启用组件的 id（如 gallery: true）不报；第 6 项同样认 @lesson-components/<id>
+//   14 代码题测试（代码题测试验证规格 §4）：有 sandbox.tests 的段用参考答案（code 段 options.solution、自写段阶段目录 solution.py）
+//     跑 pytest、做变异检验（scripts/lib/pyrun-node.js，Pyodide 只起一次）；只出警告与信息，不出错误；结果缓存在 data/check-cache.json，--no-cache 重跑
+//     V2（代码题批改规格 §3.3、§4.2、§5）：本段目录有 hidden.json / mistakes/ / brute.py 时另查——隐藏用例没生成、过期、没列进 tests、形状错；
+//     某条用参考答案算不出（tests-hidden-error，审查 2）；错误库 mistakes.json 没生成或过期、某版本没被抓住、两个版本失败用例一样；笨办法解没通过测试。都是警告；
+//     tests[].extra = { hidden: 列入 tests 的隐藏用例条数, mistakes: 错误版本个数 }（有且 > 0 才有该键）；这些重算走同一个运行器、计入每段预算
 //   另：TODO 占位（new:stage 的骨架）每个文件一条警告
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,12 +51,17 @@ import {
   componentIdsOf, loadComponents, lessonComponentsRootOf, COMPONENT_ID_RE, RESERVED_COMPONENT_IDS, BUILTIN_COMPONENT_IDS,
 } from '../kernel/server/component-loader.js';
 import stripStageOptions from '../kernel/build/strip-stage-options.js';
-import { scanSource } from './check-ui.mjs';
+import { scanSource, draftWarnings } from './check-ui.mjs';
 import { STAGE_CARD_COLUMNS, parseStageCard } from './lib/stage-card.js';
 import {
   isPlainObject, toPosix, lineAt, findLine, stripComments, walkFiles, loadParseAst, syntaxErrorAt, moduleFacts,
 } from './lib/lesson-source.js';
 import { checkPlatformFiles, platformFilesWarning } from './lib/platform-files.js';
+import { createPyRunner, PYRUN_VERSION } from './lib/pyrun-node.js';
+import {
+  HIDDEN_JSON, HIDDEN_FILE, HIDDEN_PATH, MISTAKES_DIR, MISTAKES_JSON, BRUTE_FILE, MISTAKES_MAX, EVAL_TIMEOUT_MS,
+  parseHidden, renderHiddenTests, hiddenCount, parseMistakeFile, renderMistakesJson, mistakeIssues, computeHidden, computeMistakes, listedLine,
+} from './lib/hidden-tests.js';
 
 export const LAYOUTS = ['focus', 'split', 'tiles', 'table', 'stack'];
 const VIEW_FILES = ['Student.jsx', 'TeacherDemo.jsx', 'TeacherStats.jsx'];
@@ -64,7 +76,7 @@ const CONTRACT = '契约 docs/02-阶段模块契约.md';
 // 11 AI 接口：课程代码里不许出现的东西（每行报第一处；密钥本身不回显）
 export const AI_CODE_RULES = [
   { re: /chat\/completions/, label: () => 'chat/completions' },
-  { re: /\bAI_(?:BASE_URL|API_KEY|MODEL)\b/, label: (m) => m[0] },
+  { re: /\bAI_(?:BASE_URL|API_KEY|MODEL)(?:_2)?\b/, label: (m) => m[0] },   // K8：含备用接口的 _2
   { re: /process\.env\.AI/, label: () => 'process.env.AI…' },
   { re: /process\.env(?:\.|\?\.|\s*\[\s*['"`])[A-Za-z0-9_]*_(?:API_)?KEY\b/, label: () => 'process.env.…_KEY' },
   { re: /\bsk-[A-Za-z0-9]{16,}/, label: () => '密钥串 sk-…' },
@@ -73,7 +85,7 @@ export const AI_CODE_RULES = [
 export const AI_BEARER = { auth: /\bauthorization\b/i, bearer: /\bBearer\b/ };
 export const AI_IN_CLIENT = /\bc?ctx\s*(?:\??\.\s*ai\b|(?:\?\.)?\[\s*(['"`])ai\1\s*\])/;
 export const CLIENT_FETCH_HTTP = /\bfetch\s*\(\s*(['"`])https?:\/\//;
-const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在管理台'设置'页填，课程代码里不写";
+const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在管理台第 4 步'上课准备'填，课程代码里不写";
 // 13 课程组件：契约 §八的槽位名（与 kernel/client/stores/componentRegistry.js 的 SLOT_NAMES 一致，测试核对）
 export const CONTRACT_SLOTS = [
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
@@ -100,6 +112,8 @@ const clean = (s) => String(s ?? '')
 
 // ===== 加载器错误 → 怎么改 =====
 const LOADER_FIXES = [
+  // 名单与数据以课程为主体规格 §2.1：课程 id 必填且合法（决定这门课的库 data/lessons/<id>.sqlite）
+  [/lesson\.config\.js 缺少 id|lesson\.config\.js 的 id .* 不对/, () => "在 lesson.config.js 写 id，小写字母开头、只含小写字母、数字和连字符，如 id: 'prime-intro'；id 决定这门课的数据存在哪，改了算一门新课"],
   [/lesson config not found/, () => '检查 .env 的 LESSON_CONFIG（或命令里的路径）；新课用 npm run new:lesson 生成'],
   [/lesson config must export default an object/, () => "lesson.config.js 写成 export default { id, title, stagesDir: './stages', stages: [...] }"],
   [/stages must be an array/, () => "lesson.config.js 的 stages 写成阶段目录名数组，如 stages: ['01-vote']"],
@@ -226,6 +240,39 @@ async function runLoader(absConfig, lessonConfig, primitivesRoot) {
   }
 }
 
+// 平台里其它 id 相同的课：根目录 lesson.config.js、examples/*、lessons/*（读不出来的跳过；按真实路径排除自己）
+async function lessonsWithSameId(root, absConfig, id) {
+  const real = (f) => {
+    try {
+      return fs.realpathSync(f);
+    } catch {
+      return path.resolve(f);
+    }
+  };
+  const self = real(absConfig);
+  const files = [path.join(root, 'lesson.config.js')];
+  for (const scope of ['examples', 'lessons']) {
+    try {
+      for (const d of fs.readdirSync(path.join(root, scope), { withFileTypes: true })) {
+        if (d.isDirectory()) files.push(path.join(root, scope, d.name, 'lesson.config.js'));
+      }
+    } catch {
+      // 没有这个目录
+    }
+  }
+  const out = [];
+  for (const f of files) {
+    if (!fs.existsSync(f) || real(f) === self) continue;
+    try {
+      const cfg = (await import(pathToFileURL(f).href)).default;
+      if (isPlainObject(cfg) && cfg.id === id) out.push(f);
+    } catch {
+      // 读不出来的课由它自己的检查报
+    }
+  }
+  return out;
+}
+
 // ===== 5 自写阶段：<Page template>、事件 =====
 export function pageTemplates(src) {
   const code = stripComments(src);
@@ -307,6 +354,7 @@ const UI_FIXES = {
 // ===== 主流程 =====
 export async function checkLesson(configPath, {
   root = process.cwd(), primitivesRoot = DEFAULT_PRIMITIVES_ROOT, componentsRoot = COMPONENTS_ROOT, platformRoot = PLATFORM_ROOT,
+  pyRunner, noCache = false, cacheFile, testsBudgetMs,
 } = {}) {
   const absConfig = path.resolve(root, configPath);
   const errors = [];
@@ -396,6 +444,15 @@ export async function checkLesson(configPath, {
       line = findLine(src, /^\s*options\s*:/m) ?? findLine(src, /^\s*primitive\s*:/m);
     }
     error(file, line, msg, loaderFix(msg, typeof primitive === 'string' ? primitive : null), 'loader');
+  }
+
+  // 名单与数据以课程为主体规格 §2.1：同一平台里两门课 id 相同 → 会共用一个库（名单、课堂数据、备份）
+  if (isPlainObject(lessonConfig) && typeof lessonConfig.id === 'string' && lessonConfig.id) {
+    for (const other of await lessonsWithSameId(root, absConfig, lessonConfig.id)) {
+      warn(absConfig, findLine(lessonSrc, /^\s*id\s*:/m),
+        `这门课（${rel(absConfig)}）与 ${rel(other)} 的 id 都是 "${lessonConfig.id}"，两门课会共用同一份名单和课堂数据`,
+        '把其中一门课 lesson.config.js 的 id 改成别的（小写字母、数字、连字符）；改了 id 算一门新课', 'lesson-id');
+    }
   }
 
   // 13 课程组件（静态检查；先于加载器，已报过错的组件不再重复报加载器的英文错误）
@@ -636,6 +693,11 @@ export async function checkLesson(configPath, {
       for (const h of scanSource(src, `stages/${dir}/${f}`)) {
         error(at(f), h.line, `界面规则：${h.message}`, UI_FIXES[h.rule] ?? `对照${CONTRACT} §四"页面与布局"修改`, `ui:${h.rule}`);
       }
+      // D1：学生输入要自动保存（只出警告）
+      for (const h of draftWarnings(src, `stages/${dir}/${f}`)) {
+        warn(at(f), h.line, '学生页有输入框，但输入的内容刷新后会丢',
+          `学生输入改用 useDraft（${CONTRACT} §四"学生输入自动保存"），照 examples/minimal/stages/02-freeform/Student.jsx 写`, 'draft-missing');
+      }
     }
 
     // TODO 占位
@@ -646,7 +708,395 @@ export async function checkLesson(configPath, {
   const pf = platformFilesWarning(checkPlatformFiles(platformRoot));
   if (pf) warn(path.join(platformRoot, pf.first), null, pf.message, pf.fix, 'platform-files');
 
-  return { ok: errors.length === 0, errors, warnings, lesson };
+  // 14 代码题测试（只出警告与信息，不出错误）
+  const infos = [];
+  const tests = await checkCodeTests({
+    stageDirs, stagesRoot, raw, loaded, byDir, absConfig, platformRoot, warn, infos, rel,
+    pyRunner, noCache, cacheFile: cacheFile ?? path.join(platformRoot, 'data', 'check-cache.json'), budgetMs: testsBudgetMs,
+  });
+
+  return { ok: errors.length === 0, errors, warnings, lesson, tests, infos };
+}
+
+// ===== 14 代码题测试（代码题测试验证规格 §4）=====
+// 有 tests 的段：参考答案跑测试、变异检验；结果按 sha256(答案 + 测试 + 运行器版本) 缓存在 data/check-cache.json
+export const TEST_TIMEOUT_MS = 20_000;
+export const TEST_BUDGET_MS = 180_000;
+export const MUTANTS_MAX = 20;
+export const MUTANTS_MIN_JUDGE = 5;
+export const KILL_RATE_MIN = 0.6;
+export const CASES_MIN = 3;
+const CACHE_MAX = 200;
+const WRITE_TESTS = 'skills/参考/写测试.md';
+
+const countCases = (tests) => Object.values(tests).reduce((n, src) => n + (String(src).match(/^\s*(?:async\s+)?def\s+test_/gm) ?? []).length, 0);
+const firstLine = (s, max = 80) => {
+  const l = String(s ?? '').split('\n')[0].trim();
+  return l.length > max ? `${l.slice(0, max - 1)}…` : l;
+};
+const allPass = (r) => !r.timedOut && r.total > 0 && r.passed === r.total && r.failed === 0 && r.errors === 0;
+
+function readCache(file) {
+  try {
+    const c = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return isPlainObject(c) ? c : {};
+  } catch {
+    return {};
+  }
+}
+
+// 原子写：先写 .tmp 再 rename（管理台检查 worker 超时被结束时不会留下半截文件）
+function writeCache(file, cache) {
+  if (!fs.existsSync(path.dirname(file))) return; // data/ 不在：不写也不报错
+  const keys = Object.keys(cache).sort((a, b) => (Number(cache[a]?.at) || 0) - (Number(cache[b]?.at) || 0));
+  for (const k of keys.slice(0, Math.max(0, keys.length - CACHE_MAX))) delete cache[k];
+  const tmp = `${file}.tmp`;
+  try {
+    fs.writeFileSync(tmp, `${JSON.stringify(cache)}\n`);
+    fs.renameSync(tmp, file);
+  } catch {
+    // 写不进也不影响检查结果
+    try { fs.rmSync(tmp, { force: true }); } catch { /* 忽略 */ }
+  }
+}
+
+// 只有注释 / 空白的参考答案（如 new:stage 骨架的 # TODO 一行）当作没有答案
+const hasCode = (src) => typeof src === 'string' && src.split('\n').some((l) => l.trim() !== '' && !l.trim().startsWith('#'));
+// 测试用 runpy 跑 __main__（输入输出题）时，__main__ 块里的变体也要生成
+const RUNS_MAIN = /\brun_path\b|run_name\s*=\s*['"]__main__['"]/;
+
+// V2：参考答案通过后、变异检验之前跑"隐藏用例重算 / 错误库重算 / 对拍"（代码题批改规格 §3.3、§4.2、§5）
+//   ex = { hidden: cases | null, mistakes: [{ id, label, hint, code }] | { error } | null, brute: 文本 | null }
+//   → { hidden: { rendered } | null, mistakes: { json, uncaught, same, labels } | { error } | null, brute: { failing } | null, incomplete }
+async function runExtras(runner, solution, tests, files, ex, left) {
+  const out = { hidden: null, mistakes: null, brute: null, incomplete: false };
+  const lim = (ms) => ({ timeoutMs: Math.max(1, Math.min(ms, left())), initTimeoutMs: Math.max(1, left()) });
+  const over = () => {
+    if (left() > 0) return false;
+    out.incomplete = true;
+    return true;
+  };
+  if (ex.hidden && !over()) {
+    const res = await computeHidden(runner, solution, ex.hidden, { files, ...lim(EVAL_TIMEOUT_MS) });
+    if (res.some((r) => r.timedOut) && left() <= 0) out.incomplete = true;
+    else {
+      // 审查 2：有条目用参考答案算不出 → 不拿"缺这条"的渲染结果去比对，改报 tests-hidden-error
+      const errors = res.filter((r) => !r.ok).map((r) => ({ name: r.name, error: r.error }));
+      out.hidden = errors.length > 0 ? { errors } : { rendered: renderHiddenTests(ex.hidden, res.map((r) => r.hash)) };
+    }
+  }
+  if (ex.mistakes && !over()) {
+    if (!Array.isArray(ex.mistakes)) out.mistakes = { error: ex.mistakes.error };
+    else {
+      try {
+        const m = await computeMistakes(runner, { solution, tests, files, mistakes: ex.mistakes, ...lim(TEST_TIMEOUT_MS) });
+        if (left() <= 0) out.incomplete = true;
+        else {
+          const { uncaught, same } = mistakeIssues(m.mistakes);
+          out.mistakes = { json: renderMistakesJson(m), uncaught, same, labels: Object.fromEntries(m.mistakes.map((y) => [y.id, y.label])) };
+        }
+      } catch (err) {
+        if (left() <= 0) out.incomplete = true;
+        else out.mistakes = { error: firstLine(err?.message ?? err) };
+      }
+    }
+  }
+  if (typeof ex.brute === 'string' && !over()) {
+    const r = await runner.runTests(ex.brute, tests, { files, ...lim(TEST_TIMEOUT_MS) });
+    if (r.timedOut && left() <= 0) out.incomplete = true;
+    else if (r.timedOut) out.brute = { failing: ['（超时）'] };
+    else if (allPass(r)) out.brute = { failing: [] };
+    else {
+      const bad = r.cases.filter((c) => !c.ok).map((c) => c.name);
+      out.brute = { failing: bad.length > 0 ? bad : ['（测试没能运行）'] };
+    }
+  }
+  return out;
+}
+
+// 跑一段：参考答案 →（V2）隐藏用例 / 错误库 / 对拍 → 变异检验；返回可缓存的测量结果 { solution, run, mutants, extras, ms, incomplete }
+async function measureStage(runner, solution, tests, files, budgetMs, ex = {}) {
+  const t0 = Date.now();
+  const left = () => budgetMs - (Date.now() - t0);
+  // 每次调用都带预算：要（重）建 worker 时初始化超时取 min(60 秒, 剩余预算)
+  const opts = (timeoutMs) => ({ files, timeoutMs: Math.max(1, Math.min(timeoutMs, left())), initTimeoutMs: Math.max(1, left()) });
+  const timedOutEarly = () => ({ solution: 'timeout', run: null, mutants: null, ms: Date.now() - t0, incomplete: true });
+  try {
+    await runner.reset?.({ initTimeoutMs: Math.max(1, left()) }); // 每段开始前清空 /work
+  } catch (err) {
+    if (err?.timedOut) return timedOutEarly();
+    throw err;
+  }
+  const run = await runner.runTests(solution, tests, opts(TEST_TIMEOUT_MS));
+  // 预算用完（多半是 Python 起动太慢）→ 没跑完；否则是参考答案自己超时
+  if (run.timedOut) return left() <= 0 ? timedOutEarly() : { solution: 'timeout', run: null, mutants: null, ms: Date.now() - t0, incomplete: false };
+  if (!allPass(run)) {
+    const bad = run.cases.filter((c) => !c.ok);
+    return { solution: 'fail', run: { cases: bad.slice(0, 3), more: bad.length > 3 }, mutants: null, ms: Date.now() - t0, incomplete: false };
+  }
+  const extras = (ex.hidden || ex.mistakes || typeof ex.brute === 'string') ? await runExtras(runner, solution, tests, files, ex, left) : null;
+  if (extras?.incomplete) return { solution: 'pass', run: null, mutants: { total: 0, killed: 0, survived: [] }, extras, ms: Date.now() - t0, incomplete: true };
+  // 变体单次超时：参考答案耗时的 5 倍、至少 3 秒、至多 20 秒（改坏的循环常常死循环，不必每个都等满 20 秒）
+  const mutantTimeout = Math.min(TEST_TIMEOUT_MS, Math.max(3000, (run.ms ?? 0) * 5));
+  let list;
+  try {
+    list = await runner.mutants(solution, { max: MUTANTS_MAX, includeMain: RUNS_MAIN.test(Object.values(tests).join('\n')), initTimeoutMs: Math.max(1, left()) });
+  } catch (err) {
+    if (!err?.timedOut) throw err;
+    return { solution: 'pass', run: null, mutants: { total: 0, killed: 0, survived: [] }, extras, ms: Date.now() - t0, incomplete: true };
+  }
+  let killed = 0;
+  let total = 0;
+  const survived = [];
+  let incomplete = false;
+  for (const m of list) {
+    if (left() <= 0) {
+      incomplete = true;
+      break;
+    }
+    const r = await runner.runTests(m.code, tests, opts(mutantTimeout));
+    // 预算耗尽导致的超时不算"抓住"，算没跑完
+    if (r.timedOut && left() <= 0) {
+      incomplete = true;
+      break;
+    }
+    total += 1;
+    if (allPass(r)) survived.push({ line: m.line, desc: m.desc });
+    else killed += 1;
+  }
+  return { solution: 'pass', run: null, mutants: { total, killed, survived }, extras, ms: Date.now() - t0, incomplete };
+}
+
+// V2：本段目录里的隐藏用例 / 错误库 / 笨办法解（读文件，不跑）
+function readExtras(stageDir) {
+  const x = {
+    hiddenText: readText(path.join(stageDir, HIDDEN_JSON)), hidden: null, hiddenError: null, hiddenFile: readText(path.join(stageDir, HIDDEN_PATH)),
+    mistakeFiles: [], mistakes: null, mistakesJson: readText(path.join(stageDir, MISTAKES_JSON)), bruteText: readText(path.join(stageDir, BRUTE_FILE)),
+  };
+  if (x.hiddenText != null) {
+    try {
+      x.hidden = parseHidden(x.hiddenText);
+    } catch (err) {
+      x.hiddenError = err.message;
+    }
+  }
+  const mdir = path.join(stageDir, MISTAKES_DIR);
+  let names = [];
+  try {
+    names = fs.readdirSync(mdir).filter((f) => f.endsWith('.py')).sort();
+  } catch {
+    names = [];
+  }
+  x.mistakeFiles = names.map((f) => ({ file: f, text: readText(path.join(mdir, f)) ?? '' }));
+  if (names.length > MISTAKES_MAX) x.mistakes = { error: `${MISTAKES_DIR}/ 最多 ${MISTAKES_MAX} 个错误版本，现在 ${names.length} 个` };
+  else if (names.length > 0) {
+    try {
+      x.mistakes = x.mistakeFiles.map((f) => parseMistakeFile(f.file, f.text));
+    } catch (err) {
+      x.mistakes = { error: err.message };
+    }
+  }
+  return x;
+}
+
+async function checkCodeTests({
+  stageDirs, stagesRoot, raw, loaded, byDir, absConfig, platformRoot, warn, infos, rel, pyRunner, noCache, cacheFile, budgetMs = TEST_BUDGET_MS,
+}) {
+  const out = [];
+  const cache = noCache ? {} : readCache(cacheFile);
+  const lessonKey = (() => {
+    const r = toPosix(path.relative(platformRoot, absConfig));
+    return r && !r.startsWith('..') ? r : toPosix(absConfig);
+  })();
+  // 缓存只记平台目录里的课（临时目录里的课不写进平台的 data/check-cache.json）
+  const cacheable = !lessonKey.startsWith('/') && !/^[A-Za-z]:/.test(lessonKey);
+  let runner = null;
+  const getRunner = () => {
+    if (!runner) runner = (pyRunner ?? ((o) => createPyRunner(o)))({ root: platformRoot });
+    return runner;
+  };
+  try {
+    let n = 0;
+    for (const dir of stageDirs) {
+      n += 1;
+      const stage = (loaded ? loaded.stages.find((s) => path.basename(s.dir) === dir) : null) ?? byDir.get(dir) ?? null;
+      const tests = stage?.config?.sandbox?.tests;
+      if (!isPlainObject(tests) || Object.keys(tests).length === 0) continue;
+      // 数据文件（有效 sandbox 配置的 files，与学生端同一份）：参考答案与变体都要读得到
+      const files = isPlainObject(stage.config.sandbox.files) ? stage.config.sandbox.files : {};
+      const id = stage.config.id ?? dir;
+      const where = `第 ${n} 段（${id}）`;
+      const e = raw.get(dir);
+      const cfgFile = e?.file ?? path.join(stagesRoot, dir, 'stage.config.js');
+      const testsLine = findLine(e?.src, /^\s*['"]?tests['"]?\s*:/m);
+      const isPrimitive = stage.config.primitive != null;
+      const solutionFile = path.join(stagesRoot, dir, 'solution.py');
+      const solution = isPrimitive
+        ? (stage.serverOptions?.solution ?? stage.config.options?.solution)
+        : readText(solutionFile);
+      const cases = countCases(tests);
+      const entry = { stage: id, dir, cases, solution: 'missing', mutants: null, ms: 0, cached: false, extra: {} };
+      out.push(entry);
+      let warned = false;
+      const w = (...a) => {
+        warned = true;
+        warn(...a);
+      };
+
+      // V2 静态部分（不起 Python）：隐藏用例形状 / 没生成 / 没列进 tests；extra 条数
+      const stageDir = path.join(stagesRoot, dir);
+      const x = readExtras(stageDir);
+      const prepCmd = `npm run prep:tests -- ${rel(stageDir)}`;
+      const listed = Object.hasOwn(tests, HIDDEN_FILE);
+      if (x.hiddenError) {
+        w(path.join(stageDir, HIDDEN_JSON), null, `${where}的隐藏用例 hidden.json 写得不对：${x.hiddenError}`,
+          `照 ${WRITE_TESTS} §6 改，再跑 ${prepCmd}`, 'tests-hidden-shape');
+      } else if (x.hidden && x.hiddenFile == null) {
+        w(path.join(stageDir, HIDDEN_JSON), null, `${where}隐藏用例还没生成`, prepCmd, 'tests-hidden-missing');
+      }
+      if (x.hiddenFile != null && !listed) {
+        w(cfgFile, testsLine, `${where}的 ${HIDDEN_PATH} 没列进测试，学生跑不到隐藏用例`, `在测试里加：${listedLine(isPrimitive)}`, 'tests-hidden-unlisted');
+      }
+      if (listed && hiddenCount(tests[HIDDEN_FILE]) > 0) entry.extra.hidden = hiddenCount(tests[HIDDEN_FILE]);
+      if (x.mistakeFiles.length > 0) entry.extra.mistakes = x.mistakeFiles.length;
+
+      // 1 有测试没答案
+      if (!hasCode(solution)) {
+        warn(cfgFile, testsLine, `${where}有测试但没有参考答案，测试没验证`,
+          isPrimitive
+            ? "在 options 里写 solution: { from: './solution.py' }（参考答案，只发教师），再跑一次 check:lesson"
+            : '在本段目录放 solution.py（参考答案，不进学生页面），再跑一次 check:lesson', 'tests-no-solution');
+        continue;
+      }
+      // 2 用例太少（继续）
+      if (cases < CASES_MIN) {
+        w(cfgFile, testsLine, `${where}只有 ${cases} 个测试用例`, `正常、边界、反例各至少一条（${WRITE_TESTS}）`, 'tests-too-few');
+      }
+      const solFile = isPrimitive ? cfgFile : solutionFile;
+      const solLine = isPrimitive ? findLine(e?.src, /^\s*['"]?solution['"]?\s*:/m) : null;
+
+      // 缓存
+      const names = Object.keys(tests).sort();
+      const fileNames = Object.keys(files).sort();
+      const hash = crypto.createHash('sha256')
+        .update(JSON.stringify([solution, names.map((k) => [k, tests[k]]), fileNames.map((k) => [k, files[k]]), PYRUN_VERSION,
+          // V2：隐藏用例定义、错误版本、笨办法解（生成物 test_hidden.py / mistakes.json 每次现比，不进哈希）
+          x.hiddenText, x.mistakeFiles.map((f) => [f.file, f.text]), x.bruteText]))
+        .digest('hex');
+      const key = `${lessonKey}::${id}`;
+      let m = null;
+      const hit = cache[key];
+      if (!noCache && hit?.hash === hash && isPlainObject(hit.result)) {
+        m = hit.result;
+        entry.cached = true;
+      } else {
+        const r = getRunner();
+        if (r.available) {
+          try {
+            m = await measureStage(r, solution, tests, files, budgetMs, {
+              hidden: x.hidden && (x.hiddenFile != null || listed) ? x.hidden : null,
+              mistakes: x.mistakes,
+              brute: x.bruteText,
+            });
+          } catch (err) {
+            if (r.available) {
+              w(cfgFile, testsLine, `${where}的测试没跑完：${firstLine(err?.message ?? err)}`, '检查测试文件与参考答案能不能单独跑；再跑一次 check:lesson', 'tests-unverified');
+              entry.solution = 'unverified';
+              continue;
+            }
+          }
+        }
+        if (!r.available) {
+          const why = String(r.reason ?? '').replace(/（[^）]*）$/, '') || 'Python 运行时不可用';
+          w(cfgFile, testsLine, `${why}，${where}的测试没验证`, '在管理台左边第 4 步"上课准备"下载 Python 运行时后再跑一次 check:lesson', 'tests-unverified');
+          entry.solution = 'unverified';
+          continue;
+        }
+        // 每段跑完立即写（管理台检查 worker 超时被结束时，已跑完的段下次直接命中）
+        if (m.solution !== 'timeout' && !m.incomplete && cacheable) {
+          const disk = readCache(cacheFile);
+          disk[key] = { hash, at: Date.now(), result: m };
+          writeCache(cacheFile, disk);
+        }
+      }
+
+      entry.solution = m.solution;
+      entry.mutants = m.mutants;
+      entry.ms = m.ms;
+      // 3 参考答案跑测试（预算内连参考答案都没跑完 → 按"没跑完"）
+      if (m.solution === 'timeout' && m.incomplete) {
+        w(cfgFile, testsLine, `${where}测试在 ${Math.round(budgetMs / 1000)} 秒内没跑完（Python 起动或参考答案太慢），测试没验证`,
+          '再跑一次 check:lesson（第二次起动快）；仍然这样就减小测试里的数据量', 'tests-timeout');
+        continue;
+      }
+      if (m.solution === 'timeout') {
+        w(solFile, solLine, `${where}参考答案跑了 20 秒还没完，看有没有死循环 / 等 input`,
+          '参考答案里的循环要能结束；要读 input() 的题，测试里用 monkeypatch 喂输入（见 skills/参考/写测试.md）', 'tests-timeout');
+        continue;
+      }
+      if (m.solution === 'fail') {
+        const list = (m.run?.cases ?? []).map((c) => `${c.name}（${firstLine(c.reason)}）`).join('、');
+        w(solFile, solLine, `${where}参考答案没通过测试：${list || '测试没能运行'}${m.run?.more ? '…' : ''}`,
+          '要么测试写错，要么答案写错；对照失败用例改，不能删测试凑过', 'tests-solution-fail');
+        continue;
+      }
+      // V2 隐藏用例过期 / 错误库 / 对拍（参考答案通过之后才有意义）
+      const ex = m.extras ?? {};
+      for (const he of ex.hidden?.errors ?? []) {
+        w(path.join(stageDir, HIDDEN_JSON), null, `${where}隐藏用例 ${he.name} 用参考答案算不出：${firstLine(he.error)}`,
+          '改 hidden.json 里这一条（表达式或输入写错了），或改参考答案', 'tests-hidden-error');
+      }
+      if (ex.hidden?.rendered && x.hiddenFile != null && (x.hiddenFile !== ex.hidden.rendered || (listed && tests[HIDDEN_FILE] !== ex.hidden.rendered))) {
+        w(path.join(stageDir, HIDDEN_PATH), null, `${where}隐藏用例已过期（参考答案或 hidden.json 改过）`, `重跑 ${prepCmd}`, 'tests-hidden-stale');
+      }
+      if (ex.mistakes?.error) {
+        w(path.join(stageDir, MISTAKES_DIR), null, `${where}错误库生成不了：${ex.mistakes.error}`, `改好后跑 ${prepCmd}`, 'tests-mistakes-stale');
+      } else if (ex.mistakes) {
+        if (x.mistakesJson !== ex.mistakes.json) {
+          w(path.join(stageDir, x.mistakesJson == null ? MISTAKES_DIR : MISTAKES_JSON), null,
+            x.mistakesJson == null ? `${where}错误库还没生成 ${MISTAKES_JSON}` : `${where}错误库 ${MISTAKES_JSON} 已过期（错误版本或测试改过）`,
+            `重跑 ${prepCmd}`, 'tests-mistakes-stale');
+        }
+        const label = (mid) => ex.mistakes.labels?.[mid] ?? mid;
+        for (const mid of ex.mistakes.uncaught) {
+          w(path.join(stageDir, MISTAKES_DIR, `${mid}.py`), null, `${where}错误版本"${label(mid)}"没被测试抓住`,
+            `补一条能让它失败的用例（测试或隐藏用例），再跑 ${prepCmd}`, 'tests-mistake-uncaught');
+        }
+        for (const [a, b] of ex.mistakes.same) {
+          w(path.join(stageDir, MISTAKES_DIR, `${a}.py`), null, `${where}错误版本"${label(a)}"与"${label(b)}"失败的用例一样，上课分不开`,
+            `补一条只让其中一个失败的用例，再跑 ${prepCmd}`, 'tests-mistake-same');
+        }
+      }
+      if (ex.brute && ex.brute.failing.length > 0) {
+        const list = ex.brute.failing.slice(0, 3).join('、') + (ex.brute.failing.length > 3 ? '…' : '');
+        w(path.join(stageDir, BRUTE_FILE), null, `${where}笨办法解没通过测试：${list}——题意可能有歧义，或参考答案与笨办法解之一写错`,
+          '对照这几条用例看题意：改错的那一个（参考答案、笨办法解或测试），不能删测试凑过', 'tests-brute-fail');
+      }
+      if (ex.incomplete) {
+        w(cfgFile, testsLine, `${where}隐藏用例 / 错误库 / 对拍在 ${Math.round(budgetMs / 1000)} 秒内没跑完`,
+          '再跑一次 check:lesson；仍然这样就减小测试里的数据量', 'tests-timeout');
+      }
+      // 4 变异检验
+      const mu = m.mutants;
+      if (m.incomplete && !ex.incomplete) {
+        w(cfgFile, testsLine, `${where}变异检验没跑完（${Math.round(budgetMs / 1000)} 秒内跑了 ${mu.total} 个改坏的版本）`,
+          '参考答案或测试太慢：减小测试里的数据量，再跑一次 check:lesson', 'tests-timeout');
+      }
+      if (mu.total >= MUTANTS_MIN_JUDGE && mu.killed / mu.total < KILL_RATE_MIN) {
+        const eg = mu.survived.slice(0, 3).map((s) => s.desc).join('；');
+        w(cfgFile, testsLine, `${where}测试抓不住 ${mu.total - mu.killed}/${mu.total} 个改坏的版本（如 ${eg}）`,
+          `按这几个例子补边界用例（${WRITE_TESTS}）`, 'tests-weak');
+      }
+      // 5 全部通过 → 信息
+      if (!warned) {
+        infos.push({ level: 'info', file: rel(cfgFile), line: null,
+          message: `代码题测试：段 ${id} 通过（用例 ${cases}，抓住 ${mu.killed}/${mu.total}）`, fix: '', rule: 'tests-pass' });
+      }
+    }
+  } finally {
+    if (runner) await runner.close?.();
+  }
+  return out;
 }
 
 // coach 组件规格 §2：stage.config.js 顶层 coach
@@ -867,8 +1317,10 @@ export function summaryLine(r) {
   return m > 0 ? `通过，${m} 处警告` : '通过';
 }
 
+// 14：信息行（代码题测试通过）在末尾汇总行之前
 export function formatReport(r) {
-  return [...r.errors, ...r.warnings].map(formatItem).concat(summaryLine(r)).join('\n');
+  const infos = (r.infos ?? []).map((i) => `信息  ${i.message}`);
+  return [...r.errors, ...r.warnings].map(formatItem).concat(infos, summaryLine(r)).join('\n');
 }
 
 function envLessonConfig(cwd) {
@@ -881,8 +1333,9 @@ function envLessonConfig(cwd) {
 
 export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), log = (l) => console.log(l) } = {}) {
   const json = argv.includes('--json');
+  const noCache = argv.includes('--no-cache');
   const target = argv.find((a) => !a.startsWith('--')) ?? envLessonConfig(cwd) ?? './lesson.config.js';
-  const r = await checkLesson(target, { root: cwd });
+  const r = await checkLesson(target, { root: cwd, noCache });
   log(json ? JSON.stringify(r, null, 2) : `check:lesson ${toPosix(target)}\n${formatReport(r)}`);
   return r.ok ? 0 : 1;
 }

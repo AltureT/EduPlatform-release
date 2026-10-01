@@ -17,7 +17,7 @@ import { spawnServer as realSpawnServer } from '#kernel/test-utils/spawnServer.j
 import { teacherToken } from '#kernel/test-utils/teacherToken.js';
 import { virtualStudent } from '#kernel/test-utils/virtualStudent.js';
 import { virtualTeacher } from '#kernel/test-utils/virtualTeacher.js';
-import { parseArgs } from './lib/args.js';
+import { parseArgs, resolvePort } from './lib/args.js';
 import { importStageSimulate, lessonConfigPath, loadLesson as realLoadLesson } from './lib/lesson.js';
 import { EXIT, formatTable, resultLine } from './lib/report.js';
 import {
@@ -29,7 +29,7 @@ export function studentNames(n) {
 }
 
 export async function main(argv, deps = {}) {
-  const { spawnServer = realSpawnServer, loadLesson = realLoadLesson, log = console.log } = deps;
+  const { spawnServer = realSpawnServer, loadLesson = realLoadLesson, log = console.log, probePort } = deps;
   const finish = (code) => {
     log(resultLine(code));
     return code;
@@ -40,6 +40,7 @@ export async function main(argv, deps = {}) {
   let configPath;
   try {
     opts = parseArgs(argv, { defaultStudents: 30 });
+    opts.port = await resolvePort(opts, { probe: probePort }); // S6：没给 --port 时探测空闲端口，避开 3001 / 3900–3909
     configPath = lessonConfigPath();
     lesson = await loadLesson(configPath);
   } catch (err) {

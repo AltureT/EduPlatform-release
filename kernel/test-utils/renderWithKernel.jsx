@@ -1,4 +1,4 @@
-// 规格 v0.5 §2.7：renderWithKernel(ui, { role, stage, stageIndex, subPhase, roster, stageData, myStageData, classData, components, me, classEpoch })
+// 规格 v0.5 §2.7：renderWithKernel(ui, { role, stage, stageIndex, subPhase, roster, stageData, myStageData, classData, components, me, classEpoch, myDrafts, lessonId })
 //   K2（v0.6）：classEpoch 只对学生端生效（教师 store 不保存 classEpoch）；不传时保留 store 初始值
 //   → 渲染 ui 并预置对应 core store 与组件注册表，返回 { emit(event, payload), store, sent }
 //   sent: [{ event, payload }]（规格 v0.3.1）：本次渲染后客户端经 socket 发往服务端的全部事件（含 send / advance 等）
@@ -77,6 +77,8 @@ export function renderWithKernel(ui, opts = {}) {
     components = [],
     me,
     classEpoch,
+    myDrafts = {},
+    lessonId,
   } = opts;
   if (role !== 'student' && role !== 'teacher') throw new Error(`renderWithKernel: role must be 'student' | 'teacher', got ${role}`);
   const store = role === 'teacher' ? coreTeacherStore : coreStudentStore;
@@ -122,6 +124,8 @@ export function renderWithKernel(ui, opts = {}) {
       me: m,
       myStageData: myStageData || {},
       classData: classData || {},
+      myDrafts: myDrafts || {},
+      ...(lessonId !== undefined ? { lesson: { ...store.getState().lesson, id: lessonId } } : {}),
       ...(classEpoch !== undefined ? { classEpoch } : {}),
     });
   }

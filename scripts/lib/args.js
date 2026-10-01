@@ -1,3 +1,4 @@
+import net from 'node:net';
 import path from 'node:path';
 // 脚本公共参数（规格 §10）：--students N、--lesson <path>（设 LESSON_CONFIG）、--keep-db、--port；位置参数 N 等同 --students
 const PORT_MIN = 3100;
@@ -22,12 +23,58 @@ export function randomPort(random = Math.random) {
   return port >= MANAGE_MIN ? port + SKIP : port;
 }
 
+// S6：随机端口还要避开 3001（本机常驻服务）与管理台段，并先探测空闲（--port 显式给的照用，不探测）
+const USER_PORT = 3001;
+export function isExcludedPort(port) {
+  return port === USER_PORT || (port >= MANAGE_MIN && port <= MANAGE_MAX);
+}
+
+// 与 scripts/manage/net.js probePort 同一规则（exclusive 监听所有地址）：'free' | 'in-use' | 'no-permission' | 'error'
+export function probePort(port, host) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') resolve('in-use');
+      else if (err.code === 'EACCES' || err.code === 'EPERM') resolve('no-permission');
+      else resolve('error');
+    });
+    srv.listen({ port, host, exclusive: true }, () => srv.close(() => resolve('free')));
+  });
+}
+
 /**
- * parseArgs(argv, { defaultStudents }) → { students, lesson, keepDb, port }
+ * pickFreePort({ probe?, random?, tries? }) → 3100–3999 里去掉排除段、探测为空闲的随机端口；
+ * 同一端口只探测一次（重复的跳过、不计 tries）；探测 tries 个不同端口都不空闲，或连续 tries 次抽到已试过的端口 → 抛错
+ */
+export async function pickFreePort({ probe = probePort, random = Math.random, tries = 50 } = {}) {
+  const tried = new Set();
+  let repeats = 0;
+  while (tried.size < tries && repeats < tries) {
+    const port = randomPort(random);
+    if (isExcludedPort(port) || tried.has(port)) {
+      repeats += 1;
+      continue;
+    }
+    repeats = 0;
+    tried.add(port);
+    if ((await probe(port)) === 'free') return port;
+  }
+  throw new Error(`在 ${PORT_MIN}–${PORT_MAX} 里没找到空闲端口，请用 --port 指定`);
+}
+
+/** resolvePort(opts, { probe? }) → opts.portGiven 时照用 opts.port，否则 pickFreePort */
+export async function resolvePort(opts, { probe } = {}) {
+  if (opts.portGiven) return opts.port;
+  return pickFreePort(probe ? { probe } : {});
+}
+
+/**
+ * parseArgs(argv, { defaultStudents }) → { students, lesson, keepDb, port, portGiven }
+ * 没给 --port 时 port 先取 randomPort()（不探测），调用方再用 resolvePort 换成探测为空闲的端口
  * 非法参数抛错；--lesson 同时写入 process.env.LESSON_CONFIG
  */
 export function parseArgs(argv, { defaultStudents = 30 } = {}) {
-  const out = { students: defaultStudents, lesson: null, keepDb: false, port: null };
+  const out = { students: defaultStudents, lesson: null, keepDb: false, port: null, portGiven: false };
   const args = [...argv];
   while (args.length) {
     let a = args.shift();
@@ -45,7 +92,10 @@ export function parseArgs(argv, { defaultStudents = 30 } = {}) {
     if (a === '--students') out.students = toInt(value(), '--students', 1, 10000);
     else if (a === '--lesson') out.lesson = value();
     else if (a === '--keep-db') out.keepDb = true;
-    else if (a === '--port') out.port = toInt(value(), '--port', 1, 65535);
+    else if (a === '--port') {
+      out.port = toInt(value(), '--port', 1, 65535);
+      out.portGiven = true;
+    }
     else if (/^\d+$/.test(a)) out.students = toInt(a, '--students', 1, 10000);
     else throw new Error(`未知参数：${a}`);
   }

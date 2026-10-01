@@ -1,15 +1,16 @@
 // quiz 学生视图：focus 模板。作答：一题一页，标题"第 i / N 题"，hint 为倒计时（timeLimitSec）或已答数；
 // 单选 / 判断是整页主操作的大按钮，填空是一行输入框；上一题 / 下一题 / 提交进操作条（Page.Actions）。
 // options.prompt（P4，可选的全卷材料）在每一题的题面之前、结果页最上方显示。
-// 题序：shuffle 时按学生名稳定打乱（order.js，与服务端同一算法）；草稿只在本机，提交一次即锁定。
-// 到时（enteredStageAt + timeLimitSec）自动提交已答部分。
+// 题序：shuffle 时按学生名稳定打乱（order.js，与服务端同一算法）；提交一次即锁定。
+// 作答与当前题号自动保存（useDraft 'answers' / 'pos'，学生输入自动保存规格 §2.4）：刷新、断线、关浏览器、换设备不丢；提交后清掉。
+// 到时（enteredStageAt + timeLimitSec）自动提交已答部分（取自保存的作答，刷新后也不会交空卷）。
 // 结果（提交后）按 showResultTo：
 //   student-after-submit：本人记录里的 score / results / explanations → 得分、逐题对错与解析（不显示正确答案：学生端没有）；
 //   reveal：揭晓前只显示"已提交，等待揭晓"与自己的作答；揭晓后正确答案与解析从班级记录 classData.answerKey / explanations 读；
 //   never：只显示"已提交"与自己的作答。
 // 回看 / 镜像：只显示结果（未提交显示"未提交"，已揭晓时"已揭晓，未提交"）；学生收到的 options 没有 answerKey / explanations（保密选项）。
 import { useEffect, useRef, useState } from 'react';
-import { useStudentStage, useNarrow, Btn, Chip, Page, Row, Stack, Tiles } from '#kernel/client/index.js';
+import { useStudentStage, useNarrow, useDraft, Btn, Chip, Page, Row, Stack, Tiles } from '#kernel/client/index.js';
 import PromptText from '../_shared/PromptText.jsx';
 import { formatAnswer, formatKey, isAnswered, BLANK_MAX } from './items.js';
 import { itemOrder } from './order.js';
@@ -122,11 +123,24 @@ function ResultList({ items, answers, results, answerKey, explanations }) {
 export default function Student({ stageId } = {}) {
   const { stage, options, me, myData, classData, isLive, readOnly, send } = useStudentStage(stageId);
   const narrow = useNarrow();
-  const [draft, setDraft] = useState({});
-  const [pos, setPos] = useState(0);
+  const sid = stageId ?? stage?.id;
+  const [draftRaw, setDraft, answersDraft] = useDraft('answers', {}, { stageId: sid });
+  const [posRaw, setPos, posDraft] = useDraft('pos', 0, { stageId: sid });
+  const draft = draftRaw && typeof draftRaw === 'object' && !Array.isArray(draftRaw) ? draftRaw : {};
+  const pos = Number.isInteger(posRaw) && posRaw >= 0 ? posRaw : 0;
   const sentRef = useRef(false);
 
   const submitted = myData?.submittedAt != null;
+  // 提交成功（本人记录有 submittedAt）后清掉草稿；没有草稿时不发
+  const clearAnswers = answersDraft.clear;
+  const clearPos = posDraft.clear;
+  const hasDraft = answersDraft.restored != null || posDraft.restored != null || Object.keys(draft).length > 0 || pos !== 0;
+  useEffect(() => {
+    if (submitted && hasDraft && !readOnly) {
+      clearAnswers();
+      clearPos();
+    }
+  }, [submitted, hasDraft, readOnly, clearAnswers, clearPos]);
   // 揭晓后（班级记录有 revealedAt）服务端拒绝提交，未提交的学生不再停在作答页
   const revealedClass = classData?.revealedAt != null;
   const canAnswer = !!options && isLive && !readOnly && !submitted && !revealedClass;

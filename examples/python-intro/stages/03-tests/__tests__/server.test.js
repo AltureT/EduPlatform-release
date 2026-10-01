@@ -108,12 +108,15 @@ test('summarize：通过用例数 + 全班中位数', () => {
   ]);
 });
 
-test('sandbox 配置：三个用例、starter 有函数签名与 __main__ 守卫', () => {
+test('sandbox 配置：五个用例（含 90、60 分界值）+ 隐藏用例文件（V2，只存哈希）、starter 有函数签名与 __main__ 守卫', () => {
   const tests = config.sandbox.tests;
   const names = Object.keys(tests);
-  assert.equal(names.length, 1);
-  assert.match(names[0], /^test_[a-z_]+\.py$/);
-  assert.equal((tests[names[0]].match(/^def test_/gm) ?? []).length, 3);
+  assert.deepEqual(names, ['test_grade.py', 'test_hidden.py']);
+  assert.equal((tests['test_hidden.py'].match(/^def test_hidden_\d+\(/gm) ?? []).length, 2);
+  assert.doesNotMatch(tests['test_hidden.py'], /优秀|及格/, '期望值只存哈希');
+  assert.equal((tests[names[0]].match(/^def test_/gm) ?? []).length, 5);
+  assert.match(tests[names[0]], /grade\(90\)/);
+  assert.match(tests[names[0]], /grade\(60\)/);
   assert.match(config.sandbox.starter, /^def grade\(score\):/m);
   assert.match(config.sandbox.starter, /if __name__ == '__main__':/);
 });

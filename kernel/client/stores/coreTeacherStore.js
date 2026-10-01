@@ -110,6 +110,11 @@ export const coreTeacherStore = create((set, get) => ({
       safeWrite(TOKEN_KEY, token);
       set({ token });
     }
+    // K10：握手带教师 token，服务端连接时直接发教师版 classroom:state（重连不先收到学生版）；函数形式每次（重）连时取当前 token
+    socket.auth = (cb) => {
+      const t = get().token;
+      cb(t ? { teacherToken: t } : {});
+    };
     bindStageSlices(socket);
     bindComponentSlices(socket);
     if (!listenersBound) {

@@ -2,7 +2,11 @@
 
 给学生一份 CSV，学生用 pandas / matplotlib 看数据、算、画图；重点是"看数据、算、画"，不判对错。建在 sandbox 组件之上（`lesson.config.components` 必须打开 `sandbox`，并建议 lesson 级预载 `pandas`、`matplotlib`）。数据集在进入本段时写进学生浏览器里的虚拟文件系统；学生页宽屏三栏，左栏（Main : Side = 2 : 1，窄屏时在上、可折叠）自上而下是"题目"面板（题目、"画的图会显示在输出区"、任务清单，完整显示）、紧凑数据卡"数据 · 共 N 行 · M 列"（列名与前 3 行；"查看全部数据"打开全屏弹层：筛选框 + 可点列头排序的表格，超过 500 行只显示前 500 行）与贴在底部的"上交最终稿"（窄屏在底部操作条），中间是代码编辑器、右边是输出（含图）；两条分隔线都能拖动调宽度（本机记住，双击恢复）。回看这一段时（缺省 `reviewInteractive: true`，阶段写 false 可关）照样能滚动、看全部数据、改代码、运行，只是不记录、不能上交，操作条显示"回看 · 运行不记录"。每次运行结束记录自动保存（以最后一次为准，图 ≤ 1 张）；"上交最终稿"把当前代码和最近一次输出（含图）作为最终稿，可再次上交覆盖。教师统计页、推进门槛（出图比例）、8 分钟提醒、大屏（已运行 N/M、已出图 N、轮换展示学生的图、参考答案）、个人报告条目、分享推荐全部自动有。
 
+作答自动保存，刷新不丢：代码除本机草稿外还存一份在服务端（≤ 2 万字），换设备、清站点数据也能回填——起始代码按"本机草稿 → 服务端草稿 → 最终稿 / 最近记录的代码 → starter"取；任务清单的勾选同样保存（学生输入自动保存规格）。
+
 写了 `solution`（参考答案）时，演示页多两个按钮：`显示 / 隐藏参考答案`（只上大屏，同 code）与`公布参考答案给学生`（点两次才生效）——公布后全班学生题目栏在任务清单之后出现"参考答案"面板（等宽代码，可"放大"、可选中复制），按钮变"撤回参考答案"，标题区提示"参考答案已公布 HH:MM"；公布之后再运行 / 上交的记录带"答案公布后"标记，统计页两列后缀"（答案后）"，摘要多"答案公布后又运行 N 人"。
+
+现场演示（自带，不用写配置）：教师在演示页点"现场演示"，大屏换成一个能跑的编辑器（初始是本段分析起始代码，能读到同一份数据、能画图），边讲边敲、边运行给学生看；上方可"载入起始代码"、"载入参考答案"（写了 `solution` 时；只进编辑器，不会公布）。讲完点"下发给学生"（点两次才生效），全班当前在这一段的学生操作条出现"老师发来一份代码"和"看一看"按钮，点"看一看"能看代码，点"换成这份"就替换自己的代码（程序在跑会先停下），点"先不用"不变；已下发时演示区显示"已下发 HH:MM"和"撤回"，撤回后提示消失，再下发会覆盖上一份。点"收起演示"回到投屏，演示区的代码留着，换段清空。演示时的运行不产生任何记录；换了老师代码的学生，之后的记录带 `fromTeacher`（统计页"最近运行"格悬停提示"用了老师下发的代码"）。
 
 ## options
 
@@ -15,7 +19,7 @@
 | `packages` | 包名数组 | `['pandas', 'matplotlib']` | 本段预载的包 |
 | `solution` | 字符串 1–20000 字或 `{ from }` | 无 | 参考答案。**保密选项**：只发教师；大屏可显示 / 隐藏，可公布给学生（两次确认）并撤回 |
 | `expectImage` | 布尔 | `true` | 门槛、提醒、推荐按"是否出图"算；`false` 时按"跑通"（跑过且最近一次无报错）算 |
-| `gate` | 声明式门槛 | `{ image: 0.7, soft: true }`；`expectImage: false` 时 `{ ran: 0.7, soft: true }` | 三种口径可选：`image`（出过图）、`ran`（跑通）、`submitted`（上交了最终稿，如 `{ submitted: 0.7, soft: true }`）；也可 `false` |
+| `gate` | 声明式门槛 | `{ image: 0.7, soft: true }`；`expectImage: false` 时 `{ ran: 0.7, soft: true }` | 三种口径可选：`image`（出过图）、`ran`（跑通）、`submitted`（上交了最终稿，如 `{ submitted: 0.7, soft: true }`）；也可 `false`；**口径：人数比**（满足的在线学生人数 / 在线人数） |
 | `idleAlertMs` | 毫秒 | `480000`（8 分钟） | 进入本段多久还没出图（或没跑通）就提醒教师；`0` 不提醒 |
 
 `dataset` 带 `path` 与 `from` 两个键，加载器不替它读文件，由原语在 `normalize` 里用 `readFrom` 读——路径限制同 `{ from }`：只能引用阶段根目录里的文件。数据集 ≤ 200 KB（按 JSON 转义后的长度算，换行、引号等会多占字符；超了启动失败，报"数据集经转义后 N KB，超过 200 KB，请精简行数"）。几段共用的数据放 `stages/_shared/`，写 `from: '../_shared/scores.csv'`。加载后 `options.dataset` 只剩元数据 `{ path, rows, columns }`（行数、列名），数据内容放在仅服务端选项 `$server.content`（不随 options 下发），只经 `sandbox.files[path]` 下发一份，学生页的表格从那里解析（`csv.js`：只处理逗号分隔与双引号转义）。`preview` 已删除（学生页显示全部数据；写了启动失败并提示）。
@@ -24,9 +28,11 @@
 
 **教师给 Excel 也行，学生看到的是 CSV**：`dataset: { path: 'data/scores.csv', from: './data/scores.xlsx' }`——加载时取第一个工作表，首行为列名，空单元格为空串，日期写成 `YYYY-MM-DD`，数字原样，公式取计算结果，转成 CSV 写进 `path`（`path` 须以 `.csv` 结尾；xlsx 文件本身 ≤ 256 KB，转出的 CSV ≤ 200 KB）。
 
-采集：每人一条 sandbox 记录 `{ code, stdout, error, images(≤ 1), tests: null, runs, ms, submittedAt, firstImageAt?, final?, finalAt?, afterSolution? }`（`firstImageAt` 是首次出图的时间，服务端只写一次；`final { code, stdout, error, images, tests, at }` 与 `finalAt` 是最终稿，事件 `student:data-final`，覆盖式写入；有 `solution` 时，参考答案公布中到达的运行记录写 `afterSolution: true`——其它情况不写，撤回后之前的标记仍保留——公布中上交的最终稿写 `final.afterSolution: true`）；班级记录 `{ featured, showSolution?, solution?, solutionPublishedAt? }`（`featured` 投到大屏的学生名；`showSolution` 大屏开关；参考答案正文只在公布时写进 `solution` 并记 `solutionPublishedAt`，撤回即清为 `null`）。
+采集：每人一条 sandbox 记录 `{ code, stdout, error, images(≤ 1), tests: null, runs, ms, submittedAt, firstImageAt?, final?, finalAt?, afterSolution?, fromTeacher? }`（`firstImageAt` 是首次出图的时间，服务端只写一次；`final { code, stdout, error, images, tests, at }` 与 `finalAt` 是最终稿，事件 `student:data-final`，覆盖式写入；有 `solution` 时，参考答案公布中到达的运行记录写 `afterSolution: true`——其它情况不写，撤回后之前的标记仍保留——公布中上交的最终稿写 `final.afterSolution: true`）；班级记录 `{ featured, showSolution?, solution?, solutionPublishedAt? }`（`featured` 投到大屏的学生名；`showSolution` 大屏开关；参考答案正文只在公布时写进 `solution` 并记 `solutionPublishedAt`，撤回即清为 `null`；`pushedCode { code, at } | null` 是教师"下发给学生"的代码，事件 `teacher:push-code { code | null }`，≤ 20000 字，换段、重置时清掉）；学生换成老师下发的代码后，两个学生事件带 `fromTeacher: true`（`fromTeacher?` 布尔：用了老师下发的代码；服务端只在为 true 时写，之后不清）。
 
 大屏与统计：统计页列 运行次数 / 已出图 / 最近报错 / 已上交 / 最近运行，摘要多"已上交 N/M"；点行看"最终稿 / 最近运行"两个标签（代码、输出与图），行详情里"投到大屏"（大屏有最终稿时显示最终稿的图）；演示页"换一份展示"在出过图的学生里按首次出图（`firstImageAt`）先后轮换，"取消展示"撤下，没有投屏时显示"尚未投屏"。"已出图 N"芯片、门槛、提醒、推荐都按 `firstImageAt`（学生之后改代码没图了也不会掉出，也不打乱轮换）；表格的"已出图"列显示最近一次。推荐分享：首次出图最早的 5 人。评分（share 自动互助用）：出图 1、跑过 0.5、没跑 0。报告：我的图（report 组件只显示文字"已出图（1 张）"，不显示图本身；有最终稿按最终稿，没有则取最近运行并标"（未上交，取最近运行）"）、运行次数。
+
+最终稿不随自动记录重复推送（K10）：服务端存的记录形状不变（上面的 `final` 完整，报告、导出、门槛、统计页点行拉到的都是完整记录）；只是上交最终稿之后，每次自动记录推给教师端与学生本人的那份里 `final` 换成摘要 `{ at, stale?, afterSolution?, lite: true }`（去掉代码、输出、图与测试）。被投到大屏的学生照推完整最终稿，教师点"投到大屏" / "换一份展示"时服务端补推一次完整记录；大屏拿到的是摘要时退回显示最近运行；镜像与学生页的起始代码回落在摘要下取最近记录的代码。
 
 模拟片段 `__tests__/simulate.js`：虚拟学生直接发一条带 1×1 PNG 的记录（每 10 人 1 人无图），再上交一次最终稿。
 

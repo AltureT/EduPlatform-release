@@ -3,8 +3,9 @@
 // 单选点一下即提交；多选可点多个，"提交"进操作条（Page.Actions）；canChange 时可改；
 // 揭晓后显示对错与正确答案——正确答案只从班级记录 classData.answer 读（学生收到的 options 没有 answer，保密选项）；
 // 非当前阶段置灰；镜像内保持原样显示但不响应。
-import { useEffect, useState } from 'react';
-import { useStudentStage, useNarrow, Btn, Chip, Page, Row, Stack, Tiles } from '#kernel/client/index.js';
+// 多选未提交的勾选自动保存（useDraft 'choice'，学生输入自动保存规格 §2.4）；提交成功后清掉。
+import { useEffect, useRef } from 'react';
+import { useStudentStage, useNarrow, useDraft, Btn, Chip, Page, Row, Stack, Tiles } from '#kernel/client/index.js';
 import PromptText from '../_shared/PromptText.jsx';
 import { formatChoice, orderKeys, toKeys } from './choices.js';
 
@@ -27,11 +28,18 @@ export function columnsFor(n, narrow) {
 const tileMin = (k) => `calc((100% - ${k - 1} * var(--sp-3)) / ${k})`;
 
 export default function Student({ stageId } = {}) {
-  const { options, myData, classData, isLive, readOnly, send } = useStudentStage(stageId);
+  const { stage, options, myData, classData, isLive, readOnly, send } = useStudentStage(stageId);
   const narrow = useNarrow();
-  const [draft, setDraft] = useState(null);
+  const [draftRaw, setDraft, { clear: clearDraft }] = useDraft('choice', null, { stageId: stageId ?? stage?.id });
+  const draft = Array.isArray(draftRaw) ? draftRaw.filter((k) => typeof k === 'string') : null;
   const submittedAt = myData?.submittedAt ?? null;
-  useEffect(() => setDraft(null), [submittedAt]);
+  // 提交成功（submittedAt 变了）后清草稿；挂载时不清
+  const seenAt = useRef(submittedAt);
+  useEffect(() => {
+    if (seenAt.current === submittedAt) return;
+    seenAt.current = submittedAt;
+    if (submittedAt != null) clearDraft();
+  }, [submittedAt, clearDraft]);
 
   if (!options) return <Page template="focus" />;
 

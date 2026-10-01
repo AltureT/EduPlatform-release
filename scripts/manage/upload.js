@@ -1,4 +1,4 @@
-// 上传文件的读取（M4 课程页"上传教学设计"，multipart/form-data）
+// 上传文件的读取（M4 课程列表（第 1 步）"上传教案"，multipart/form-data）
 //   readUpload(req, { maxBytes, field = 'file' }) → { filename, data: Buffer }
 //   不加依赖：把 Node 的请求流转成 Web 流，交给 Node 自带的 Request#formData()（undici 的 multipart 解析）；
 //   名单上传不经服务端（页面读文本后走"粘贴"同一路径，管理台规格 §4.4），没有可复用的解析。
