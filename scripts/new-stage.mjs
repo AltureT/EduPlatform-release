@@ -3,11 +3,13 @@
 //   在 stagesDir 下生成 NN-<id>/（NN 为新阶段在课堂顺序里的序号，两位补零），并写进 lesson.config.js 的 stages
 //   （文本改写，保留注释；--after 时插在该目录之后）：
 //   - STAGE.md：阶段卡格式（docs/01-阶段卡格式.md）第四部分的阶段卡五栏 + 标题填 label + **匹配原语**：<primitive>
-//   - 原语阶段：stage.config.js 从 primitives/<type>/README.md 的示例复制，id / label 换掉，options 里的示例值全部标 TODO
-//     （字符串加 TODO： 前缀；键 / 枚举 / 选项键答案保留原值、行尾加 TODO 注释，见 markExampleValues）；
-//     示例里 { from: './x' } 引用的文件生成占位；原语需要的组件（requiresComponents）不在 components 里时自动加上
+//   - 原语阶段：stage.config.js 从 primitives/<type>/README.md 的示例复制，id / label 换掉，options 里的示例值全部换成 TODO 占位
+//     （内容字符串换成 TODO：《<段 label>》的<键名>（还没填）、数组按位置编号，不留示例原文；键 / 枚举 / 选项键答案保留原值、
+//     行尾加 TODO 注释，见 markExampleValues）；示例里 { from: './x' } 引用的文件生成占位（starter 指向本段）；原语需要的组件（requiresComponents）不在 components 里时自动加上
 //   - none：stage.config.js（对象字面量，layout 'focus'、gate 放行、collect 空）、server.js（空 register）、
 //     Student.jsx（根 <Page template="focus">）、TeacherStats.jsx（契约 §四：统计视图不是 <Page>，只放 AlertBar + DataTable）、
+//     T9a：不生成 TeacherDemo.jsx（教师演示视图就是这一段的学生页；Student.jsx 注释写怎样处理 demo）；TeacherActions.jsx（教师操作条按钮）可选，
+//     TeacherStats.jsx 注释里说明，不生成文件
 //     __tests__/server.test.js 与 simulate.js 最小可跑骨架，全部带 TODO： 注释指向契约章节
 //   生成后在 worker 线程里跑一次 check:lesson 并打印结果（新骨架应只有 TODO 警告；code 骨架另有一条"有测试但没有参考答案"）
 //   newStage({ root, lesson, id, label, primitive, after?, quiet?, checkTests? }) → { dirName, absDir, files, addedComponents, check }
@@ -49,21 +51,65 @@ export function readmeExample(primitivesRoot, type) {
   return block;
 }
 
-// P4：options 区里的示例值一律标出来，check:lesson 的 TODO 警告才能报出"示例没改"——
-//   - 字符串值（中文、英文、数字都算，如 choices: ['21', …]）加 TODO： 前缀；
-//   - 值有固定格式的键（标识符 / 枚举 / 文件名，以及 A–H 的选项键答案）加了前缀会通不过 options 校验：保留原值，行尾加 // TODO 注释；
+// P4 / S8：options 区里的示例值一律换掉或标出来，check:lesson 的 TODO 警告才能报出"还没填"——
+//   - 内容字符串不复制示例原文（S8：教师课上看到示例题会以为题目做错了），换成指向本段的占位：
+//     键值 → TODO：《<段 label>》的<中文键名>（还没填）（键名表 KEY_NAMES，表外的键用键名原文）；
+//     数组里的字符串按位置编号：choices → TODO：选项 1…，requirements / tasks → TODO：要求 1…，其它 → TODO：第 1 项…（个数与示例相同）；
+//     对象数组按位置编号：第 n 个元素里的 prompt / question / text / title → TODO：《<段 label>》第 n 题的题目（还没填），
+//     explain / hint 等 → 第 n 题的解析 / 提示；requirements / tasks 的元素 { text, hint } → text 是"要求 n"、hint 是"要求 n 的提示"；
+//     元素里的 label（starter 的版本名限 12 字）写成 TODO：名称 1…；
+//     代码键（code / starter）写成 Python 注释 # TODO：《<段 label>》的起始代码（还没填）；
+//   - 值有固定格式的键（标识符 / 枚举 / 文件名，以及 A–H 的选项键答案）换了会通不过 options 校验：保留原值，行尾加 // TODO 注释；
 //     answer 写成布尔（判断题）同样加注释；
 //   - from 引用的文件另外生成 TODO 占位，不再标；对象的键（'test_main.py': …）不是值，不动；模板字符串不动。
 const KEEP_KEYS = new Set(['id', 'key', 'type', 'showResultTo', 'path']);
 const SKIP_KEYS = new Set(['from']);
 const ANSWER_KEY_RE = /^[A-H]$/;
+export const KEY_NAMES = {
+  prompt: '题目', title: '标题', question: '问题', text: '正文', explanation: '解析', explain: '解析', hint: '提示',
+  description: '说明', placeholder: '输入提示', label: '名称', code: '起始代码',
+};
+const ARRAY_ITEM_NAMES = { choices: '选项', requirements: '要求', tasks: '要求' };
+const CODE_KEYS = new Set(['code', 'starter']);
+const QUESTION_KEYS = new Set(['prompt', 'question', 'text', 'title']);
+const nameOf = (table, key) => (key != null && Object.hasOwn(table, key) ? table[key] : null);
+const positional = (arrayKey, n) => {
+  const name = nameOf(ARRAY_ITEM_NAMES, arrayKey);
+  return name ? `TODO：${name} ${n}` : `TODO：第 ${n} 项`;
+};
 
-export function markExampleValues(text) {
+export function markExampleValues(text, { label = '本段' } = {}) {
   let out = '';
-  const stack = [];           // 每层 { 或 [ 所属的键（数组元素、嵌套对象沿用）
+  // 每层 { 或 [：key 所属的键（数组元素、嵌套对象沿用）、array、pos 数组里当前元素的位置、elemOf 作为数组元素时所在的数组与位置
+  const stack = [];
   const kept = new Set();     // 本行保留原值的键
   let pendingKey = null;      // 最近的 "键:"，直到遇到它的值
-  const keyNow = () => pendingKey ?? (stack.length ? stack[stack.length - 1] : null);
+  const top = () => stack[stack.length - 1] ?? null;
+  const keyNow = () => pendingKey ?? top()?.key ?? null;
+  const quote = (q, s) => q + s.replaceAll('\\', '\\\\').replaceAll(q, `\\${q}`) + q;
+  const placeholder = () => {
+    const t = top();
+    if (pendingKey === null && t?.array) return positional(t.key, t.pos + 1);
+    const key = keyNow();
+    // 代码键（starter / code）写成 Python 注释：学生打开代码区看到的是一行注释，不是一行普通文字
+    if (CODE_KEYS.has(key)) return `# TODO：《${label}》的起始代码（还没填）`;
+    const elem = t && !t.array ? t.elemOf : null;
+    if (elem && pendingKey !== null) {
+      const n = elem.pos + 1;
+      // 数组元素里的 label（code 的 starter: [{ label: 1–12 字、不重复 }]）放不下《段名》：写成 TODO：名称 1、TODO：名称 2…
+      if (pendingKey === 'label') return `TODO：${KEY_NAMES.label} ${n}`;
+      const item = nameOf(ARRAY_ITEM_NAMES, elem.key);
+      if (item) {
+        // choices / requirements / tasks 的 { text, hint }：text 是"选项 n / 要求 n"，其余键写"要求 n 的<键名>"
+        if (pendingKey === 'text') return positional(elem.key, n);
+        return `TODO：《${label}》${item} ${n} 的${nameOf(KEY_NAMES, key) ?? key}（还没填）`;
+      }
+      // 其它对象数组（quiz 的 items、free-text 的 prompts…）：按位置写"第 n 题"，几题不会一模一样
+      const name = QUESTION_KEYS.has(key) ? '题目' : (nameOf(KEY_NAMES, key) ?? key);
+      return `TODO：《${label}》第 ${n} 题的${name}（还没填）`;
+    }
+    return `TODO：《${label}》的${nameOf(KEY_NAMES, key) ?? key ?? '内容'}（还没填）`;
+  };
   const endLine = () => {
     if (kept.size) out += ` // TODO：核对 ${[...kept].join(' / ')}（还是示例值）`;
     kept.clear();
@@ -93,12 +139,12 @@ export function markExampleValues(text) {
         continue;
       }
       const key = keyNow();
-      pendingKey = null;
       if (c === '`' || SKIP_KEYS.has(key) || body.startsWith('TODO')) out += raw;
       else if (KEEP_KEYS.has(key) || (key === 'answer' && ANSWER_KEY_RE.test(body))) {
         out += raw;
         kept.add(key);
-      } else out += `${c}TODO：${body}${c}`;
+      } else out += quote(c, placeholder());
+      pendingKey = null;
     } else if (/[A-Za-z_$]/.test(c)) {
       const word = /^[A-Za-z_$][\w$]*/.exec(text.slice(i))[0];
       if (/^\s*:/.test(text.slice(i + word.length))) pendingKey = word;
@@ -110,12 +156,17 @@ export function markExampleValues(text) {
       i += word.length;
     } else {
       if (c === '{' || c === '[') {
-        stack.push(keyNow());
+        const t = top();
+        const elemOf = pendingKey === null && t?.array ? { key: t.key, pos: t.pos } : null;
+        stack.push({ key: keyNow(), array: c === '[', pos: 0, elemOf });
         pendingKey = null;
       } else if (c === '}' || c === ']') {
         stack.pop();
         pendingKey = null;
-      } else if (c === ',') pendingKey = null;
+      } else if (c === ',') {
+        if (top()?.array) top().pos += 1;
+        pendingKey = null;
+      }
       out += c;
       i += 1;
     }
@@ -129,20 +180,20 @@ export function primitiveConfigSource(block, { type, id, label }) {
   src = src.replace(/(\bid\s*:\s*)(['"])(?:(?!\2)[^\\\n]|\\.)*\2/, (_m, k) => `${k}${quoteJs(id)}`);
   src = src.replace(/(\blabel\s*:\s*)(['"])(?:(?!\2)[^\\\n]|\\.)*\2/, (_m, k) => `${k}${quoteJs(label)}`);
   const at = src.search(/\boptions\s*:/);
-  if (at !== -1) src = src.slice(0, at) + markExampleValues(src.slice(at));
+  if (at !== -1) src = src.slice(0, at) + markExampleValues(src.slice(at), { label });
   return `// ${label}：用原语 ${type}，options 见 primitives/${type}/README.md（npm run new:stage 从其示例复制）。
 // TODO：把带 TODO 的占位换成本课内容（照同目录 STAGE.md 阶段卡），改完跑 npm run check:lesson
 ${src}`;
 }
 
-function placeholderFor(rel) {
+function placeholderFor(rel, label) {
   const base = path.posix.basename(rel);
   if (rel.endsWith('.py')) {
     if (/^test_/.test(base) || /(^|\/)tests\//.test(rel)) {
       return '# TODO：检查学生代码的 pytest 测试（学生看得到，不要当保密判分依据）\n\n\ndef test_placeholder():\n    assert True\n';
     }
     if (/solution/.test(base)) return '# TODO：参考答案（保密选项，只发教师；演示页点"显示参考答案"才上大屏）\n';
-    return '# TODO：学生打开时看到的初始代码\n';
+    return `# TODO：《${label}》的起始代码（还没填）\n`;
   }
   if (rel.endsWith('.csv')) return '列1,列2\nTODO,0\n';
   return 'TODO：\n';
@@ -186,6 +237,8 @@ export default {
 export function register(ctx) {}
 `,
     'Student.jsx': `// ${label} 的学生视图（契约 §四"页面与布局"）：根为 <Page>，主按钮放 <Page.Actions>，不写固定尺寸与定位。
+// 教师端的"演示视图"就是这一页（教师演示模式）：useStudentStage() 返回 demo 为真时 send 不发事件（相当于只读预览）；
+// 要让老师当众演示点选 / 提交，就在 demo 时改用 setMyData({ … }) 写本地演示记录（契约 §四 useStudentStage）
 // TODO：按阶段卡 A / B 栏写学生屏幕的内容
 import { useStudentStage, Page } from '#kernel/client/index.js';
 
@@ -201,6 +254,9 @@ export default function Student() {
 }
 `,
     'TeacherStats.jsx': `// ${label} 的教师统计视图（契约 §四）：外壳已套 table 模板，这里只放 AlertBar + DataTable + DetailModal，不是 <Page>、不放推进按钮。
+// "统计视图"与"明细表"两个视图都渲染它（useTeacherStage().view 为 'stats' / 'table'，不区分时两边显示相同内容）。
+// 揭晓、取消展示这类教师按钮写在同目录可选的 TeacherActions.jsx（export default function TeacherActions({ stageId })，
+// 返回一组按钮），外壳放在三个视图的操作条上；不需要就不写
 // TODO：按阶段卡 D 栏定列
 import { useState } from 'react';
 import { useTeacherStage, AlertBar, DataTable, DetailModal } from '#kernel/client/index.js';
@@ -324,7 +380,7 @@ export async function newStage({
     files['stage.config.js'] = cfg;
     for (const m of cfg.matchAll(/\bfrom\s*:\s*'(\.\/[^']+)'/g)) {
       const rel = path.posix.normalize(m[1]);
-      if (!rel.startsWith('..')) files[rel] = placeholderFor(rel);
+      if (!rel.startsWith('..')) files[rel] = placeholderFor(rel, label.trim());
     }
     const open = componentIdsOf(lessonConfig);
     for (const cid of def?.requiresComponents ?? []) {

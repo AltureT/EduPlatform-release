@@ -16,6 +16,7 @@ import { coreStudentStore } from '#kernel/client/stores/coreStudentStore.js';
 import { coreTeacherStore } from '#kernel/client/stores/coreTeacherStore.js';
 import { resetSlices } from '#kernel/client/stores/stageStores.js';
 import { resetComponentSlices } from '#kernel/client/stores/componentRegistry.js';
+import { resetDemoRecords } from '#kernel/client/demo/demoStore.js';
 import { KernelRoleContext } from '#kernel/client/hooks/roleContext.js';
 
 function normalizeComponents(list) {
@@ -90,6 +91,7 @@ export function renderWithKernel(ui, opts = {}) {
   store.getState().connect(); // 绑定监听器（connect 已被替换为空操作，不会连网）
   resetSlices();
   resetComponentSlices();
+  resetDemoRecords();   // T9a：教师演示模式的本地记录
 
   const common = {
     stage,

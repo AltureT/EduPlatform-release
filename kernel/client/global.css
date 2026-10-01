@@ -178,3 +178,14 @@ body {
 .aside-row:empty {
   display: none;
 }
+
+/* 教师课前页的组件状态行（T9a teacherPrelogin）：每个组件一行；提供者返回 null 时不占位 */
+.prelogin-row {
+  flex-shrink: 0;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--ink-soft);
+}
+.prelogin-row:empty {
+  display: none;
+}

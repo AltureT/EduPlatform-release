@@ -2,8 +2,11 @@
 // 列：姓名 / 已提交 / 选项 / 正确（有 answer）/ 提交时间；摘要：提交 N/M（在线）、（有 answer）答对 N / 已作答 M；点行看该生记录。
 // "正确"按 options.answer 现算（教师收到完整 options；记录里的 correct 要到揭晓时才写）。
 // 摘要的"答对 / 已作答"含离线学生，与门槛（在线口径）不是同一个数，故不叫"正确率"。
+// T9a（教师视图与学生页重排规格 §2.3）：统计视图摘要区 = Summary.jsx（原演示视图主体：题目、选项人数柱状、点选项看名单、揭晓后正确项高亮）；
+// 明细表 = 学生表。
 import { useTeacherStage, Stack } from '#kernel/client/index.js';
 import StatsPage from '../_shared/StatsPage.jsx';
+import Summary from './Summary.jsx';
 import { formatChoice, isCorrect, orderKeys, toKeys } from './choices.js';
 
 const fmtTime = (ts) => (ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }) : '—');
@@ -51,5 +54,5 @@ export default function TeacherStats({ stageId } = {}) {
     </Stack>
   );
 
-  return <StatsPage stageId={id} columns={columns} summary={summary} rowDetail={rowDetail} />;
+  return <StatsPage stageId={id} columns={columns} summary={summary} rowDetail={rowDetail} summaryBlock={<Summary stageId={id} />} />;
 }

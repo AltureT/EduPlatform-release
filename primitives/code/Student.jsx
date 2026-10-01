@@ -1,7 +1,9 @@
 // code 学生视图：split 模板（Main : Side = 3 : 1；P5：宽屏题目在左、三栏（题目 | 代码 | 输出）可拖宽）。Side 放标题为"题目"的 Tile：题目正文（空行分段）+ 要求清单（本地勾选，自检用，不采集；
 // P6：_shared/TaskList，与 data-analysis 的任务清单共用，{ text, hint } 条目下可展开"提示 ▾"）
-// + 底部"上交最终稿"（_shared/FinalSubmit：确认后发 student:code-final，载荷 = 当前代码 + 最近一次运行结果，代码在那次运行后改过则带 stale）；
-// 窄屏时"上交最终稿"与状态放 Page.Actions（折叠题目不会把它收掉）；只读（回看 / 镜像）时只留状态行；
+// "上交最终稿"（_shared/FinalSubmit：确认后发 student:code-final，载荷 = 当前代码 + 最近一次运行结果，代码在那次运行后改过则带 stale）：
+// T9b（教师视图与学生页重排规格 §2.4）宽屏放代码框下方工具栏最右（FinalSubmit compact 经 PyRunner 的 toolbarEnd），Side 底部不再放；
+// 窄屏时"上交最终稿"与状态放 Page.Actions（折叠题目不会把它收掉）；只读（回看 / 镜像）时只留状态行（宽屏同样在 toolbarEnd）；
+// 还在"选一个起点"页（没有 PyRunner）时宽窄屏都不显示上交；
 // P5 回看（代码段布局与回看规格 §6）：原语缺省 reviewInteractive，回看段能滚动、勾选、编辑、运行、测试，但不发记录、不能上交；
 // 操作条第一个 Chip 为"回看 · 运行不记录"（镜像只读时不显示），已有记录时"已记录 …"仍在后面。
 // Main 放 sandbox 的 <PyRunner>（运行 / 停止 / 测试；代码 / 输出小标题）。每次运行或测试结束自动用 buildRecord 发 student:code-submit，
@@ -24,6 +26,9 @@
 // D1（学生输入自动保存规格 §2.4）：要求勾选 useDraft('checked', [])；代码除 PyRunner 的本地草稿外，另用 useDraft('code', null, { local: false })
 // 只走服务端层（换设备 / 清站点数据也能回填）。起始代码取值链：本地 sandbox 草稿（PyRunner 挂载时交回）→ 服务端 code 草稿 →
 // myData.final?.code ?? myData.code → 起点（starter）；PyRunner onChange 同时写服务端草稿（≤ 20000 字）；换起点 / 选起点后不再回落到旧代码。
+// T9a 教师演示模式（教师视图与学生页重排规格 §2.2；useStudentStage().demo）：Side 题目与要求照常（勾选本地）、已公布的参考答案照常；
+// Main 为 _shared/DemoTools 的 <DemoRunner>（<PyRunner role="teacher">，代码存本地演示记录，工具栏右端：起点下拉 + 载入起始代码 /
+// 载入参考答案 / 下发给学生 / 已下发 HH:MM · 撤回）；没有选择页、"上交最终稿"、"换起点"、"老师发来一份代码"，操作条不放东西。
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, useNarrow, useDraft, Btn, Chip, Overlay, Page, Stack, Tile } from '#kernel/client/index.js';
 import { STARTER_PENDING, clearDraft, draftKey, readDraft, readStarter, starterKey, writeStarter } from '#components/sandbox/client/ui/draftStorage.js';
@@ -34,6 +39,7 @@ import TaskList from '../_shared/TaskList.jsx';
 import StarterPicker from './StarterPicker.jsx';
 import { PushedCodeOffer, usePushedCode } from '../_shared/PushedCode.jsx';
 import { PUSHED_LABEL } from '../_shared/pushCode.js';
+import DemoRunner from '../_shared/DemoTools.jsx';
 
 const fmtTime = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
 const paragraphs = (text) => String(text ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
@@ -44,7 +50,7 @@ const passedAll = (t) => !!t && t.total > 0 && t.failed + t.errors === 0;
 const noShrink = { flexShrink: 0, display: 'flex', flexDirection: 'column' };
 
 export default function Student({ stageId } = {}) {
-  const { stage, options, isLive, readOnly, myData, classData, send } = useStudentStage(stageId);
+  const { stage, options, isLive, readOnly, myData, classData, send, demo } = useStudentStage(stageId);
   const narrow = useNarrow();
   const id = stageId ?? stage?.id;
   const sandbox = stage?.sandbox ?? null;
@@ -90,7 +96,7 @@ export default function Student({ stageId } = {}) {
   const genRef = useRef(0);   // 换起点世代：每换一次 +1
   const gen = genRef.current;
   const current = pick === undefined ? initialPick : pick;
-  const picking = !!starters && !readOnly && current == null;
+  const picking = !!starters && !readOnly && !demo && current == null;
   const chosenLabel = starters && current?.label ? current.label : null;
   const chosenCode = chosenLabel ? starters.find((x) => x.label === chosenLabel)?.code : undefined;
   const baseCode = typeof chosenCode === 'string' ? chosenCode : sandbox?.starter ?? '';
@@ -210,28 +216,46 @@ export default function Student({ stageId } = {}) {
     );
   }
 
+  const side = (
+    <>
+      <div style={noShrink}>
+        <Tile title={narrow ? undefined : '题目'}>
+          <Stack gap={3}>
+            <div data-testid="code-prompt">
+              {paragraphs(options.prompt).map((p, i) => (
+                <p key={i} style={{ margin: '0 0 var(--sp-2)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{p}</p>
+              ))}
+            </div>
+            <TaskList items={requirements} note="要求（自己检查，勾选不会上交）" checked={checked} onToggle={toggle} testId="code-requirements" />
+          </Stack>
+        </Tile>
+      </div>
+      {typeof classData?.solution === 'string' && classData.solution !== '' && (
+        <div style={noShrink}>
+          <SolutionPanel solution={classData.solution} />
+        </div>
+      )}
+    </>
+  );
+
+  if (demo) {
+    // 演示模式：起点是 options.starters（≥ 2 份）或本段 starter
+    const demoStarters = starters ?? [{ label: '起始代码', code: options.starter ?? sandbox?.starter ?? '' }];
+    return (
+      <Page template="split" ratio="3:1" side="left" resizable sideLabel="题目" title={stage?.label}>
+        <Page.Side>{side}</Page.Side>
+        <Page.Main>
+          {sandbox && id
+            ? <DemoRunner stageId={id} starters={demoStarters} solution={options.solution} />
+            : <div style={{ color: 'var(--ink-dim)' }}>正在准备运行环境…</div>}
+        </Page.Main>
+      </Page>
+    );
+  }
+
   return (
     <Page template="split" ratio="3:1" side="left" resizable sideLabel="题目" title={stage?.label}>
-      <Page.Side>
-        <div style={noShrink}>
-          <Tile title={narrow ? undefined : '题目'}>
-            <Stack gap={3}>
-              <div data-testid="code-prompt">
-                {paragraphs(options.prompt).map((p, i) => (
-                  <p key={i} style={{ margin: '0 0 var(--sp-2)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{p}</p>
-                ))}
-              </div>
-              <TaskList items={requirements} note="要求（自己检查，勾选不会上交）" checked={checked} onToggle={toggle} testId="code-requirements" />
-              {!narrow && <FinalSubmit {...finalProps} />}
-            </Stack>
-          </Tile>
-        </div>
-        {typeof classData?.solution === 'string' && classData.solution !== '' && (
-          <div style={noShrink}>
-            <SolutionPanel solution={classData.solution} />
-          </div>
-        )}
-      </Page.Side>
+      <Page.Side>{side}</Page.Side>
       <Page.Main>
         {picking ? (
           <StarterPicker
@@ -249,6 +273,7 @@ export default function Student({ stageId } = {}) {
             onResult={onResult}
             onTest={onTest}
             onRestore={onRestore}
+            toolbarEnd={narrow ? undefined : <FinalSubmit {...finalProps} compact />}
           />
         ) : (
           <div style={{ color: 'var(--ink-dim)' }}>正在准备运行环境…</div>
@@ -261,7 +286,7 @@ export default function Student({ stageId } = {}) {
         {starters && !picking && isLive && !readOnly && (
           <Btn variant="soft" size="sm" onClick={() => setConfirmSwitch(true)}>换起点</Btn>
         )}
-        {narrow && <FinalSubmit {...finalProps} inline />}
+        {narrow && !picking && <FinalSubmit {...finalProps} inline />}
         {confirmSwitch && (
           <Overlay variant="dialog" testId="starter-switch-confirm" label="换起点" onDismiss={() => setConfirmSwitch(false)}>
             <Stack gap={4}>

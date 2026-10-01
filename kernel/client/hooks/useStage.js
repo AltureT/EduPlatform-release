@@ -15,12 +15,22 @@
 // - v0.8：两个 hook 都返回 options（classroom:state.stages[i].options，非原语阶段 null）；stage 为有效 config（stage.options 同值）。
 //   id 可缺省：取外壳为本视图提供的阶段（PageStageContext.config.id）——原语的默认视图不知道自己被哪个阶段使用，
 //   用 useStudentStage() / useTeacherStage() 取当前视图所属阶段（活动原语规格 §2.4）。
+// - T9a 教师演示模式（教师视图与学生页重排规格 §2.2）：处于 DemoContext（教师外壳演示视图的 <DemoProvider>）内、且不在镜像里时，
+//   useStudentStage 返回 demo: true、readOnly: false、me { name: '老师' }、options = 教师端完整 options（含保密项）、
+//   classData = 教师端该段班级记录（perClass，取 liveStageData：统计暂停也照常）、isLive / subPhase 取教师 store、
+//   myData = 本地演示记录、setMyData(patch)（只在 demo 下有：对象浅合并 / 函数整条替换 / null 删除；内存按 classEpoch + 段 id，
+//   换段保留、classroom:reset 清空，见 demo/demoStore.js）、send = no-op 并 console.info（原语在演示模式自己处理）、slice = 该段学生切片 initial。
+//   其余情况返回 demo: false、没有 setMyData
+// - T9a：useTeacherStage 另返回 view——外壳为本视图给的视图名（PageStageContext.view：'stats' 统计视图 / 'table' 明细表 / 'demo' 旧式演示视图），
+//   不在教师外壳里时 null；TeacherStats 据此在统计视图放摘要区、在明细表放学生表（不区分也行，两种视图显示相同内容）
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { socket } from '../socket.js';
 import { coreStudentStore } from '../stores/coreStudentStore.js';
 import { coreTeacherStore } from '../stores/coreTeacherStore.js';
 import { effectiveStageConfig, getStageRegistry, useStageSlices } from '../stores/stageStores.js';
 import { MirrorContext } from '../mirror/mirrorContext.js';
+import { DemoContext } from '../demo/demoContext.js';
+import { demoKey, setDemoRecord, useDemoRecords } from '../demo/demoStore.js';
 import { PageStageContext } from '../layout/pageContext.js';
 import { useKernelRole } from './roleContext.js';
 
@@ -84,6 +94,12 @@ function mirrorSend(event) {
   console.warn(`[mirror] 镜像为只读，忽略 send(${JSON.stringify(event)})`);
 }
 
+function demoSend(event) {
+  console.info(`[demo] 教师演示模式不发事件，忽略 send(${JSON.stringify(event)})`);
+}
+
+const DEMO_ME = Object.freeze({ name: '老师' });
+
 function initialStudentSlice(id) {
   const entry = getStageRegistry().byId[id];
   const def = entry && entry.store && entry.store.student;
@@ -102,6 +118,29 @@ export function useStudentStage(stageId) {
   const myData = coreStudentStore((s) => s.myStageData[id]);
   const classData = coreStudentStore((s) => s.classData[id]);
   const slice = useStageSlices((s) => s.student[id]);
+  const demoCtx = useContext(DemoContext);
+  const demoOn = !!demoCtx && !mirror;
+  const key = demoKey(null, id);
+  const demoRecord = useDemoRecords((s) => (demoOn ? s.records[key] : undefined));
+  const teacherClass = coreTeacherStore((s) => (demoOn ? s.liveStageData[id]?.perClass : undefined));
+  const setMyData = useCallback((patch) => setDemoRecord(key, patch), [key]);
+  if (demoOn) {
+    const demoLive = id === teacherStage;
+    return {
+      stage,
+      subPhase: demoLive ? teacherSubPhase : null,
+      isLive: demoLive,
+      me: DEMO_ME,
+      myData: demoRecord,
+      setMyData,
+      classData: teacherClass ?? EMPTY,
+      send: demoSend,
+      slice: initialStudentSlice(id),
+      readOnly: false,
+      demo: true,
+      options,
+    };
+  }
   if (mirror) {
     const cur = role === 'teacher' ? teacherStage : liveStage;
     const sp = role === 'teacher' ? teacherSubPhase : liveSubPhase;
@@ -116,6 +155,7 @@ export function useStudentStage(stageId) {
       send: mirrorSend,
       slice: initialStudentSlice(id),
       readOnly: true,
+      demo: false,
       options,
     };
   }
@@ -130,6 +170,7 @@ export function useStudentStage(stageId) {
     send: studentSend,
     slice,
     readOnly: false,
+    demo: false,
     options,
   };
 }
@@ -201,6 +242,8 @@ function useAlerts(isLive, defs, roster, perStudent) {
 
 export function useTeacherStage(stageId) {
   const { id, stage, options } = useStageConfig(stageId, 'teacher');
+  const pageCtx = useContext(PageStageContext);
+  const view = (pageCtx && typeof pageCtx.view === 'string' && pageCtx.view !== 'student') ? pageCtx.view : null;
   const liveStage = coreTeacherStore((s) => s.stage);
   const liveSubPhase = coreTeacherStore((s) => s.subPhase);
   const roster = coreTeacherStore((s) => s.roster);
@@ -222,5 +265,6 @@ export function useTeacherStage(stageId) {
     slice,
     alerts,
     options,
+    view,
   };
 }

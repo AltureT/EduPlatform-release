@@ -89,8 +89,11 @@ const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、
 // 13 课程组件：契约 §八的槽位名（与 kernel/client/stores/componentRegistry.js 的 SLOT_NAMES 一致，测试核对）
 export const CONTRACT_SLOTS = [
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
-  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside',
+  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside', 'studentDock', 'teacherPrelogin',
 ];
+// slots 里的元数据键（不是槽位、不渲染；与 componentRegistry.js 的 SLOT_META 一致）：T9b dockTitle（studentDock 面板标题）、
+// T9a teacherToolbarOrder（teacherToolbar 先后）
+export const CONTRACT_SLOT_META = ['dockTitle', 'teacherToolbarOrder'];
 const COMPONENT_DOC = 'docs/06-组件契约.md';
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1276,7 +1279,7 @@ async function checkLessonComponents({ root, componentsRoot, openIds, error, war
     if (has('client.jsx')) {
       const src = readText(at('client.jsx')) ?? '';
       for (const { name, line } of slotNamesIn(src)) {
-        if (CONTRACT_SLOTS.includes(name)) continue;
+        if (CONTRACT_SLOTS.includes(name) || CONTRACT_SLOT_META.includes(name)) continue;
         err(at('client.jsx'), line, `slots 里的 ${name} 不是平台的槽位，不会显示`,
           `改成 ${CONTRACT_SLOTS.join(' / ')} 之一（${CONTRACT} §八）`, 'lesson-component');
       }

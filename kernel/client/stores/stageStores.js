@@ -18,22 +18,25 @@ import { createElement } from 'react';
 import { create } from 'zustand';
 import stageGlob, * as globModule from './stageGlob.js';
 
-const FILE_RE = /([^/\\]+)[/\\](stage\.config\.js|Student\.jsx|TeacherDemo\.jsx|TeacherStats\.jsx|store\.js)$/;
+// T9a（教师视图与学生页重排规格 §2.2）：TeacherActions.jsx（教师操作条按钮，可选）与三个视图同规则——阶段目录有同名文件则整体替换原语的
+const FILE_RE = /([^/\\]+)[/\\](stage\.config\.js|Student\.jsx|TeacherDemo\.jsx|TeacherStats\.jsx|TeacherActions\.jsx|store\.js)$/;
 const FIELD = {
   'stage.config.js': 'config',
   'Student.jsx': 'Student',
   'TeacherDemo.jsx': 'TeacherDemo',
   'TeacherStats.jsx': 'TeacherStats',
+  'TeacherActions.jsx': 'TeacherActions',
   'store.js': 'store',
 };
-const PRIMITIVE_FILE_RE = /([^/\\]+)[/\\](primitive\.config\.js|Student\.jsx|TeacherDemo\.jsx|TeacherStats\.jsx)$/;
+const PRIMITIVE_FILE_RE = /([^/\\]+)[/\\](primitive\.config\.js|Student\.jsx|TeacherDemo\.jsx|TeacherStats\.jsx|TeacherActions\.jsx)$/;
 const PRIMITIVE_FIELD = {
   'primitive.config.js': 'config',
   'Student.jsx': 'Student',
   'TeacherDemo.jsx': 'TeacherDemo',
   'TeacherStats.jsx': 'TeacherStats',
+  'TeacherActions.jsx': 'TeacherActions',
 };
-const VIEWS = ['Student', 'TeacherDemo', 'TeacherStats'];
+const VIEWS = ['Student', 'TeacherDemo', 'TeacherStats', 'TeacherActions'];
 const HOOK_OVERRIDE = ['gate', 'recommend', 'score', 'summarize'];
 export const BUILTIN_STAGE_IDS = ['prelogin', 'curtain'];
 
@@ -54,7 +57,7 @@ export function discoverPrimitives(modules = defaultPrimitiveModules()) {
     if (!m) continue;
     const [, type, file] = m;
     if (type.startsWith('_')) continue;
-    if (!byType[type]) byType[type] = { type, config: null, Student: null, TeacherDemo: null, TeacherStats: null };
+    if (!byType[type]) byType[type] = { type, config: null, Student: null, TeacherDemo: null, TeacherStats: null, TeacherActions: null };
     byType[type][PRIMITIVE_FIELD[file]] = mod && 'default' in mod ? mod.default : null;
   }
   return byType;
@@ -71,7 +74,7 @@ export function discoverStages(modules = stageGlob, primitiveModules = defaultPr
     if (!m) continue;
     const [, dir, file] = m;
     if (!byDir[dir]) {
-      byDir[dir] = { dir, config: null, Student: null, TeacherDemo: null, TeacherStats: null, store: null };
+      byDir[dir] = { dir, config: null, Student: null, TeacherDemo: null, TeacherStats: null, TeacherActions: null, store: null };
     }
     byDir[dir][FIELD[file]] = mod && 'default' in mod ? mod.default : null;
   }
@@ -190,7 +193,7 @@ export function assembleStages(publicStages, registry = getStageRegistry()) {
   if (!Array.isArray(publicStages)) return [];
   return publicStages.map((s) => {
     const id = s && s.id;
-    const base = { id, label: s ? s.label : '', config: null, Student: null, TeacherDemo: null, TeacherStats: null, slice: null };
+    const base = { id, label: s ? s.label : '', config: null, Student: null, TeacherDemo: null, TeacherStats: null, TeacherActions: null, slice: null };
     if (BUILTIN_STAGE_IDS.includes(id)) return base;
     const entry = registry.byId[id];
     if (!entry) {
@@ -209,6 +212,7 @@ export function assembleStages(publicStages, registry = getStageRegistry()) {
       Student: entry.Student || makePlaceholder(id, 'Student.jsx'),
       TeacherDemo: entry.TeacherDemo || null,
       TeacherStats: entry.TeacherStats || makePlaceholder(id, 'TeacherStats.jsx'),
+      TeacherActions: entry.TeacherActions || null,
       slice: entry.store || null,
     };
   });

@@ -1,5 +1,7 @@
 // mirror 客户端（规格 §3.1）：本地状态 slice = { target: name | null }，只用 setLocal，不走 socket
 // 布局（界面整理规格 §2.3 / §3）：下拉走内核 Overlay 的 menu 形态；镜像主区是 <Fill>，撑满外壳内容区
+// T9a（教师视图与学生页重排规格 §2.1）：teacherToolbar 不再在顶栏，宽屏在操作条左组、紧跟视图切换（slots.teacherToolbarOrder = -10），
+// 窄屏照旧在"更多 ▾"菜单——两处都与操作条其它按钮同高（md）
 import { useEffect, useState } from 'react';
 import {
   useComponent,
@@ -12,7 +14,6 @@ import {
   Fill,
   Row,
   Overlay,
-  useNarrow,
 } from '#kernel/client/index.js';
 
 function useMirror(stageId) {
@@ -43,8 +44,8 @@ function mirrorLabel(target, offline) {
 function TeacherToolbar({ stageId, isLive }) {
   const { comp, target, online, offline } = useMirror(stageId);
   const [open, setOpen] = useState(false);
-  // 顶栏芯片用 sm；narrow 时 toolbar 收进操作条"更多 ▾"菜单，不在顶栏，用 md（界面整理规格 §4）
-  const chipSize = useNarrow() ? 'md' : 'sm';
+  // T9a：宽屏在操作条、窄屏在"更多 ▾"菜单，都用 md
+  const chipSize = 'md';
 
   if (isLive === false || !comp.isEnabledFor(stageId)) return null;
 
@@ -132,6 +133,8 @@ export default {
   slots: {
     teacherToolbar: TeacherToolbar,
     teacherMain: TeacherMain,
+    // T9a：操作条里排在其它组件工具之前（数字小的在前，缺省 0）
+    teacherToolbarOrder: -10,
   },
   store: {
     teacher: { initial: { target: null }, on: {} },

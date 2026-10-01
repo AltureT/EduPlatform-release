@@ -16,6 +16,7 @@ import { socket } from '../socket.js';
 import { runKernelHooks } from './kernelHooks.js';
 import { bindStageSlices, resetSlices } from './stageStores.js';
 import { bindComponentSlices, resetComponentSlices } from './componentRegistry.js';
+import { resetDemoRecords } from '../demo/demoStore.js';
 import { mapPublicState, EMPTY_LESSON, EMPTY_COUNTS } from './publicState.js';
 
 const TOKEN_KEY = 'teacher_token';
@@ -137,7 +138,8 @@ export const coreTeacherStore = create((set, get) => ({
   },
 
   setViewMode(mode) {
-    if (mode !== 'demo' && mode !== 'stats') return;
+    // T9a：三个视图 demo（演示）/ stats（统计）/ table（明细表）
+    if (mode !== 'demo' && mode !== 'stats' && mode !== 'table') return;
     set({ viewMode: mode });
   },
 
@@ -361,6 +363,7 @@ function bindListeners(set, get) {
     set({ stageData: {}, liveStageData: {}, statsPaused: false, statsPending: 0, studentDetail: null, advanceError: null, validationError: null, subPhase: null });
     resetSlices();
     resetComponentSlices();
+    resetDemoRecords();   // T9a：教师演示模式的本地记录随课堂重置清空
     runKernelHooks('reset', payload);
   });
 }

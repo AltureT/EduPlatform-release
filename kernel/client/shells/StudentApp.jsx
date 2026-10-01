@@ -5,7 +5,12 @@
 // - 操作条：当前可见窗格里 <Page.Actions> 的内容；回看锁定时操作条同样 inert
 // 断线期间不卸载阶段视图（只显示"重连中"），重连后 join-ok 前渲染空——理由见 stores/coreStudentStore.js 顶部
 // 谢幕 override 取自 lesson.curtain.override
-import { useEffect, useMemo, useState } from 'react';
+// T9b（教师视图与学生页重排规格 §2.5）：有组件提供 studentDock 时，内容区包一层两列网格 <div data-student-body>：
+//   左 <div data-student-stage> = 阶段窗格（原样）；右 = 停靠面板 <aside data-student-dock={id}>（标题行 dockTitle + ✕，下面是该组件的 studentDock），
+//   两列之间一条拖柄（role="separator"，data-dock-gutter）。面板宽 --dock-w 缺省 360 px，拖动 / ← → 调 280–520，
+//   按课记 localStorage['dock-w:<lessonId>']，双击恢复缺省。打开状态 = coreStudentStore.dock（useDock()）；窄屏不渲染面板。
+//   没有任何提供者时不包这一层（未开组件时外壳 DOM 不变）；有提供者时开关面板只改列模板，左列不重新挂载
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { coreStudentStore } from '../stores/coreStudentStore.js';
 import { assembleStages } from '../stores/stageStores.js';
 import StepBar from '../ui/StepBar.jsx';
@@ -17,7 +22,8 @@ import Brand from './Brand.jsx';
 import StudentLogin from './StudentLogin.jsx';
 import Curtain from './Curtain.jsx';
 import { useLessonChrome } from './useLessonChrome.js';
-import { ComponentSlot, useStudentBanner } from './ComponentSlots.jsx';
+import { ComponentSlot, DockSlot, useStudentBanner, useStudentDockProviders } from './ComponentSlots.jsx';
+import Btn from '../ui/Btn.jsx';
 import { KernelRoleContext } from '../hooks/roleContext.js';
 
 // PageStageContext 带 lessonId：<Page resizable> 按课记拖宽比例（P5 规格 §4）
@@ -49,6 +55,152 @@ const bannerBase = {
   borderBottom: '1px solid var(--border)',
 };
 
+// ---------- T9b 停靠面板 ----------
+const DOCK_W = Object.freeze({ min: 280, max: 520, initial: 360, step: 16 });
+const DOCK_PREFIX = 'dock-w:';
+const clampDock = (w) => Math.min(DOCK_W.max, Math.max(DOCK_W.min, Math.round(w)));
+
+function readDockW(lessonId) {
+  if (!lessonId) return DOCK_W.initial;
+  try {
+    const raw = globalThis.localStorage?.getItem(DOCK_PREFIX + lessonId);
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isFinite(n) ? clampDock(n) : DOCK_W.initial;
+  } catch (_) {
+    return DOCK_W.initial;
+  }
+}
+function writeDockW(lessonId, w) {
+  if (!lessonId) return;
+  try {
+    if (w == null) globalThis.localStorage?.removeItem(DOCK_PREFIX + lessonId);
+    else globalThis.localStorage?.setItem(DOCK_PREFIX + lessonId, String(w));
+  } catch (_) {
+    // 存储不可用：只在内存里记
+  }
+}
+
+function useDockWidth(lessonId) {
+  const [w, setW] = useState(() => readDockW(lessonId));
+  useEffect(() => {
+    setW(readDockW(lessonId));
+  }, [lessonId]);
+  const commit = (next) => {
+    const v = clampDock(next);
+    setW(v);
+    writeDockW(lessonId, v);
+  };
+  const reset = () => {
+    setW(DOCK_W.initial);
+    writeDockW(lessonId, null);
+  };
+  return { w, setW: (next) => setW(clampDock(next)), commit, reset };
+}
+
+// 面板左边的拖柄：往左拖加宽（面板在右）；← 加宽、→ 变窄；双击恢复缺省
+function DockGutter({ w, onDrag, onCommit, onReset }) {
+  const drag = useRef(null);   // { x, w, last, moved }
+  const [hot, setHot] = useState(false);
+  const onPointerDown = (e) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch (_) {
+      // 拿不到 pointer（合成事件等）：照常按 move / up 处理
+    }
+    drag.current = { x: e.clientX, w, last: w, moved: false };
+    setHot(true);
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current;
+    if (!d) return;
+    const next = clampDock(d.w + (d.x - e.clientX));
+    if (next === d.last) return;
+    d.last = next;
+    d.moved = true;
+    onDrag(next);
+  };
+  const end = () => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    setHot(false);
+    if (d.moved) onCommit(d.last);
+  };
+  const onKeyDown = (e) => {
+    let next = null;
+    if (e.key === 'ArrowLeft') next = w + DOCK_W.step;
+    else if (e.key === 'ArrowRight') next = w - DOCK_W.step;
+    else if (e.key === 'Home') next = DOCK_W.max;
+    else if (e.key === 'End') next = DOCK_W.min;
+    if (next == null) return;
+    e.preventDefault();
+    onCommit(next);
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-valuenow={w}
+      aria-valuemin={DOCK_W.min}
+      aria-valuemax={DOCK_W.max}
+      aria-label="拖动调整面板宽度"
+      tabIndex={0}
+      data-dock-gutter=""
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => { if (!drag.current) setHot(false); }}
+      onKeyDown={onKeyDown}
+      onDoubleClick={onReset}
+      style={{
+        width: 'var(--sp-3)',
+        minHeight: 0,
+        display: 'flex',
+        justifyContent: 'center',
+        cursor: 'col-resize',
+        touchAction: 'none',
+        userSelect: 'none',
+      }}
+    >
+      <div style={{ width: 2, background: hot ? 'var(--border-strong)' : 'var(--border)' }} />
+    </div>
+  );
+}
+
+const dockHeadStyle = {
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 'var(--sp-2)',
+  padding: 'var(--sp-2) var(--sp-3)',
+  borderBottom: '1px solid var(--border)',
+  fontWeight: 600,
+  color: 'var(--ink)',
+};
+
+function DockPanel({ provider, onClose }) {
+  return (
+    <aside
+      data-student-dock={provider.id}
+      aria-label={provider.title}
+      style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}
+    >
+      <div data-dock-head="" style={dockHeadStyle}>
+        <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.title}</span>
+        <Btn variant="ghost" size="sm" aria-label="关闭" onClick={onClose}>✕</Btn>
+      </div>
+      <div data-dock-body="" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto', padding: 'var(--sp-3)' }}>
+        <DockSlot provider={provider} />
+      </div>
+    </aside>
+  );
+}
+
 // v0.5 组件槽位（规格 §2.3）：studentOverlay 在已加入后的外壳之外；studentCurtain 由 Curtain 在谢幕 / override 之后渲染；
 // v0.7.1 studentBanner 在横幅区（内核横幅之后），已加入后即渲染（含课前等待期）
 export default function StudentApp() {
@@ -71,8 +223,12 @@ function StudentShell() {
   const stages = coreStudentStore((s) => s.stages);
   const lesson = coreStudentStore((s) => s.lesson);
   const validationError = coreStudentStore((s) => s.validationError);
+  const dock = coreStudentStore((s) => s.dock);
+  const closeDock = coreStudentStore((s) => s.closeDock);
   const narrow = useNarrow();
   const componentBanner = useStudentBanner();
+  const dockProviders = useStudentDockProviders();
+  const dockW = useDockWidth(lesson.id ?? null);
   const [liveSink] = useState(createActionSink);
   const [reviewSink] = useState(createActionSink);
 
@@ -170,6 +326,47 @@ function StudentShell() {
     componentBanner,
   ];
 
+  const panes = (
+    <>
+      {/* live 阶段始终挂载，回看时隐藏以保留其本地状态 */}
+      <div data-testid="live-view" style={{ ...paneStyle, display: isReviewing ? 'none' : 'flex' }}>
+        <ActionSinkContext.Provider value={liveSink}>
+          <StageView entry={liveEntry} curtainOverride={curtainOverride} lessonId={lesson.id} />
+        </ActionSinkContext.Provider>
+      </div>
+      {isReviewing && reviewedEntry && (
+        <div data-testid="review-view" inert={lockReview} style={paneStyle}>
+          <ActionSinkContext.Provider value={reviewSink}>
+            <StageView entry={reviewedEntry} curtainOverride={curtainOverride} lessonId={lesson.id} isLive={false} />
+          </ActionSinkContext.Provider>
+        </div>
+      )}
+    </>
+  );
+
+  // T9b：有 studentDock 提供者才包两列网格；窄屏不渲染面板
+  const activeDock = !narrow && dock ? dockProviders.find((p) => p.id === dock) ?? null : null;
+  const content = dockProviders.length === 0 ? panes : (
+    <div
+      data-student-body=""
+      style={{
+        flex: '1 1 0%',
+        minHeight: 0,
+        minWidth: 0,
+        display: 'grid',
+        gridTemplateColumns: activeDock ? 'minmax(0, 1fr) auto var(--dock-w)' : 'minmax(0, 1fr)',
+        gridTemplateRows: 'minmax(0, 1fr)',
+        '--dock-w': `${dockW.w}px`,
+      }}
+    >
+      <div data-student-stage="" style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {panes}
+      </div>
+      {activeDock && <DockGutter w={dockW.w} onDrag={dockW.setW} onCommit={dockW.commit} onReset={dockW.reset} />}
+      {activeDock && <DockPanel key={activeDock.id} provider={activeDock} onClose={closeDock} />}
+    </div>
+  );
+
   return (
     <>
       <Shell
@@ -179,19 +376,7 @@ function StudentShell() {
         sink={isReviewing ? reviewSink : liveSink}
         inertActions={lockReview}
       >
-        {/* live 阶段始终挂载，回看时隐藏以保留其本地状态 */}
-        <div data-testid="live-view" style={{ ...paneStyle, display: isReviewing ? 'none' : 'flex' }}>
-          <ActionSinkContext.Provider value={liveSink}>
-            <StageView entry={liveEntry} curtainOverride={curtainOverride} lessonId={lesson.id} />
-          </ActionSinkContext.Provider>
-        </div>
-        {isReviewing && reviewedEntry && (
-          <div data-testid="review-view" inert={lockReview} style={paneStyle}>
-            <ActionSinkContext.Provider value={reviewSink}>
-              <StageView entry={reviewedEntry} curtainOverride={curtainOverride} lessonId={lesson.id} isLive={false} />
-            </ActionSinkContext.Provider>
-          </div>
-        )}
+        {content}
       </Shell>
       <ComponentSlot role="student" slot="studentOverlay" />
     </>

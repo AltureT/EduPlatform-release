@@ -1,6 +1,8 @@
 // code / data-analysis 共用的教师统计视图（活动原语规格 §3.4、§3.5），基于统一骨架 StatsPage。只给原语作者用。
 //
-//   <CodeStats stageId mode="code" | "data" hasTests onFeature? starters? mistakes? />
+//   <CodeStats stageId mode="code" | "data" hasTests onFeature? starters? mistakes? summaryBlock? python? />
+//   T9a（教师视图与学生页重排规格 §2.1、§2.3）：summaryBlock 原样交给 StatsPage（统计视图的摘要区，原演示视图主体）；
+//   python = { ready, online }（TeacherStats 用 sandbox 的 usePythonReady 算，本段是当前段且有 sandbox 配置时才给）→ 摘要芯片多一枚"Python 就绪 N/M"
 //   列：运行次数 / （data）已出图 / 最近报错（首行，截 60 字）/ （hasTests）测试 通过/总数 / 已上交（finalAt）/ 最近运行（submittedAt）
 //   摘要（在线口径）：已运行 N/M、无报错 N、已上交 N/M、（hasTests）测试全过 N 或（data）已出图 N——后两个按 firstPassedAt / firstImageAt
 //   行详情：两个标签"最终稿 / 最近运行"（各用 sandbox 的 <PyOutput record>；有最终稿时缺省最终稿）；
@@ -77,7 +79,7 @@ function RecordTabs({ record, fromSnapshot = false }) {
   );
 }
 
-export default function CodeStats({ stageId, mode = 'code', hasTests = false, onFeature, starters, mistakes }) {
+export default function CodeStats({ stageId, mode = 'code', hasTests = false, onFeature, starters, mistakes, summaryBlock, python }) {
   const labels = Array.isArray(starters) && starters.length >= 2 ? starters : null;
   const lib = mode === 'code' && Array.isArray(mistakes?.mistakes) ? mistakes.mistakes : null;
   const hintOf = (id) => lib?.find((m) => m?.id === id) ?? null;
@@ -127,6 +129,7 @@ export default function CodeStats({ stageId, mode = 'code', hasTests = false, on
     const online = students.filter((s) => s.connected).map((s) => records[s.name]);
     const count = (pred) => online.filter((r) => pred(r)).length;
     const chips = [
+      ...(python ? [{ label: 'Python 就绪', value: `${python.ready}/${python.online}` }] : []),
       { label: '已运行', value: `${count(hasRun)}/${online.length}` },
       { label: '无报错', value: count((r) => hasRun(r) && !r.error) },
       { label: '已上交', value: `${count(hasFinal)}/${online.length}` },
@@ -167,5 +170,5 @@ export default function CodeStats({ stageId, mode = 'code', hasTests = false, on
     </Stack>
   );
 
-  return <StatsPage stageId={id} columns={columns} summary={summary} rowDetail={rowDetail} />;
+  return <StatsPage stageId={id} columns={columns} summary={summary} rowDetail={rowDetail} summaryBlock={summaryBlock} />;
 }

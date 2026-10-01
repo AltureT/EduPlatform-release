@@ -3,9 +3,11 @@
 //   （说明、四个求助类型 Chip 单选、输入框 ≤ 500 字、发送、本段历史问答、还能问 N 次）。回答经组件数据到达（data.my.asks 最后一项），不另发事件。
 //   §12.1：缺省 think；本段没有 ok 回答时不显示 follow；follow 要写 ≥ 4 字才能发。§12.6：暂停时抽屉一行"老师暂停了 AI 助手"并禁用发送。
 //   draft：sandbox 编辑器草稿（localStorage，键由 draftKey 得到）；sandbox 没开或读不到就不带。
-// 教师端：teacherToolbar 已配置时是按钮"AI 助手 · 已答 N"，点一下发 coach:t-pause 暂停 / 恢复（未配置仍是芯片"AI 助手未配置"）；
-//   teacherSidebar（统计视图 Side，本段 coach 为真时）"求助"名单：每条问答前缀求助类型与 L1–L3，被拒的灰字标原因，"索答 N 次"标记。
-//   K8（§15）：perClass.aiNotice 为 route 2 → 按钮"… · 备用线路"，带 error → "… · 接口异常"，title 说明；备用线路回答的条目灰字"（备用）"。
+// 教师端（T9a，教师视图与学生页重排规格 §2.1：状态不当按钮摆在操作条）：teacherToolbar 渲染 null；
+//   teacherPrelogin（课前页一行）：服务端判定未配置（perClass.enabled === false）时一句"AI 助手没配置，学生不会看到求助入口；…"，其它情况不渲染；
+//   teacherSidebar（统计视图 Side，本段 coach 为真时）"求助"标题行（AI 已配置时）：灰字"已答 N"（只数 ok）+ 线路提示 + 按钮"暂停"/"恢复"
+//   （发 coach:t-pause；暂停中另有"已暂停"）；下面是"求助"名单：每条问答前缀求助类型与 L1–L3，被拒的灰字标原因，"索答 N 次"标记。
+//   K8（§15）：perClass.aiNotice 为 route 2 → 标题行"备用线路"，带 error → "接口异常"，title 说明（暂停时不显示）；备用线路回答的条目灰字"（备用）"。
 // U6（代码展示统一高亮规格 §4）：抽屉与教师侧栏里的回答按行分段——连续的"像代码的行"（codeLine.js 的 CODE_LINE，与服务端 sanitize 同一个正则）
 //   并成一个 <CodeView size="sm" wrap>，其余文字仍 pre-wrap；没有代码行时照旧一个 <span>。学生的提问 q 不处理。
 // C6（AI 对照要求逐条核规格 §3、§4.1）：
@@ -14,8 +16,13 @@
 //   教师侧栏："求助"上方一节"AI 看一遍"（本段有要求清单且 AI 已配置）：idle 两次确认发 coach:t-review start；
 //     running "已看 k/N" + 停止；done / stopped 每条要求一行计数，点开是"没做到 / 没法确认"名单，失败的单独一行，"再看一遍"。
 //     状态来自服务端只发教师的 coach:review-state（教师切片 reviews[stageId]），挂载时发 coach:t-review-get 取回；学生端不显示任何 review
+// T9b（教师视图与学生页重排规格 §2.5）：宽屏"问一下"→ useDock().openDock('coach')，内容在内核右侧停靠面板（slots.studentDock，
+//   dockTitle "AI 助手"；标题与 ✕ 由外壳画，面板里不再有"收起"）——原抽屉的内容（CoachPanel）原样搬进去；
+//   窄屏（useNarrow）照旧 setLocal({ open: true }) 开 studentOverlay 的 drawer。面板换段保持打开、内容按当前段；
+//   回看 / 本段没开 / 未配置时面板里一行提示（data-coach-dock-note），老师暂停时照旧是面板里的"老师暂停了 AI 助手"、发送禁用；
+//   镜像与教师端 studentDock 返回 null（内核也不渲染面板）
 import { useEffect, useState } from 'react';
-import { useComponent, useTeacherStage, useDraft, Btn, Chip, CodeView, ConfirmAdvanceBtn, GroupTag, HelpTip, Overlay, Row, Stack } from '#kernel/client/index.js';
+import { useComponent, useTeacherStage, useDraft, useDock, useNarrow, Btn, Chip, CodeView, ConfirmAdvanceBtn, GroupTag, Overlay, Row, Stack } from '#kernel/client/index.js';
 import { draftKey, readDraft } from '#components/sandbox/client/ui/draftStorage.js';
 import { useCoachStage } from './stageConfig.js';
 import { codeSegments } from './codeLine.js';
@@ -65,19 +72,25 @@ export const TEXT = Object.freeze({
   cooldown: (n) => `刚问过，等 ${n} 秒再问`,
   refusedCooldown: (n) => `刚被拒过几次，等 ${n} 秒再问`,
   paused: '老师暂停了 AI 助手',
+  // T9b：右侧面板里的一行提示
+  dockReviewing: '回看时不能问 AI，回到当前段再问',
+  dockOff: '这一段没开 AI 助手',
   remaining: (n) => `还能问 ${n} 次`,
   label: 'AI 助手',
   notConfigured: 'AI 助手未配置',
-  notConfiguredHelp: '到管理台第 4 步"上课准备"填 AI 接口',
-  answered: (n) => `AI 助手 · 已答 ${n}`,
-  pausedBtn: 'AI 助手已暂停 · 点此恢复',
-  toolbarHelp: '开了 AI 助手的段，学生点"问一下"向 AI 要提示（只给提示，不给答案）；统计页右侧"求助"看每人问了什么。随堂测验时可暂停：点一下暂停，再点恢复',
+  // T9a：课前页一行与侧栏"求助"标题行
+  preloginOff: 'AI 助手没配置，学生不会看到求助入口；要用就到管理台第 4 步"上课准备"填 AI 接口',
+  answeredShort: (n) => `已答 ${n}`,
+  pause: '暂停',
+  resume: '恢复',
+  pausedNote: '已暂停',
+  pauseHelp: '随堂测验时可暂停 AI 助手：暂停期间学生看不到"问一下"，恢复后照常',
+  routeBackup: '备用线路',
+  routeError: '接口异常',
   flag: '多次求助未通过',
   refusedFlag: (n) => `索答 ${n} 次`,
   refusedTag: { answer: '（已拒绝：索要答案）', inject: '（已拒绝：无关请求）' },
   // K8（coach 规格 §15）：AI 线路提示
-  answeredBackup: (n) => `AI 助手 · 已答 ${n} · 备用线路`,
-  answeredError: (n) => `AI 助手 · 已答 ${n} · 接口异常`,
   backupTitle: (t) => `主接口从 ${t} 起不可用，已自动改用备用接口；课后到管理台设置页点"测一下"看看主接口`,
   errorTitle: (why) => `AI 接口最近一次请求失败（${why}），学生会看到"AI 现在没回应"`,
   backupTag: '（备用）',
@@ -266,12 +279,17 @@ function useStudentCoach() {
 
 function StudentBanner() {
   const { c, coach, ready } = useStudentCoach();
+  const narrow = useNarrow();
+  const dock = useDock();
   if (!ready || c.data.perClass?.paused === true) return null;
   const text = coach.intro ?? TEXT.intro;
+  // T9b：宽屏开右侧面板，窄屏开 drawer
+  const onAsk = () => (narrow ? c.setLocal({ open: true }) : dock.openDock(ID));
+  const aria = narrow ? { 'aria-haspopup': 'dialog' } : { 'aria-expanded': dock.open === ID };
   return (
     <div data-coach-banner="" style={bannerRow}>
       <span title={text} style={{ ...ellipsis, flex: '1 1 auto' }}>{text}</span>
-      <Btn size="sm" variant="primary" aria-haspopup="dialog" onClick={() => c.setLocal({ open: true })}>{TEXT.ask}</Btn>
+      <Btn size="sm" variant="primary" {...aria} onClick={onAsk}>{TEXT.ask}</Btn>
     </div>
   );
 }
@@ -355,7 +373,8 @@ function KindPicker({ kinds, value, onChange }) {
   );
 }
 
-function Drawer({ c, stageId, coach }) {
+// 抽屉 / 右侧面板共用的内容（T9b：原 Drawer 的内容原样搬出）；onClose 给了才显示自己的"收起"（面板的 ✕ 由外壳画）
+function CoachPanel({ c, stageId, coach, onClose }) {
   const rec = c.data.my;
   const limits = limitsOf(c.options);
   const paused = c.data.perClass?.paused === true;
@@ -398,7 +417,6 @@ function Drawer({ c, stageId, coach }) {
   const notice = paused ? studentNotice({ rec, stageId, limits, paused }) : waiting ? null : studentNotice({ rec, stageId, limits, now });
   const followShort = kind === 'follow' && Array.from(question.trim()).length < FOLLOW_MIN;
   const canSend = !paused && !waiting && left > 0 && wait <= 0 && !followShort;
-  const close = () => setLocal({ open: false });
 
   const send = () => {
     if (!canSend) return;
@@ -411,50 +429,72 @@ function Drawer({ c, stageId, coach }) {
   };
 
   return (
+    <div data-coach-panel="" style={{ width: '100%', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto', textAlign: 'left', color: 'var(--ink)' }}>
+      <Stack gap={3}>
+        <Row gap={2} wrap={false}>
+          <span data-coach-hint="" style={{ flex: 1, minWidth: 0, color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' }}>{kind === 'follow' ? TEXT.followHint : kind === 'check' ? TEXT.checkHint : TEXT.hint}</span>
+          <Chip tone={left > 0 ? 'brand' : 'warn'}><span data-coach-left="">{TEXT.remaining(left)}</span></Chip>
+          {onClose && <Btn variant="ghost" aria-label="收起" onClick={onClose}>✕</Btn>}
+        </Row>
+        <KindPicker kinds={kinds} value={kind} onChange={setPicked} />
+        <textarea
+          value={question}
+          maxLength={QUESTION_MAX}
+          rows={3}
+          aria-label="你的问题"
+          placeholder={kind === 'check' ? TEXT.checkHint : undefined}
+          onChange={(e) => setQuestion(e.target.value)}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            padding: 'var(--sp-2)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--surface)',
+            color: 'var(--ink)',
+            font: 'inherit',
+            fontSize: 'var(--fs-md)',
+            resize: 'vertical',
+          }}
+        />
+        <Row gap={2} wrap={false}>
+          <span data-coach-notice="" style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-sm)', color: notice?.tone === 'bad' ? 'var(--bad)' : notice?.tone === 'warn' ? 'var(--warn)' : 'var(--ink-soft)' }}>
+            {notice?.text ?? ''}
+          </span>
+          <Btn variant="primary" disabled={!canSend} onClick={send}>{waiting ? TEXT.thinking : TEXT.send}</Btn>
+        </Row>
+        {asks.length > 0 && (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+            {[...asks].reverse().map((a, i) => <AskItem key={a.id ?? i} a={a} requirements={requirements} />)}
+          </ul>
+        )}
+      </Stack>
+    </div>
+  );
+}
+
+function Drawer({ c, stageId, coach }) {
+  const close = () => c.setLocal({ open: false });
+  return (
     <Overlay variant="drawer" label="问 AI 要个提示" testId="coach-drawer" onDismiss={close}>
-      <div style={{ width: '100%', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto', textAlign: 'left', color: 'var(--ink)' }}>
-        <Stack gap={3}>
-          <Row gap={2} wrap={false}>
-            <span data-coach-hint="" style={{ flex: 1, minWidth: 0, color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' }}>{kind === 'follow' ? TEXT.followHint : kind === 'check' ? TEXT.checkHint : TEXT.hint}</span>
-            <Chip tone={left > 0 ? 'brand' : 'warn'}><span data-coach-left="">{TEXT.remaining(left)}</span></Chip>
-            <Btn variant="ghost" aria-label="收起" onClick={close}>✕</Btn>
-          </Row>
-          <KindPicker kinds={kinds} value={kind} onChange={setPicked} />
-          <textarea
-            value={question}
-            maxLength={QUESTION_MAX}
-            rows={3}
-            aria-label="你的问题"
-            placeholder={kind === 'check' ? TEXT.checkHint : undefined}
-            onChange={(e) => setQuestion(e.target.value)}
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              padding: 'var(--sp-2)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: 'var(--radius-sm)',
-              background: 'var(--surface)',
-              color: 'var(--ink)',
-              font: 'inherit',
-              fontSize: 'var(--fs-md)',
-              resize: 'vertical',
-            }}
-          />
-          <Row gap={2} wrap={false}>
-            <span data-coach-notice="" style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-sm)', color: notice?.tone === 'bad' ? 'var(--bad)' : notice?.tone === 'warn' ? 'var(--warn)' : 'var(--ink-soft)' }}>
-              {notice?.text ?? ''}
-            </span>
-            <Btn variant="primary" disabled={!canSend} onClick={send}>{waiting ? TEXT.thinking : TEXT.send}</Btn>
-          </Row>
-          {asks.length > 0 && (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-              {[...asks].reverse().map((a, i) => <AskItem key={a.id ?? i} a={a} requirements={requirements} />)}
-            </ul>
-          )}
-        </Stack>
-      </div>
+      <CoachPanel c={c} stageId={stageId} coach={coach} onClose={close} />
     </Overlay>
   );
+}
+
+// T9b：右侧停靠面板（宽屏）。回看 / 本段没开 / 未配置时一行提示；perClass 还没到时空着
+const dockNote = { color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)', lineHeight: 1.6 };
+function StudentDock() {
+  const { c, stageId, coach, ready, reviewing } = useStudentCoach();
+  if (c.role !== 'student') return null;
+  if (ready) return <CoachPanel c={c} stageId={stageId} coach={coach} />;
+  const enabled = c.data.perClass?.enabled;
+  let note = null;
+  if (enabled === false) note = TEXT.notConfigured;
+  else if (enabled !== true) note = null;
+  else if (reviewing) note = TEXT.dockReviewing;
+  else if (!coach.on) note = TEXT.dockOff;
+  return note ? <div data-coach-dock-note="" style={dockNote}>{note}</div> : null;
 }
 
 function StudentOverlay() {
@@ -471,53 +511,48 @@ function StudentOverlay() {
 
 // ---------- 教师端 ----------
 
-// perClass 为空（还没拿到数据，如重置后教师端 stageData 被清空）与 enabled:false（服务端判定未配置）分开：
-// 前者显示中性"AI 助手"，只有后者显示"未配置"
+// T9a：操作条上不再有 AI 助手芯片；槽位保留但渲染 null（状态改到课前页与侧栏"求助"标题行）
 function TeacherToolbar() {
+  return null;
+}
+
+// T9a：课前页一行——只在服务端判定未配置（enabled: false）时提示；perClass 为空（还没拿到数据，如重置后）不提示
+function TeacherPrelogin() {
   const c = useComponent(ID);
-  if (c.role !== 'teacher') return null;
-  const enabled = c.data.perClass?.enabled;
-  if (typeof enabled !== 'boolean') {
-    return (
-      <HelpTip text={TEXT.toolbarHelp}>
-        <Chip tone="neutral"><span data-coach-chip="unknown">{TEXT.label}</span></Chip>
-      </HelpTip>
-    );
-  }
-  if (enabled === false) {
-    return (
-      <HelpTip text={TEXT.notConfiguredHelp}>
-        <Chip tone="warn"><span data-coach-chip="off">{TEXT.notConfigured}</span></Chip>
-      </HelpTip>
-    );
-  }
-  // §12.6 已配置：按钮，点一下暂停 / 恢复（等服务端 class-update 回来再变文案）
+  if (c.role !== 'teacher' || c.data.perClass?.enabled !== false) return null;
+  return <span data-coach-prelogin="" style={{ color: 'var(--warn)' }}>{TEXT.preloginOff}</span>;
+}
+
+// T9a：侧栏"求助"标题行的状态（AI 已配置时）：已答 N（只数 ok）· 线路提示（K8）· 暂停 / 恢复（§12.6，等服务端 class-update 回来再变）
+function CoachStatus({ c }) {
+  if (c.data.perClass?.enabled !== true) return null;
   const paused = c.data.perClass?.paused === true;
-  // K8 §15：aiNotice 带 error → 接口异常；route 2 → 备用线路（暂停时文字仍是"已暂停"）
   const notice = isPlainObject(c.data.perClass?.aiNotice) ? c.data.perClass.aiNotice : null;
   const kind = paused || !notice ? null : notice.error ? 'error' : notice.route === 2 ? 'backup' : null;
-  const n = answeredCount(c.data.perStudent);
-  const label = paused ? TEXT.pausedBtn
-    : kind === 'error' ? TEXT.answeredError(n)
-      : kind === 'backup' ? TEXT.answeredBackup(n)
-        : TEXT.answered(n);
   const title = kind === 'error' ? TEXT.errorTitle(reasonText(notice.error))
     : kind === 'backup' ? TEXT.backupTitle(hhmm(notice.since))
       : undefined;
+  const dim = { color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)', whiteSpace: 'nowrap' };
   return (
-    <HelpTip text={TEXT.toolbarHelp}>
+    <span data-coach-status={paused ? 'paused' : 'on'} style={{ display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--sp-2)', minWidth: 0 }}>
+      <span data-coach-answered="" style={dim}>{TEXT.answeredShort(answeredCount(c.data.perStudent))}</span>
+      {kind && (
+        <span data-coach-route={kind} title={title} style={{ ...dim, color: kind === 'error' ? 'var(--bad)' : 'var(--warn)' }}>
+          {kind === 'error' ? TEXT.routeError : TEXT.routeBackup}
+        </span>
+      )}
+      {paused && <span data-coach-paused="" style={{ ...dim, color: 'var(--warn)' }}>{TEXT.pausedNote}</span>}
       <Btn
         variant="soft"
         size="sm"
-        data-coach-chip={paused ? 'paused' : 'on'}
-        {...(kind ? { 'data-coach-route': kind, title } : {})}
+        data-coach-pause=""
         aria-pressed={paused}
+        title={TEXT.pauseHelp}
         onClick={() => c.send('coach:t-pause', { paused: !paused })}
-        style={paused ? { background: 'var(--warn-soft)', color: 'var(--warn)' } : undefined}
       >
-        {label}
+        {paused ? TEXT.resume : TEXT.pause}
       </Btn>
-    </HelpTip>
+    </span>
   );
 }
 
@@ -746,7 +781,10 @@ function TeacherSidebar({ stageId }) {
   return (
     <div data-coach-sidebar="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', minWidth: 0 }}>
       {canReview && <ReviewPanel c={c} stageId={stageId} />}
-      <span style={{ color: 'var(--ink)', fontSize: 'var(--fs-md)', fontWeight: 600 }}>求助</span>
+      <div data-coach-help-head="" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--sp-2)', minWidth: 0 }}>
+        <span style={{ color: 'var(--ink)', fontSize: 'var(--fs-md)', fontWeight: 600, flex: '1 1 auto' }}>求助</span>
+        <CoachStatus c={c} />
+      </div>
       {rows.length === 0 ? (
         <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>还没有人问</span>
       ) : (
@@ -764,8 +802,11 @@ export default {
   slots: {
     studentBanner: StudentBanner,
     studentOverlay: StudentOverlay,
+    studentDock: StudentDock,
+    dockTitle: TEXT.label,
     teacherToolbar: TeacherToolbar,
     teacherSidebar: TeacherSidebar,
+    teacherPrelogin: TeacherPrelogin,
   },
   store: {
     student: { initial: { open: false, pending: null }, on: {} },

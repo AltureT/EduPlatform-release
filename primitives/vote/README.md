@@ -77,7 +77,7 @@ export default {
 - 子阶段读 `ctx.state.subPhase`（没有 `ctx.subPhase`）；写了 `answer` 才有 `answer` → `reveal` 两个子阶段，没写 `answer` 时永远不会是 `'reveal'`，这段门槛会一直拦着。
 - 每人的记录是 `ctx.data.get(姓名)`，提交过的有 `choice`；分母用 `ctx.state.connected()`（离线不计）。
 - `reason` 是教师端被拦下时看到的一句话。
-- "七成交了才能揭晓"做不到：演示页的"揭晓"按钮不看门槛，教师看大屏的"提交 N/M"再按；一定要拦，只能在阶段目录自写 `TeacherDemo.jsx` 覆盖原语的演示页。
+- "七成交了才能揭晓"做不到：操作条的"揭晓"按钮不看门槛，教师看统计视图的"提交 N/M"再按；一定要拦，只能在阶段目录自写 `TeacherActions.jsx` 覆盖原语的按钮。
 
 ## 什么会间接暴露对错
 

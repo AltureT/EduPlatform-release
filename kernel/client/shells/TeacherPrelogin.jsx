@@ -4,6 +4,7 @@
 // 选择文件后直接读文本并发送 teacher:import-roster { text }；收到 admin-ok { action:'import-roster' } 后清空文本框。
 // v0.7（界面整理规格 §4）：<Page template="split">（= <Split ratio="3:2">）：左"已登录"用 <Tiles> 显示名字，
 // 右 <Stack>：二维码（地址用 /api/lan 的局域网 IP，请求带教师 token；无则回退 location.origin）、进入课堂、名单导入、重置课堂
+// T9a（教师视图与学生页重排规格 §2.1）：二维码之下、进入课堂之前是组件状态行（teacherPrelogin 槽位：Python 就绪、AI 助手未配置）
 import { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { coreTeacherStore } from '../stores/coreTeacherStore.js';
@@ -16,6 +17,7 @@ import Tiles from '../layout/Tiles.jsx';
 import Stack from '../layout/Stack.jsx';
 import Row from '../layout/Row.jsx';
 import Overlay, { BigName } from './Overlay.jsx';
+import { TeacherPreloginRows } from './ComponentSlots.jsx';
 
 // U4：名字格比里面的 ×（--control-h）高一个 --sp-1，× 不加边框，不再贴边显挤
 const nameChip = {
@@ -218,6 +220,8 @@ export default function TeacherPrelogin() {
               </div>
             )}
           </div>
+
+          <TeacherPreloginRows />
 
           {!isReviewing && (
             <Btn

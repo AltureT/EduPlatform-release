@@ -33,3 +33,5 @@ export { Page, Fill, Split, Tiles, Tile, Stack, Row, Scroll, useNarrow } from '.
 export { default as Overlay } from './shells/Overlay.jsx';
 // 学生输入自动保存（学生输入自动保存规格 §2.2）：学生输入一律 useDraft，不用裸 useState
 export { useDraft, draftKey, readDraft, writeDraft, clearDraft } from './drafts.js';
+// T9b（教师视图与学生页重排规格 §2.5）：学生端右侧停靠面板 { open, openDock(id), closeDock() }（组件 slots.studentDock 用）
+export { useDock } from './hooks/useDock.js';

@@ -17,6 +17,9 @@
 //   不调 onRestore、不登记 reset 清草稿；不看镜像只读（教师外壳里 useStudentStage 拿不到 readOnly / myData 时本来就按非只读处理）；
 //   ensure 与运行前 writeFiles 照常；受控用法（code / onChange）由演示区使用；prop size="md" 编辑器字号用 --fs-md（大屏，挂载时定）。input() 照常：输入框由本实例显示，
 //   信箱 key 由教师外壳常驻的 teacherToolbar 槽位经 sandbox:t-stdin-key 登记（教师外壳没有 studentOverlay，不需要）
+// - T9b（教师视图与学生页重排规格 §2.4）：prop toolbarEnd（ReactNode）渲染在 data-sandbox-toolbar 那一行最右
+//   （<span data-sandbox-toolbar-end>，margin-left: auto；同时给了 extraButtons 时由 extraButtons 靠右、toolbarEnd 紧跟其后）；
+//   只读态（镜像）没有按钮，但给了 toolbarEnd 时 Split 下方照样有这一行、只放它（回看 / 镜像时的上交状态行用）
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, registerKernelHook, Btn, Chip, Fill, Split, Row } from '#kernel/client/index.js';
 import { usePython } from '../usePython.js';
@@ -121,10 +124,18 @@ function Frame({ editor, output, controls, captions = true, outputCaption = '输
 }
 
 const outputFill = { flex: '1 0 auto' };
+const toolbarStyle = { flexShrink: 0, paddingTop: 'var(--sp-3)' };
+const endStyle = { display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-2)', minWidth: 0 };
+
+// T9b：工具栏最右一格（auto = 由它自己把自己推到最右；前面已有靠右的 extraButtons 时不再 auto）
+function ToolbarEnd({ children, auto = true }) {
+  if (children == null || children === false) return null;
+  return <span data-sandbox-toolbar-end="" style={auto ? { ...endStyle, marginLeft: 'auto' } : endStyle}>{children}</span>;
+}
 
 // ---------- 只读 ----------
 
-function ReadOnlyRunner({ myData, captions }) {
+function ReadOnlyRunner({ myData, captions, toolbarEnd }) {
   const useDraft = !!(myData?.draft && myData.draft.at > (myData.submittedAt ?? 0));
   const rec = useDraft ? myData.draft : myData;
   const label = rec ? (useDraft ? '草稿' : '已提交') : undefined;
@@ -133,7 +144,11 @@ function ReadOnlyRunner({ myData, captions }) {
       captions={captions}
       outputCaption={rec?.tests ? '测试结果' : '输出'}
       editor={<Editor value={rec?.code ?? ''} readOnly />}
-      controls={null}
+      controls={toolbarEnd == null || toolbarEnd === false ? null : (
+        <div data-sandbox-toolbar="" style={toolbarStyle}>
+          <Row gap={2}><ToolbarEnd>{toolbarEnd}</ToolbarEnd></Row>
+        </div>
+      )}
       output={<PyOutput record={rec} label={label} hideCode style={outputFill} />}
     />
   );
@@ -183,7 +198,7 @@ function InputLine({ prompt, onSend }) {
 
 // ---------- 可编辑 ----------
 
-function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, extraCompletions, captions = true }) {
+function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, toolbarEnd, extraCompletions, captions = true }) {
   const c = useComponent('sandbox');
   const py = usePython();
   const client = getPythonClient();
@@ -480,7 +495,7 @@ function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, start
   // 缩进按钮按下时不抢焦点：焦点留在编辑器（平板软键盘不收起）
   const keepFocus = (e) => e.preventDefault();
   const controls = (
-    <div data-sandbox-toolbar="" style={{ flexShrink: 0, paddingTop: 'var(--sp-3)' }}>
+    <div data-sandbox-toolbar="" style={toolbarStyle}>
       <Row gap={2}>
         <Btn variant="primary" disabled={!ready} onClick={onRun}>▶ 运行</Btn>
         <Btn variant="ghost" disabled={!busy} onClick={() => client.stop()}>■ 停止</Btn>
@@ -501,6 +516,7 @@ function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, start
           <Btn variant="ghost" onClick={() => client.restart()}>⟳ 重启运行环境</Btn>
         )}
         {extraButtons ? <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>{extraButtons}</span> : null}
+        <ToolbarEnd auto={!extraButtons}>{toolbarEnd}</ToolbarEnd>
       </Row>
     </div>
   );
@@ -527,6 +543,6 @@ function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, start
 
 export default function PyRunner({ stageId, ...rest }) {
   const st = useStudentStage(stageId);
-  if (st.readOnly && rest.role !== 'teacher') return <ReadOnlyRunner myData={st.myData} captions={rest.captions !== false} />;
+  if (st.readOnly && rest.role !== 'teacher') return <ReadOnlyRunner myData={st.myData} captions={rest.captions !== false} toolbarEnd={rest.toolbarEnd} />;
   return <LiveRunner st={st} stageId={stageId} {...rest} />;
 }

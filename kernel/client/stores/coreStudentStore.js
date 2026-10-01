@@ -6,6 +6,8 @@
 // - 断线期间（disconnect 到下次 connect 之间）不改 hydrated，阶段视图保持挂载，外壳只显示"重连中"，
 //   避免网络抖动时丢失视图本地状态；断线期间视图发不出事件，不会与服务端不一致。
 // - join-ok 回灌 state / myStageData / classData，重连后的数据以服务端为准。
+// T9b（教师视图与学生页重排规格 §2.5）：dock（null | 组件 id）= 学生外壳右侧停靠面板打开的是哪个组件的 studentDock；
+//   openDock(id) / closeDock()（公开入口经 useDock() 用）；换段保持，classroom:reset 关掉
 import { create } from 'zustand';
 import { socket } from '../socket.js';
 import { getDeviceId } from '../deviceId.js';
@@ -93,6 +95,16 @@ export const coreStudentStore = create((set, get) => ({
   classData: {},
   // 学生输入自动保存（规格 §2.2）：join-ok.myDrafts { [stageId]: { [field]: value } }，只给 useDraft 回填
   myDrafts: {},
+  dock: null,
+
+  openDock(id) {
+    if (typeof id !== 'string' || !id) return;
+    set({ dock: id });
+  },
+
+  closeDock() {
+    set({ dock: null });
+  },
 
   connect() {
     bindStageSlices(socket);
@@ -256,6 +268,7 @@ function bindListeners(set, get) {
       classData: {},
       myDrafts: {},
       validationError: null,
+      dock: null,
       resetNotice: resetNoticeFor(payload),
     });
     resetSlices();

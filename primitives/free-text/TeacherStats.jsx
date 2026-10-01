@@ -2,8 +2,11 @@
 // 列：姓名 / 已提交 / 各题字数（单题"字数"，多题"字数 1""字数 2"…）/ 首句预览（第一道有作答的题）/ 提交时间；
 // 摘要：提交 N/M（在线）、展示中（有 featured 快照时）；点行看全文，"投到大屏"发 teacher:feature（已在展示时为"取消展示"，
 // 该生投屏后又更新过时多一个"投最新版本"）。
+// T9a（教师视图与学生页重排规格 §2.3）：统计视图摘要区 = Summary.jsx（原演示视图主体：投屏的那条作答，没投屏时题目列表）；
+// 明细表 = 学生表（点行"投到大屏"在这里）。
 import { useTeacherStage, Btn, Row, Stack } from '#kernel/client/index.js';
 import StatsPage from '../_shared/StatsPage.jsx';
+import Summary from './Summary.jsx';
 import { countChars, firstSentence } from './prompts.js';
 
 const fmtTime = (ts) => (ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }) : '—');
@@ -70,5 +73,5 @@ export default function TeacherStats({ stageId } = {}) {
     );
   };
 
-  return <StatsPage stageId={id} columns={columns} summary={summary} rowDetail={rowDetail} />;
+  return <StatsPage stageId={id} columns={columns} summary={summary} rowDetail={rowDetail} summaryBlock={<Summary stageId={id} />} />;
 }

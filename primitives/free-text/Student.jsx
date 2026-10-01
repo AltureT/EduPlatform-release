@@ -4,6 +4,8 @@
 // 主按钮进操作条：未提交"提交"，已提交且 canChange"更新"（未改动不可点）；canChange=false 提交后只读。
 // 回看 / 镜像：只读显示已提交的原文。
 // 未提交的改动自动保存（useDraft 'answers'，学生输入自动保存规格 §2.4）：刷新、断线、关浏览器、换设备不丢；提交成功后清掉，显示已提交的原文。
+// T9a 教师演示模式（教师视图与学生页重排规格 §2.2；useStudentStage().demo）：文本框可打字，"提交"写本地演示记录
+// （setMyData { answers, submittedAt }，不发事件）；不看是否当前段。
 import { useEffect, useRef } from 'react';
 import { useStudentStage, useDraft, Btn, Fill, Page, Stack } from '#kernel/client/index.js';
 import PromptText from '../_shared/PromptText.jsx';
@@ -38,7 +40,7 @@ function Counter({ prompt, text }) {
 }
 
 export default function Student({ stageId } = {}) {
-  const { stage, options, myData, isLive, readOnly, send } = useStudentStage(stageId);
+  const { stage, options, myData, isLive, readOnly, send, demo, setMyData } = useStudentStage(stageId);
   const [draftRaw, setDraft, { clear: clearDraft }] = useDraft('answers', null, { stageId: stageId ?? stage?.id });
   const draft = draftRaw && typeof draftRaw === 'object' && !Array.isArray(draftRaw) ? draftRaw : null;
   const submittedAt = myData?.submittedAt ?? null;
@@ -55,7 +57,7 @@ export default function Student({ stageId } = {}) {
   const { prompts, canChange } = options;
   const saved = myData?.answers ?? {};
   const submitted = submittedAt != null;
-  const locked = !isLive || readOnly || (canChange === false && submitted);
+  const locked = (!isLive && !demo) || readOnly || (canChange === false && submitted);
   // 交了就不能改（canChange=false）时只显示已提交的原文，不显示草稿
   const frozen = canChange === false && submitted;
   const values = Object.fromEntries(prompts.map((p) => [p.id, (frozen ? undefined : draft?.[p.id]) ?? saved[p.id] ?? '']));
@@ -67,7 +69,9 @@ export default function Student({ stageId } = {}) {
   const edit = (id, v) => setDraft((d) => ({ ...(d && typeof d === 'object' ? d : {}), [id]: v }));
   const submit = () => {
     if (locked || !valid) return;
-    send('student:freetext-submit', { answers: Object.fromEntries(prompts.map((p) => [p.id, values[p.id]])) });
+    const answers = Object.fromEntries(prompts.map((p) => [p.id, values[p.id]]));
+    if (demo) setMyData({ answers, submittedAt: Date.now() });
+    else send('student:freetext-submit', { answers });
   };
 
   const box = (p, rows) => (

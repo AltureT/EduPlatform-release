@@ -71,8 +71,62 @@ export function StudentAside({ stageId, isLive }) {
   });
 }
 
+// T9a（教师视图与学生页重排规格 §2.1）：教师课前页里组件的状态行 teacherPrelogin——每个提供者一行
+// <div data-prelogin-row={id} class="prelogin-row">（返回 null 时 :empty 隐藏，不占位），按 lesson.config 顺序；props {}；
+// 无提供者时返回 null。sandbox 放"Python 就绪 N / 在线 M"，coach 未配置时放一句提示
+export function TeacherPreloginRows() {
+  const components = useOpenComponents('teacher');
+  const list = slotProviders(components, 'teacherPrelogin');
+  if (list.length === 0) return null;
+  return list.map((c) => {
+    const Row = c.slots.teacherPrelogin;
+    return (
+      <div key={`prelogin-${c.id}`} data-prelogin-row={c.id} className="prelogin-row">
+        <SlotBoundary id={c.id} slot="teacherPrelogin">
+          <Row />
+        </SlotBoundary>
+      </div>
+    );
+  });
+}
+
+// T9b（教师视图与学生页重排规格 §2.5）：studentDock 提供者 → [{ id, title, Dock }]（title = slots.dockTitle，缺省组件 label、再缺省 id）。
+// 学生外壳据此决定内容区是否用两列网格（有提供者才包，未开组件时 DOM 不变）、渲染哪个面板
+export function useStudentDockProviders() {
+  const components = useOpenComponents('student');
+  return useMemo(() => slotProviders(components, 'studentDock').map((c) => ({
+    id: c.id,
+    title: typeof c.slots.dockTitle === 'string' && c.slots.dockTitle ? c.slots.dockTitle : (c.label || c.id),
+    Dock: c.slots.studentDock,
+  })), [components]);
+}
+
+// 面板内容：包一层错误边界（抛错只记日志、面板内容为空）
+export function DockSlot({ provider }) {
+  const { Dock } = provider;
+  return (
+    <SlotBoundary id={provider.id} slot="studentDock">
+      <Dock />
+    </SlotBoundary>
+  );
+}
+
+// T9a（教师视图与学生页重排规格 §2.1）：teacherToolbar 提供者按 slots.teacherToolbarOrder（数字，小的在前，缺省 0）稳定排序；
+// 同序号保持 lesson.config 顺序。其它槽位按 lesson.config 顺序
+const ORDER_META = { teacherToolbar: 'teacherToolbarOrder' };
+function orderOf(c, key) {
+  const v = c.slots[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
 export function slotProviders(components, slot) {
-  return components.filter((c) => typeof c.slots[slot] === 'function');
+  const list = components.filter((c) => typeof c.slots[slot] === 'function');
+  const key = ORDER_META[slot];
+  if (!key) return list;
+  return list
+    .map((c, i) => ({ c, i, o: orderOf(c, key) }))
+    .sort((a, b) => a.o - b.o || a.i - b.i)
+    .map((x) => x.c);
 }
 
 // <ComponentSlot role slot props />：依次渲染；无提供者时返回 null

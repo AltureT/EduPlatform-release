@@ -339,8 +339,8 @@ export async function loadLesson(configPath, { primitivesRoot = DEFAULT_PRIMITIV
       }
     }
     seen.set(config.id, dirName);
-    const hasDemo = fs.existsSync(path.join(dir, 'TeacherDemo.jsx'))
-      || (primitiveDir != null && fs.existsSync(path.join(primitiveDir, 'TeacherDemo.jsx')));
+    // T9a（教师视图与学生页重排规格 §2.2）：演示视图恒有（缺省是该段学生页；阶段目录自带旧式 TeacherDemo.jsx 时渲染它），hasDemo 恒为真
+    const hasDemo = true;
     stages.push({ id: config.id, dir, config, hasDemo, primitiveDir, secretOptions, serverOptions });
   }
   return { lessonConfig, stagesRoot, stages, stagesHash: stagesHash(stages.map((s) => s.id)) };

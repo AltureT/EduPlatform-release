@@ -4,6 +4,8 @@
 // 揭晓后显示对错与正确答案——正确答案只从班级记录 classData.answer 读（学生收到的 options 没有 answer，保密选项）；
 // 非当前阶段置灰；镜像内保持原样显示但不响应。
 // 多选未提交的勾选自动保存（useDraft 'choice'，学生输入自动保存规格 §2.4）；提交成功后清掉。
+// T9a 教师演示模式（教师视图与学生页重排规格 §2.2；useStudentStage().demo）：可点选 / 提交，写本地演示记录
+// （setMyData { choice, submittedAt }，不发事件）；不看是否当前段；揭晓（班级记录 answer）后同学生一样显示对错与正确答案。
 import { useEffect, useRef } from 'react';
 import { useStudentStage, useNarrow, useDraft, Btn, Chip, Page, Row, Stack, Tiles } from '#kernel/client/index.js';
 import PromptText from '../_shared/PromptText.jsx';
@@ -28,7 +30,7 @@ export function columnsFor(n, narrow) {
 const tileMin = (k) => `calc((100% - ${k - 1} * var(--sp-3)) / ${k})`;
 
 export default function Student({ stageId } = {}) {
-  const { stage, options, myData, classData, isLive, readOnly, send } = useStudentStage(stageId);
+  const { stage, options, myData, classData, isLive, readOnly, send, demo, setMyData } = useStudentStage(stageId);
   const narrow = useNarrow();
   const [draftRaw, setDraft, { clear: clearDraft }] = useDraft('choice', null, { stageId: stageId ?? stage?.id });
   const draft = Array.isArray(draftRaw) ? draftRaw.filter((k) => typeof k === 'string') : null;
@@ -49,22 +51,27 @@ export default function Student({ stageId } = {}) {
   const submitted = mine.length > 0;
   const revealed = !!answer;
   // 回看（非当前阶段）按钮置灰；镜像内保持原样显示（外壳已加 inert，send 为 no-op），只是不响应
-  const disabled = !isLive;
+  const disabled = !isLive && !demo;
   const locked = disabled || readOnly || revealed || (canChange === false && submitted);
   const selected = multiple && draft ? draft : mine;
   const dirty = multiple && draft != null && orderKeys(options, draft).join() !== mine.join();
 
+  // 演示模式：写本地记录，不发事件
+  const vote = (choice) => {
+    if (demo) setMyData({ choice, submittedAt: Date.now() });
+    else send('student:vote', { choice });
+  };
   const pick = (key) => {
     if (locked) return;
     if (!multiple) {
-      send('student:vote', { choice: key });
+      vote(key);
       return;
     }
     setDraft(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key]);
   };
   const submit = () => {
     if (locked || selected.length === 0) return;
-    send('student:vote', { choice: orderKeys(options, selected) });
+    vote(orderKeys(options, selected));
   };
 
   const right = revealed && submitted && (myData?.correct ?? orderKeys(options, mine).join() === answer.join());

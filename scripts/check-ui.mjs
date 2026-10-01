@@ -10,7 +10,9 @@
 //   media          @media
 //   page-root      stages 与 primitives 下 Student.jsx / TeacherDemo.jsx 的默认导出组件，顶层 return 须是 <Page …>
 //                  （早退 return null 允许；三元两个分支都查）
-//   advance        stages 与 primitives 下 TeacherStats.jsx / TeacherDemo.jsx 出现 advance(（推进在外壳操作条，契约 v0.7）
+//   advance        stages 与 primitives 下 TeacherStats.jsx / TeacherDemo.jsx / TeacherActions.jsx（T9a）出现 advance(（推进在外壳操作条，契约 v0.7）
+//   primitive-demo T9a（教师视图与学生页重排规格 §2.2）：原语目录（primitives/<type>/，_shared 除外）不得有 TeacherDemo.jsx——
+//                  演示视图就是学生页（Student.jsx 处理 demo），教师按钮放 TeacherActions.jsx；自写段的旧式 TeacherDemo.jsx 照旧可用、按上面的规则查
 // 只看代码：注释、模板字面量整体跳过；字符串字面量只保留样式对象的键与值（如 { position: 'fixed' }）
 //   和纯数字的 JSX 属性值（height="300"），其余字符串与 JSX 文本跳过，不误报。
 // 行尾写 // check-ui-ignore-line 忽略该行的全部命中。
@@ -25,7 +27,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SIZE_LIMIT = 64;
 const PAGE_FILES = new Set(['Student.jsx', 'TeacherDemo.jsx']);
-const ADVANCE_FILES = new Set(['TeacherStats.jsx', 'TeacherDemo.jsx']);
+const ADVANCE_FILES = new Set(['TeacherStats.jsx', 'TeacherDemo.jsx', 'TeacherActions.jsx']);
+// T9a：原语目录里的 TeacherDemo.jsx（primitives/<type>/TeacherDemo.jsx，_ 开头的共享目录不是原语）
+const PRIMITIVE_DEMO_RE = /(^|\/)primitives\/(?!_)[^/]+\/TeacherDemo\.jsx$/;
 const MEDIA_TAGS = new Set(['canvas', 'svg', 'img', 'video', 'iframe']);
 const IGNORE = 'check-ui-ignore-line';
 
@@ -341,6 +345,16 @@ export function scanSource(src, file, { requirePage } = {}) {
   const structCode = codeView(src);
   if (needPage) hits.push(...pageRootHits(src, file, structCode));
   if (inStages && ADVANCE_FILES.has(base)) hits.push(...advanceHits(src, file, structCode));
+  if (PRIMITIVE_DEMO_RE.test(file)) {
+    hits.length = 0;
+    hits.push({
+      file,
+      line: 1,
+      rule: 'primitive-demo',
+      message: '原语不再提供 TeacherDemo.jsx：教师演示视图就是学生页（Student.jsx 处理 useStudentStage().demo），教师按钮放 TeacherActions.jsx（T9a）',
+      snippet: (src.split('\n')[0] || '').trim(),
+    });
+  }
   const raw = src.split('\n');
   return hits
     .filter((h) => !(raw[h.line - 1] || '').includes(IGNORE))

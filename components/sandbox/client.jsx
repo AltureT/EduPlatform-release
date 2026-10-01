@@ -4,6 +4,7 @@ import TeacherToolbar from './client/slots/TeacherToolbar.jsx';
 import TeacherSidebar from './client/slots/TeacherSidebar.jsx';
 import StudentOverlay from './client/slots/StudentOverlay.jsx';
 import StudentBanner from './client/slots/StudentBanner.jsx';
+import TeacherPrelogin from './client/slots/TeacherPrelogin.jsx';
 
 export default {
   slots: {
@@ -11,6 +12,8 @@ export default {
     teacherSidebar: TeacherSidebar,
     studentOverlay: StudentOverlay,
     studentBanner: StudentBanner,
+    // T9a：课前页一行"Python 就绪 N/M"（teacherToolbar 渲染 null，只登记信箱 key）
+    teacherPrelogin: TeacherPrelogin,
   },
   store: {
     student: { initial: {}, on: {} },

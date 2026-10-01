@@ -344,7 +344,9 @@ export default function Page({
       : <MainRegion panel max={960}>{r.main}{asideNode}</MainRegion>;
   }
 
-  const titleSize = role === 'teacher' && !inMirror ? 'var(--heading, var(--fs-xl))' : 'var(--fs-xl)';
+  // T9a 审查：教师演示模式（演示视图 = 学生页）标题字号按学生端算，与学生看到的一致
+  const demoView = !!stageCtx && stageCtx.demo === true;
+  const titleSize = role === 'teacher' && !inMirror && !demoView ? 'var(--heading, var(--fs-xl))' : 'var(--fs-xl)';
 
   return (
     <div

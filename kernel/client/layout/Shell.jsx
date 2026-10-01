@@ -3,16 +3,18 @@
 // - 内容区 min-height: 0；教师端 overflow: auto，学生端 overflow: hidden（由阶段内容用 <Page> / <Fill> 分配高度）
 // - 操作条是网格的一行，不是 position: fixed。内容：外壳自己的项（actionsStart / actionsEnd）+ 内容区里
 //   <Page.Actions> 经 sink 登记的项（pageActionsAt 决定放左组还是右组）
+// - T9a：actionsAfterPage（教师端 TeacherActions）排在左组 Page.Actions 之后（pageActionsAt="start" 时）；
+//   pageActionsAt="end" 时排在左组最后
 // - sink：缺省由 Shell 自建并向内容区提供；学生端 live / 回看两个窗格各有一个，由调用方传入当前可见的那个
 // - U4：向整棵外壳提供 OverlayScopeContext（role），外壳里的 Overlay 挂到 body 后仍带外壳的字号作用域
 import { Children, Fragment, useState, useSyncExternalStore } from 'react';
 import { ActionSinkContext, createActionSink } from './actionSink.js';
 import { OverlayScopeContext } from '../shells/overlayStack.js';
 
-function ActionBar({ sink, start, end, pageAt, inert }) {
+function ActionBar({ sink, start, afterPage, end, pageAt, inert }) {
   useSyncExternalStore(sink.subscribe, sink.getVersion, sink.getVersion);
   const pageNodes = sink.nodes().map(([id, node]) => <Fragment key={id}>{node}</Fragment>);
-  const s = [...Children.toArray(start), ...(pageAt === 'start' ? pageNodes : [])];
+  const s = [...Children.toArray(start), ...(pageAt === 'start' ? pageNodes : []), ...Children.toArray(afterPage)];
   const e = [...(pageAt === 'end' ? pageNodes : []), ...Children.toArray(end)];
   if (s.length === 0 && e.length === 0) return null;
   return (
@@ -47,6 +49,7 @@ export default function Shell({
   header,
   banner,
   actionsStart,
+  actionsAfterPage,
   actionsEnd,
   sink: externalSink,
   pageActionsAt = 'end',
@@ -115,7 +118,7 @@ export default function Shell({
         >
           {content}
         </main>
-        <ActionBar sink={sink} start={actionsStart} end={actionsEnd} pageAt={pageActionsAt} inert={inertActions} />
+        <ActionBar sink={sink} start={actionsStart} afterPage={actionsAfterPage} end={actionsEnd} pageAt={pageActionsAt} inert={inertActions} />
       </div>
     </OverlayScopeContext.Provider>
   );

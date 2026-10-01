@@ -9,10 +9,14 @@
 //   reveal：揭晓前只显示"已提交，等待揭晓"与自己的作答；揭晓后正确答案与解析从班级记录 classData.answerKey / explanations 读；
 //   never：只显示"已提交"与自己的作答。
 // 回看 / 镜像：只显示结果（未提交显示"未提交"，已揭晓时"已揭晓，未提交"）；学生收到的 options 没有 answerKey / explanations（保密选项）。
+// T9a 教师演示模式（教师视图与学生页重排规格 §2.2；useStudentStage().demo）：教师在演示视图里就是这一页——可点选、可"提交"
+// （写本地演示记录 setMyData { answers, submittedAt }，不发事件、不计时），之后显示学生提交后的样子；判分用教师端 options.answerKey 本地算，
+// 按 showResultTo 显示与学生一致：student-after-submit 提交即显示得分 / 对错 / 解析；reveal 揭晓（班级记录 revealedAt）后才显示；never 只显示"已提交"。
+// 演示模式不看是否当前段、是否已揭晓：没"提交"过就能作答。
 import { useEffect, useRef, useState } from 'react';
 import { useStudentStage, useNarrow, useDraft, Btn, Chip, Page, Row, Stack, Tiles } from '#kernel/client/index.js';
 import PromptText from '../_shared/PromptText.jsx';
-import { formatAnswer, formatKey, isAnswered, BLANK_MAX } from './items.js';
+import { formatAnswer, formatKey, grade, isAnswered, BLANK_MAX } from './items.js';
 import { itemOrder } from './order.js';
 
 const bigBtn = {
@@ -120,8 +124,19 @@ function ResultList({ items, answers, results, answerKey, explanations }) {
   );
 }
 
+// 演示模式的本地记录 → 学生会看到的记录：student-after-submit 提交即带得分；reveal 揭晓后才带；never 不带
+function demoResult(options, record, revealed) {
+  if (!options || record?.submittedAt == null) return record;
+  const mode = options.showResultTo;
+  if (mode === 'never' || (mode === 'reveal' && !revealed)) return record;
+  const g = grade(options, record.answers);
+  if (!g) return record;
+  const hasExplain = Object.keys(options.explanations ?? {}).length > 0;
+  return { ...record, ...g, ...(hasExplain ? { explanations: options.explanations } : {}) };
+}
+
 export default function Student({ stageId } = {}) {
-  const { stage, options, me, myData, classData, isLive, readOnly, send } = useStudentStage(stageId);
+  const { stage, options, me, myData: recorded, classData, isLive, readOnly, send, demo, setMyData } = useStudentStage(stageId);
   const narrow = useNarrow();
   const sid = stageId ?? stage?.id;
   const [draftRaw, setDraft, answersDraft] = useDraft('answers', {}, { stageId: sid });
@@ -130,6 +145,9 @@ export default function Student({ stageId } = {}) {
   const pos = Number.isInteger(posRaw) && posRaw >= 0 ? posRaw : 0;
   const sentRef = useRef(false);
 
+  // 演示模式：本地记录里只存作答，得分 / 对错 / 解析按 showResultTo 现算（教师端 options 有 answerKey）
+  const revealedClass = classData?.revealedAt != null;
+  const myData = demo ? demoResult(options, recorded, revealedClass) : recorded;
   const submitted = myData?.submittedAt != null;
   // 提交成功（本人记录有 submittedAt）后清掉草稿；没有草稿时不发
   const clearAnswers = answersDraft.clear;
@@ -141,9 +159,8 @@ export default function Student({ stageId } = {}) {
       clearPos();
     }
   }, [submitted, hasDraft, readOnly, clearAnswers, clearPos]);
-  // 揭晓后（班级记录有 revealedAt）服务端拒绝提交，未提交的学生不再停在作答页
-  const revealedClass = classData?.revealedAt != null;
-  const canAnswer = !!options && isLive && !readOnly && !submitted && !revealedClass;
+  // 揭晓后（班级记录有 revealedAt）服务端拒绝提交，未提交的学生不再停在作答页（演示模式不受限）
+  const canAnswer = demo ? !!options && !submitted : !!options && isLive && !readOnly && !submitted && !revealedClass;
   const limitMs = options?.timeLimitSec ? options.timeLimitSec * 1000 : null;
   const deadline = limitMs && typeof me?.enteredStageAt === 'number' ? me.enteredStageAt + limitMs : null;
   const now = useNow(canAnswer && deadline != null);
@@ -153,6 +170,10 @@ export default function Student({ stageId } = {}) {
     if (!canAnswer) return;
     const answers = {};
     for (const [k, v] of Object.entries(draft)) if (isAnswered(typeof v === 'string' ? v.trim() : v)) answers[k] = v;
+    if (demo) {
+      setMyData({ answers, submittedAt: Date.now() });
+      return;
+    }
     send('student:quiz-submit', { answers });
   };
 

@@ -1,10 +1,16 @@
 // 教师端外壳（规格 §9.2；v0.7 界面整理规格 §2.2）：!token || !ready → 登录；否则 <Shell role="teacher">：
-// - 顶栏：品牌 + 阶段导航（narrow 折叠为 "第 N 段 · 名称 ▾" 下拉）+ 组件 teacherToolbar（wide）+ LIVE
-// - 横幅区：服务端拒绝（error:validation，K5，4 秒后消失）/ 阶段清单不一致 / 推进受阻原因 / 回看
-// - 内容：课前页、谢幕、阶段演示视图（阶段自己的 <Page>，缺省 focus）或统计视图（外壳套 table 模板：
-//   Main = TeacherStats，Side = 组件 teacherSidebar；narrow 时侧栏收进操作条 "推荐 ▾" 底部抽屉）
-// - 操作条：左侧 演示 / 统计切换（narrow 用短文案）、暂停更新（统计视图，或统计暂停中的任何视图）、阶段 Page.Actions
-//   （含 narrow 时的"推荐 ▾"），右侧 "更多 ▾"（narrow 时组件 teacherToolbar 收进这个 Overlay 菜单；菜单里有内容才显示）+ 进入下一段（ConfirmAdvanceBtn；推进受阻时换成 继续 → / 强制继续）
+// - 顶栏（T9a，教师视图与学生页重排规格 §2.1）：只有品牌 + 阶段导航（narrow 折叠为 "第 N 段 · 名称 ▾" 下拉）；
+//   组件 teacherToolbar 不进顶栏，LIVE 芯片删除
+// - 横幅区：断线"重连中…"（T9a：本页曾入会过、当前 joined 为假时，代替原 LIVE；刚登录还没入会时不显示）/ 服务端拒绝（error:validation，K5，4 秒后消失）/
+//   阶段清单不一致 / 推进受阻原因 / 回看
+// - 内容：课前页、谢幕、阶段的三个视图（T9a §2.3）——演示视图（T9a §2.2：<DemoProvider><StageStudentView /></DemoProvider>，
+//   该段学生页、教师演示模式；阶段目录自带旧式 TeacherDemo.jsx 时仍渲染它）、统计视图（外壳套 table 模板：
+//   Main = TeacherStats（view 'stats'），Side = 组件 teacherSidebar；narrow 时侧栏收进操作条 "推荐 ▾" 底部抽屉）、
+//   明细表（同样套 table 模板、Main = TeacherStats（view 'table'），通栏不带侧栏）
+// - 操作条：左组 演示 / 统计 / 明细切换（narrow 用短文案）→ 组件 teacherToolbar（wide；按 slots.teacherToolbarOrder 排，mirror -10）→
+//   暂停更新（统计 / 明细视图，或统计暂停中的任何视图）→ 阶段 Page.Actions（含 narrow 时的"推荐 ▾"）→ TeacherActions
+//   （T9a §2.2：阶段 / 原语的可选 TeacherActions.jsx，三个视图都渲染 <TeacherActions stageId />，经 Shell 的 actionsAfterPage）；
+//   右组 "更多 ▾"（narrow 时组件 teacherToolbar 收进这个 Overlay 菜单；菜单里有内容才显示）+ 进入下一段（ConfirmAdvanceBtn；推进受阻时换成 继续 → / 强制继续）
 //
 // 约定：
 // - v0.7：推进入口由外壳操作条提供，阶段的 TeacherStats / TeacherDemo 不再放推进按钮（契约 v0.7）
@@ -12,13 +18,13 @@
 // - 谢幕 override 取自 lesson.curtain.override（classroom:state 的 curtain 字段）
 // - v0.5 组件槽位（规格 §2.3）：teacherMain 包裹主区域（按顺序嵌套）；teacherOverlay 在外壳之外；
 //   teacherCurtain 由 Curtain 在谢幕 / override 之后渲染
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { coreTeacherStore } from '../stores/coreTeacherStore.js';
 import { assembleStages, findStageMismatch } from '../stores/stageStores.js';
 import Btn from '../ui/Btn.jsx';
 import ConfirmAdvanceBtn from '../ui/ConfirmAdvanceBtn.jsx';
 import { StableLabel } from '../ui/StepBar.jsx';
-import ViewToggle from '../ui/ViewToggle.jsx';
+import ViewToggle, { VIEW_ITEMS } from '../ui/ViewToggle.jsx';
 import StatsPauseButton from '../table/StatsPauseButton.jsx';
 import Shell from '../layout/Shell.jsx';
 import Page from '../layout/Page.jsx';
@@ -33,6 +39,8 @@ import Curtain from './Curtain.jsx';
 import { useLessonChrome } from './useLessonChrome.js';
 import { ComponentSlot, slotProviders, useOpenComponents, wrapTeacherMain } from './ComponentSlots.jsx';
 import { KernelRoleContext } from '../hooks/roleContext.js';
+import DemoProvider from '../demo/DemoProvider.jsx';
+import StageStudentView from '../mirror/StageStudentView.jsx';
 
 const bannerBase = {
   padding: 'var(--sp-2) var(--sp-4)',
@@ -46,6 +54,23 @@ const bannerBase = {
 };
 
 export const STAGE_MISMATCH_TEXT = '阶段清单不一致，请重新构建';
+
+// TeacherActions 抛错只记日志、不渲染按钮，不拖垮外壳
+class TeacherActionsBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err) {
+    console.error('[TeacherActions] 渲染出错', err);
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
 
 export default function TeacherApp() {
   return (
@@ -194,28 +219,15 @@ function ToolbarMenu({ open, onClose, onItems, children }) {
   );
 }
 
-function LiveChip() {
-  return (
-    <div style={{
-      height: 28,
-      padding: '0 10px',
-      background: 'var(--good-soft)',
-      color: 'var(--good)',
-      borderRadius: 999,
-      fontSize: 'var(--fs-xs)',
-      fontWeight: 600,
-      display: 'flex', alignItems: 'center', gap: 6,
-      flexShrink: 0,
-    }}>
-      <span style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--good)', animation: 'pulse 1.4s infinite' }} />
-      LIVE
-    </div>
-  );
-}
-
 function TeacherShell() {
   const token = coreTeacherStore((s) => s.token);
   const ready = coreTeacherStore((s) => s.authenticated);
+  const joined = coreTeacherStore((s) => s.joined);
+  // T9a 审查：只有入会过之后再断开才算"重连中"（首次登录成功到 teacher:join-ok 之间 joined 也为假，不显示）
+  const [everJoined, setEverJoined] = useState(false);
+  useEffect(() => {
+    if (joined) setEverJoined(true);
+  }, [joined]);
   const connect = coreTeacherStore((s) => s.connect);
   const stageIndex = coreTeacherStore((s) => s.stageIndex);
   const viewedStageIndex = coreTeacherStore((s) => s.viewedStageIndex);
@@ -261,10 +273,12 @@ function TeacherShell() {
   const entries = useMemo(() => assembleStages(stages), [stages]);
   const mismatch = useMemo(() => findStageMismatch(stages), [stages]);
   const viewedEntry = entries[viewedStageIndex] || null;
-  const hasDemo = !!(viewedEntry && viewedEntry.TeacherDemo);
+  // T9a §2.2：演示视图恒有（缺省是该段学生页；阶段目录自带旧式 TeacherDemo.jsx 时渲染它）
+  const hasDemo = true;
+  const legacyDemo = viewedEntry ? viewedEntry.TeacherDemo || null : null;
   const isReviewing = viewedStageIndex !== stageIndex;
 
-  // 当前阶段有 demo 默认 demo；回看默认 stats；切阶段时重置
+  // 当前阶段默认演示视图；回看默认统计视图；切阶段时重置
   useEffect(() => {
     setViewMode(!isReviewing && hasDemo ? 'demo' : 'stats');
   }, [viewedStageIndex, stageIndex, isReviewing, hasDemo, setViewMode]);
@@ -278,27 +292,40 @@ function TeacherShell() {
 
   let content = null;
   let isStage = false;
-  let isStatsView = false;
+  let isStatsView = false;   // 统计视图或明细表（外壳套 table 模板，Main = TeacherStats）
+  let dataView = null;       // 'stats' | 'table'
   if (viewedEntry) {
     if (viewedEntry.id === 'prelogin') content = <TeacherPrelogin />;
     else if (viewedEntry.id === 'curtain') {
       content = <Curtain role="teacher" title={viewedEntry.label} overrideDir={lesson.curtain ? lesson.curtain.override : null} />;
     } else {
       isStage = true;
-      const Comp = viewMode === 'demo' && hasDemo ? viewedEntry.TeacherDemo : viewedEntry.TeacherStats;
-      isStatsView = Comp === viewedEntry.TeacherStats;
-      content = Comp ? (
-        <PageStageContext.Provider value={{ view: isStatsView ? 'stats' : 'demo', config: viewedEntry.config }}>
-          <Comp />
-        </PageStageContext.Provider>
-      ) : null;
+      const showDemo = viewMode === 'demo' && hasDemo;
+      isStatsView = !showDemo;
+      dataView = isStatsView ? (viewMode === 'table' ? 'table' : 'stats') : null;
+      if (showDemo && !legacyDemo) {
+        // 演示视图 = 该段学生页（教师演示模式：本地记录、不发事件）；key 按段，换段重新挂载
+        content = (
+          <DemoProvider key={viewedEntry.id} stageId={viewedEntry.id}>
+            <StageStudentView stageId={viewedEntry.id} />
+          </DemoProvider>
+        );
+      } else {
+        const Comp = showDemo ? legacyDemo : viewedEntry.TeacherStats;
+        content = Comp ? (
+          <PageStageContext.Provider value={{ view: dataView ?? 'demo', config: viewedEntry.config }}>
+            <Comp />
+          </PageStageContext.Provider>
+        ) : null;
+      }
     }
   }
 
   const slotStageId = viewedEntry ? viewedEntry.id : null;
   const slotIsLive = !isReviewing;
   const mainArea = wrapTeacherMain(components, content, { stageId: slotStageId, isLive: slotIsLive, viewMode });
-  const hasSidebar = slotProviders(components, 'teacherSidebar').length > 0;
+  // 明细表通栏（T9a §2.3）：不带 teacherSidebar
+  const hasSidebar = dataView === 'stats' && slotProviders(components, 'teacherSidebar').length > 0;
   const body = isStatsView ? (
     <Page template="table" title={viewedEntry.label} data-testid="teacher-stats-page">
       <Page.Main>{mainArea}</Page.Main>
@@ -324,15 +351,15 @@ function TeacherShell() {
         onSelect={setViewedStageIndex}
         narrow={narrow}
       />
-      {/* U5：右侧组靠右、不伸缩；nav 已靠左，此组变窄（回看时工具栏不渲染）不再影响阶段按钮位置 */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--sp-2)', flex: '0 0 auto' }}>
-        {!narrow && toolbar}
-        <LiveChip />
-      </div>
     </>
   );
 
   const banner = [
+    everJoined && !joined && (
+      <div key="reconnecting" data-testid="reconnecting" role="status" style={{ ...bannerBase, background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 }}>
+        重连中…
+      </div>
+    ),
     toast && (
       <div key="toast" data-testid="validation-error" role="alert" style={{ ...bannerBase, background: 'var(--bad-soft)', color: 'var(--bad)', fontWeight: 600 }}>
         {toast}
@@ -356,12 +383,23 @@ function TeacherShell() {
     ),
   ];
 
+  // T9a §2.2：TeacherActions（可选导出）在三个视图的操作条左组、Page.Actions 之后；带阶段信息（原语的 useTeacherStage() 不写 id 也能取到）
+  const TeacherActions = isStage && viewedEntry ? viewedEntry.TeacherActions : null;
+  const actionsAfterPage = TeacherActions ? (
+    <PageStageContext.Provider key="teacher-actions" value={{ view: dataView ?? 'demo', config: viewedEntry.config }}>
+      <TeacherActionsBoundary>
+        <TeacherActions stageId={viewedEntry.id} />
+      </TeacherActionsBoundary>
+    </PageStageContext.Provider>
+  ) : null;
+
   const actionsStart = [
-    isStage && hasDemo && (
+    isStage && (
       <div key="toggle" data-testid="view-toggle-wrap" style={{ flexShrink: 0 }}>
-        <ViewToggle value={viewMode} onChange={setViewMode} short={narrow} />
+        <ViewToggle value={viewMode} onChange={setViewMode} short={narrow} items={VIEW_ITEMS} />
       </div>
     ),
+    !narrow && hasToolbar && <Fragment key="toolbar">{toolbar}</Fragment>,
     (isStatsView || statsPaused) && (
       <StatsPauseButton
         key="pause"
@@ -396,6 +434,7 @@ function TeacherShell() {
         header={header}
         banner={banner}
         actionsStart={actionsStart}
+        actionsAfterPage={actionsAfterPage}
         actionsEnd={[
           moreMenu && moreHasItems && (
             <Btn key="more" variant="soft" data-testid="toolbar-more" aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen(true)}>
