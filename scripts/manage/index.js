@@ -11,6 +11,9 @@
 //   本项目工作台、pid 与锁一致、平台已停止且手上没活 → 对锁里的 pid 发结束信号，最多等 10 s 锁释放后正常启动；
 //   平台没停 / 正在更新 / 正在恢复重置或下载运行时 → 不接管，按状态提示（takeoverMessage）；ping 不通 / 不是本项目 → 原提示不变。
 //   参数 --no-replace（npm run manage -- --no-replace）关闭接管；只有这时才显示"kill <pid> && npm run manage"那段引导
+// S12（排障文件与 AI 排障规格 §1.2）：工作台自身起不来（取锁出错、监听失败、端口都被占、创建服务出错）或运行中未捕获异常 →
+//   写 排障/<时间>-工作台启动.md，打印"排障文件已写到…"，以退出码 76 退出（入口脚本见 76 不再另写）；文件没写成仍以 1 退出。
+//   "已有工作台窗口"这类已有专门提示的不写、仍以 1 退出
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +21,7 @@ import { ensureEnv } from './env-file.js';
 import { createManageServer } from './server.js';
 import { openBrowser } from './net.js';
 import { acquireManageLock, LOCK_FILE, pingManage, decideTakeover, replaceOldManage, takeoverMessage } from './process.js';
+import { writeDiagnosis, collectEnvironment, launcherSection } from './diagnosis.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const START_PORT = (() => {
@@ -27,6 +31,28 @@ const START_PORT = (() => {
 const PORTS = Array.from({ length: 10 }, (_, i) => START_PORT + i);
 const TITLE = '班迹工作台';
 const NO_REPLACE = process.argv.slice(2).includes('--no-replace');
+const DIAG_EXIT_CODE = 76;
+const manageInfo = { port: null, startedAt: Date.now() };
+
+// 写"工作台启动"排障文件；写成了返回 76，没写成返回 1
+function startupDiagnosis(message, err) {
+  const detail = err ? String(err?.stack ?? err).split('\n') : [];
+  const r = writeDiagnosis(ROOT, {
+    stage: '工作台启动', message, detail,
+    environment: collectEnvironment(ROOT, { manage: manageInfo }),
+    sections: [launcherSection(ROOT)],
+    log: (m) => console.error(m),
+  });
+  if (!r) return 1;
+  console.error('');
+  console.error(`  排障文件已写到 ${r.file}，把它发给 AI 工具就能排查`);
+  console.error('');
+  return DIAG_EXIT_CODE;
+}
+function failStartup(message, err) {
+  console.error(message);
+  process.exit(startupDiagnosis(message, err));
+}
 
 process.title = TITLE;
 if (process.stdout.isTTY) process.stdout.write(`\x1b]0;${TITLE}\x07`);
@@ -36,8 +62,7 @@ let lock;
 try {
   lock = await acquireManageLock(ROOT);
 } catch (err) {
-  console.error(`工作台无法启动：${err?.message ?? err}`);
-  process.exit(1);
+  failStartup(`工作台无法启动：${err?.message ?? err}`, err);
 }
 let takeover = { action: 'none', reason: 'no-replace' };
 if (!lock.ok && !NO_REPLACE) {
@@ -86,11 +111,15 @@ process.on('exit', () => {
 });
 
 const token = crypto.randomBytes(24).toString('base64url');
-const { created } = ensureEnv(ROOT);
-if (created) console.log('已生成配置文件 .env（请在工作台第 4 步"上课准备"里设置教师密码）');
-
 const UPDATED_EXIT_CODE = 75;
-const srv = createManageServer({ root: ROOT, token, onUpdated: () => shutdown('平台已更新', UPDATED_EXIT_CODE) });
+let srv;
+try {
+  const { created } = ensureEnv(ROOT);
+  if (created) console.log('已生成配置文件 .env（请在工作台第 4 步"上课准备"里设置教师密码）');
+  srv = createManageServer({ root: ROOT, token, onUpdated: () => shutdown('平台已更新', UPDATED_EXIT_CODE) });
+} catch (err) {
+  failStartup(`工作台无法启动：${err?.message ?? err}`, err);
+}
 manage = srv;
 let listening = false;
 for (const port of PORTS) {
@@ -100,16 +129,11 @@ for (const port of PORTS) {
     lock.update({ port, url: srv.url });
     break;
   } catch (err) {
-    if (err?.code !== 'EADDRINUSE') {
-      console.error(`工作台无法启动：${err?.message ?? err}`);
-      process.exit(1);
-    }
+    if (err?.code !== 'EADDRINUSE') failStartup(`工作台无法启动：${err?.message ?? err}`, err);
   }
 }
-if (!listening) {
-  console.error(`工作台无法启动：端口 ${PORTS[0]}–${PORTS.at(-1)} 都被占用了。请关掉其它工作台窗口后再试。`);
-  process.exit(1);
-}
+if (!listening) failStartup(`工作台无法启动：端口 ${PORTS[0]}–${PORTS.at(-1)} 都被占用了。请关掉其它工作台窗口后再试。`);
+manageInfo.port = Number(new URL(manage.url).port);
 
 console.log('');
 console.log('========================================');
@@ -154,7 +178,14 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => shutdow
 // 工作台自身出错：先停平台再退出，不留下无人管理的平台进程
 const onFatal = (err) => {
   console.error(`工作台出错：${err?.stack ?? err}`);
-  shutdown('工作台出错', 1);
+  if (exiting) return;
+  let code = 1;
+  try {
+    code = startupDiagnosis(`工作台出错：${err?.message ?? err}`, err);
+  } catch {
+    // 写排障文件本身出错：照常以 1 退出
+  }
+  shutdown('工作台出错', code);
 };
 process.on('uncaughtException', onFatal);
 process.on('unhandledRejection', onFatal);

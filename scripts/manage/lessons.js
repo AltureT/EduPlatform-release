@@ -92,7 +92,8 @@ export async function listLessonChoices(root, { warn = (m) => console.warn(m), c
 //       → { kind: 'progress', ring, ringName, next, stagesDone, stagesTotal, stages }
 //     stages（V1 代码题测试验证规格 §5，工作台只读备课表）：阶段表逐行 { label, dir, how, cells: [骨架, 内容, 检查, 模拟, 审查, 存档] 原文, done }
 //     两行都找不到（格式不对）→ { kind: 'unknown' }
-export const RING_NAMES = ['环境与项目', '教学设计', '平台规格', '脚手架与计划', '执行与审查', '磨课', '上课与课后'];
+//     S13：第 5 环改名"细节调整"；环名只按"当前环"的数字从下表取，旧课"环节"一节写的旧环名不影响解析
+export const RING_NAMES = ['环境与项目', '教学设计', '平台规格', '脚手架与计划', '执行与审查', '细节调整', '上课与课后'];
 
 function progressDir(relPath) {
   const p = String(relPath).replace(/\\/g, '/');

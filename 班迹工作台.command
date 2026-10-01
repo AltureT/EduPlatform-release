@@ -9,6 +9,9 @@
 #   工作台退出码 75（平台已更新，见更新规格 §4）→ 重新判断"装好了"再启动工作台，最多 3 次；
 #   设 EDU_LAUNCHER=1：工作台据此知道由入口脚本启动（75 时不再打印"请重新运行 npm run manage"）
 #   更新会覆盖本文件：bash 读的是打开时的旧文件（旧 inode），不受影响（.bat 另做了自我复制）
+#   每一步追加到 data/logs/launcher.log（[时间] 文字；> 1 MB 改名 .1 重来）；出错时 bash scripts/launcher-diag.sh 写 排障/ 里的排障文件
+#   （没有 Node 且老师拒绝 / 下载失败、npm install 两次都失败、工作台退出码不是 0 / 75 / 76）；
+#   工作台退出码 76 = 它自己已写好排障文件：不再另写、不重启
 # 本窗口开着平台就开着；关闭本窗口即关闭工作台和平台
 cd "$(dirname "$0")" || exit 1
 printf '\033]0;班迹工作台\007'
@@ -22,6 +25,22 @@ MIRROR_REGISTRY="https://registry.npmmirror.com"
 MIRROR_SQLITE="https://registry.npmmirror.com/-/binary/better-sqlite3"
 SQLITE_BIN="node_modules/better-sqlite3/build/Release/better_sqlite3.node"
 
+LAUNCHER_LOG="data/logs/launcher.log"
+
+# 追加一行到入口脚本记录；写不了就算了（不影响启动）
+log() {
+  {
+    mkdir -p data/logs
+    if [ -f "$LAUNCHER_LOG" ] && [ "$(wc -c < "$LAUNCHER_LOG")" -gt 1048576 ]; then mv -f "$LAUNCHER_LOG" "$LAUNCHER_LOG.1"; fi
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LAUNCHER_LOG"
+  } 2>/dev/null
+}
+
+# 写排障文件（排障文件与 AI 排障规格 §2）：$1 = install | node | manage，$2 = 一句话；脚本自己打印"排障文件已写到…"
+diag() {
+  [ -f scripts/launcher-diag.sh ] && bash scripts/launcher-diag.sh "$@"
+}
+
 pause_exit() {
   echo ""
   read -n 1 -s -r -p "按任意键关闭本窗口…"
@@ -33,10 +52,13 @@ installed() {
   [ -f node_modules/.package-lock.json ] && [ -f "$SQLITE_BIN" ]
 }
 
+# $1 = 写进排障文件的一句话
 manual_node() {
   echo "请先安装 Node.js 22 或 24：https://nodejs.org/zh-cn"
   echo "国内下载更快：https://npmmirror.com/mirrors/node/ （进 v22 或 v24 开头的最新文件夹，下载 .pkg 安装包）"
   echo "安装完成后，再双击本文件。"
+  log "no usable Node.js: $1"
+  diag node "$1"
   pause_exit 1
 }
 
@@ -90,6 +112,7 @@ install_node() {
 
 # 上次下载中途失败留下的临时文件
 rm -f "$NODE_TMP"
+log "start in $PWD"
 
 # 找 Node：便携版 → 系统的（第一个数字 ≥ 22）→ 问一句，自动装到 vendor/node
 if ! use_vendor_node && ! { command -v node >/dev/null 2>&1 && node_ok node; }; then
@@ -100,16 +123,19 @@ if ! use_vendor_node && ! { command -v node >/dev/null 2>&1 && node_ok node; }; 
   read -r answer
   case "$answer" in
     "" | y | Y) ;;
-    *) manual_node ;;
+    *) manual_node "没有可用的 Node.js，老师选了不自动下载" ;;
   esac
+  log "downloading portable Node.js $NODE_VERSION"
   if ! install_node || ! use_vendor_node; then
     echo ""
     echo "下载失败。"
-    manual_node
+    manual_node "没有可用的 Node.js，便携版下载失败"
   fi
   vendor/node/bin/node -v
   echo "Node.js 已装到平台文件夹，以后双击本文件直接用"
 fi
+
+log "node: $(command -v node) $(node -v 2>/dev/null)"
 
 if [ "$EDU_LAUNCHER_DRY_RUN" = "1" ]; then
   node -v
@@ -128,23 +154,30 @@ ensure_installed() {
   else
     echo "第一次使用，正在安装依赖（需要联网，约几分钟）…"
   fi
+  log "npm install start"
   if ! npm install; then
+    log "npm install failed; retrying with $MIRROR_REGISTRY"
     echo ""
     echo "换国内源再试一次…"
     if ! npm_config_registry="$MIRROR_REGISTRY" npm_config_better_sqlite3_binary_host_mirror="$MIRROR_SQLITE" npm install; then
+      log "npm install failed again (mirror)"
       echo ""
       echo "安装失败：请检查网络，或让同事把整个 node_modules 文件夹拷给你（放进本文件夹）后再双击本文件。"
+      diag install "npm install 两次都失败（默认源与国内源各一次）"
       pause_exit 1
     fi
   fi
+  log "npm install ok"
 }
 
 # 工作台以退出码 75 退出 = 平台刚更新完：重新判断"装好了"、再启动工作台；最多重启 3 次（防止反复 75）
 restarts=0
 while :; do
   ensure_installed
+  log "npm run manage"
   npm run manage
   code=$?
+  log "npm run manage exited with code $code"
   if [ "$code" -eq 75 ] && [ "$restarts" -lt 3 ]; then
     restarts=$((restarts + 1))
     echo ""
@@ -153,8 +186,15 @@ while :; do
   fi
   break
 done
+# 76 = 工作台已写好排障文件（工作台启动失败），入口脚本不再另写
+if [ "$code" -eq 76 ]; then
+  echo ""
+  echo "工作台已退出，排障文件见 排障 文件夹"
+  pause_exit 1
+fi
 if [ "$code" -ne 0 ]; then
   echo ""
   echo "工作台已退出（上面是出错信息）。"
+  [ "$code" -ne 75 ] && diag manage "工作台意外退出（退出码 $code）"
   pause_exit "$code"
 fi

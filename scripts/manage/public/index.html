@@ -66,9 +66,20 @@
     <div id="p-error" class="error-box" role="alert" hidden>
       <p id="p-error-msg" class="error-msg"></p>
       <div id="p-error-actions" class="row"></div>
+      <!-- S12：有排障文件时一行两钮（模板 #diag-tpl，app.js renderDiag） -->
+      <div id="p-error-diag" hidden></div>
       <!-- L1：课程有问题时"查看详情"逐条列出（文件:行 + 一句话 + 怎么改），其它失败仍是原始记录 -->
       <details id="p-error-details"><summary>查看详情</summary><ul id="p-error-list" class="check-list" hidden></ul><pre id="p-error-detail"></pre></details>
     </div>
+
+    <!-- S12：排障行模板（启动失败框、更新结果、下载结果共用） -->
+    <template id="diag-tpl">
+      <div class="row diag-row">
+        <span>排障文件已写好</span>
+        <button type="button" class="small" data-diag="copy" title="把排障文件整份复制下来，直接贴给 AI 工具，它会告诉你怎么办">复制给 AI</button>
+        <button type="button" class="small" data-diag="open" title="打开平台文件夹里的排障文件夹，可以把最新那份发给 AI 工具">打开所在文件夹</button>
+      </div>
+    </template>
   </section>
 
   <div class="layout">
@@ -196,6 +207,7 @@
             <div id="s-py-progress" class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="bar"></div></div>
             <p id="s-py-label" class="muted"></p>
             <p id="s-py-fail" class="err-line" hidden>下载没完成，网络恢复后再点一次。</p>
+            <div id="s-py-diag" hidden></div>
             <details id="s-py-detail" hidden><summary>查看详情</summary><pre class="log small"></pre></details>
             <div class="row">
               <button id="s-py-btn" type="button" class="primary" data-action="fetch-pyodide" title="需要联网；中途断网再点一次会接着下载">开始下载</button>
@@ -378,7 +390,7 @@
             </div>
 
             <footer class="c-foot">
-              <span class="muted">出问题了？<button id="c-log" class="linkish" type="button" title="打开最近 500 行运行记录，可以截图发给技术同事">查看运行记录</button></span>
+              <span class="muted">出问题了？<button id="c-log" class="linkish" type="button" title="打开最近 500 行运行记录">查看运行记录</button></span>
               <details class="more" id="c-more">
                 <summary>更多信息</summary>
                 <dl class="facts">
@@ -467,6 +479,7 @@
           <p id="s-up-help" class="help" hidden></p>
           <pre id="s-up-log" class="log small" hidden></pre>
           <p id="s-up-result" class="help" role="status" hidden></p>
+          <div id="s-up-diag" hidden></div>
           <details class="more-help" id="s-pf-more" hidden><summary>详细说明</summary><p>平台自带的文件被改过，升级时会被新版本覆盖。课程里要的改动应该放在课程自己的文件夹里；想恢复原样，重新解压一次发布包覆盖平台文件夹即可（课程、课堂数据和设置都不会丢）。</p></details>
         </div>
 
@@ -497,7 +510,7 @@
 
         <div class="card">
           <h3>运行记录</h3>
-          <p class="desc">出问题时打开，可以截图发给技术同事。</p>
+          <p class="desc">出错时上方若有排障文件，复制给 AI 即可。</p>
           <button id="pf-log" type="button" title="打开最近 500 行运行记录">查看运行记录</button>
         </div>
       </section>

@@ -39,6 +39,11 @@
 //     PUT /api/settings 的课程候选 = 我的课 + 根目录开发课 + 当前值；示例课不能设为当前课程（403）
 //   K9（AI 备用线路规格 §5.1）：POST /api/ai/models { which: 1 | 2, baseUrl, apiKey? } → { ok: true, models } | { ok: false, reason, text }；
 //     参数不对 400 { error }；GET <baseUrl>/models 用注入的 fetch（ai-models.js）
+//   S12（排障文件与 AI 排障规格 §1.2、§3）：出错时写 排障/ 文件（diagnosis.js），状态带 diagnosis: { file, at } | null——
+//     平台启动失败（error.kind ∈ DIAG_KINDS）→ 环节"启动平台"、运行中意外退出 → "平台退出"：overview.platform / SSE platform 带 diagnosis
+//       （文件异步写好后再广播一次）；"下载并更新"失败 → update.result.diagnosis；启动时恢复了上次没完成的更新 → update.recovered.diagnosis；
+//       运行时下载失败 → pyodide.result.diagnosis（fetch 事件的 done 同带）。新一次启动 / 重新构建 / 更新 / 下载开始时清空。
+//     GET /api/diagnosis/:name → 正文（text/markdown；名字不对 400、不存在 404）；POST /api/diagnosis/open → openFolder(排障/)（没有就建；打不开 500）
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -49,7 +54,7 @@ import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, va
 import { migrateDb, takeMigratedNotice } from './migrate-db.js';
 import { lessonIdError, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
 import { listLessons, listLessonChoices, readLesson, lessonDir, DEV_LESSON } from './lessons.js';
-import { createPlatform, checkRequires, MANAGE_APP } from './process.js';
+import { createPlatform, checkRequires, MANAGE_APP, withDiagHint } from './process.js';
 import { lanAddresses, probePort } from './net.js';
 import { qrSvg } from './qr.js';
 import { pipeLines, sourceStale } from './build.js';
@@ -61,6 +66,8 @@ import { readUpload } from './upload.js';
 import { parseAITest, runAITest } from './ai-test.js';
 import { parseAIModels, fetchModels } from './ai-models.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
+import { writeDiagnosis, collectEnvironment, readDiagnosis, launcherSection, tailLines, DIAG_DIR } from './diagnosis.js';
+import { checkReportText, updateResultText, updateRecoveredText } from './ui-logic.js';
 import {
   checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, fixupLaunchers, RELEASE_API, spaceShortage, downloadNeedBytes,
 } from '../lib/update-platform.js';
@@ -72,6 +79,9 @@ export const PLATFORM_LIST_MAX = 20;
 export const UPDATE_CACHE = 'data/update-check.json';
 export const UPDATE_CHECK_TTL = 24 * 3_600_000;
 export const UPDATE_EXIT_DELAY = 1000;
+// S12：这几类启动失败写排障文件（端口、密码、还没有课程、缺运行时、课程检查未通过页面上已有按钮直接解决，不写）
+export const DIAG_KINDS = new Set(['build', 'crash', 'timeout', 'internal', 'lesson']);
+const DIAG_PHASE = { build: '构建', crash: '启动', timeout: '启动', internal: '内部错误', lesson: '读课程' };
 
 // K7："平台"页"版本"一行（平台文件完好 / 有 N 处改动）
 export function platformFilesInfo(root) {
@@ -193,10 +203,26 @@ export function createManageServer({
   const updateState = { running: false, child: null, lines: [], result: null, waitingExit: false };
   // 上次更新覆盖到一半被打断（Ctrl+C 之外的强行结束、断电、Windows 关窗口）→ 先恢复到更新前再开张
   let recovered = null;
+  // S12：排障文件的环境里写工作台端口与启动时间（listen 后填端口）
+  const manageInfo = { port: null, startedAt: Date.now() };
+  const diagEnv = (extra = {}) => collectEnvironment(root, { manage: manageInfo, ...extra });
+  const diag = (opts) => {
+    const r = writeDiagnosis(root, { ...opts, log });
+    return r ? { file: r.file, at: Date.now() } : null;
+  };
   try {
-    const r = recoverInterruptedUpdate(root, { log });
+    const recLines = [];
+    const r = recoverInterruptedUpdate(root, { log: (m) => { recLines.push(m); log(m); } });
     // 'intact'（文件已完好）与 'running'（更新程序还在跑）不提示；恢复了或恢复失败才在首页说
-    if (r && (r.action === 'rolled-back' || r.action === 'failed')) recovered = { ok: r.ok, from: r.from, to: r.to, backupDir: r.backupDir, at: Date.now() };
+    if (r && (r.action === 'rolled-back' || r.action === 'failed')) {
+      recovered = { ok: r.ok, from: r.from, to: r.to, backupDir: r.backupDir, at: Date.now() };
+      recovered.diagnosis = diag({
+        stage: '更新', phase: '启动时恢复', message: updateRecoveredText({ recovered }).text,
+        detail: [`v${r.from} → v${r.to}`, `备份：${r.backupDir}`, ...(r.errors ?? [])],
+        environment: diagEnv(),
+        sections: [{ title: '更新记录（最后 100 行）', lines: recLines.slice(-100) }, launcherSection(root)],
+      });
+    }
   } catch (err) {
     log(`[manage] 检查上次更新是否完成时出错：${err?.message ?? err}`);
   }
@@ -228,7 +254,52 @@ export function createManageServer({
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of clients) res.write(msg);
   }
-  const platformPayload = () => ({ ...platform.status(), pendingRestart: platform.pendingRestart() });
+  // S12：平台启动失败 / 运行中意外退出的排障文件（diagnosis: { file, at } | null）
+  let platformDiag = null;
+  let diagFor = null; // 已为哪个 error 对象写过（同一个失败的多次状态事件只写一次）
+  let diagGen = 0;
+  let prevState = platform.status().state;
+  const buildLines = []; // 这一次启动 / 重新构建的构建输出（最后 200 行）
+  // 排障文件写成了，提示里的"查看详情"才换成"复制给 AI"（process.js withDiagHint）
+  const platformStatus = () => {
+    const s = platform.status();
+    if (platformDiag && s.error) s.error = { ...s.error, message: withDiagHint(s.error.message) };
+    return { ...s, diagnosis: platformDiag };
+  };
+  // 新一次启动 / 重新构建的入口：上一份排障文件不再对应当前错误（"还没有课程"这类不经过 building 的也清）
+  const clearPlatformDiag = () => {
+    diagGen++;
+    platformDiag = null;
+    diagFor = null;
+  };
+  const platformPayload = () => ({ ...platformStatus(), pendingRestart: platform.pendingRestart() });
+  async function writePlatformDiag(s, gen) {
+    const running = s.error.kind === 'crash' && s.error.phase === 'running';
+    const env = effectiveEnv(root);
+    const rel = running && s.lessonConfig ? s.lessonConfig : env.LESSON_CONFIG;
+    let lesson = rel ? { path: rel } : null;
+    if (rel) {
+      const l = await readLesson(root, rel).catch(() => null);
+      if (l) lesson = { path: rel, id: l.id, title: l.title ?? null };
+    }
+    if (gen !== diagGen) return;
+    const sections = [];
+    if (buildLines.length) sections.push({ title: '构建输出（最后 200 行）', lines: [...buildLines] });
+    sections.push({ title: '平台运行记录（server.log 最后 200 行）', lines: tailLines(platform.logFile ?? path.join(root, 'data', 'logs', 'server.log'), 200) });
+    sections.push(launcherSection(root));
+    if (!running && s.check) sections.push({ title: '课程检查结果', lines: checkReportText(s.check, { title: lesson?.title ?? null }).split('\n') });
+    const d = diag({
+      stage: running ? '平台退出' : '启动平台',
+      phase: running ? '运行中' : DIAG_PHASE[s.error.kind],
+      message: withDiagHint(s.error.message),
+      detail: s.error.detail,
+      environment: diagEnv({ lesson, portOwner: s.error.owner ?? undefined }),
+      sections,
+    });
+    if (gen !== diagGen || !d) return;
+    platformDiag = d;
+    broadcast('platform', platformPayload());
+  }
   // M3：build.stale（运行中且课程源文件比上次准备页面新）缓存 5 s，平台状态变化时作废
   const STALE_TTL = 5000;
   let staleCache = null;
@@ -238,12 +309,28 @@ export function createManageServer({
     if (!staleCache || now - staleCache.at > STALE_TTL) staleCache = { at: now, value: sourceStale(root) };
     return staleCache.value;
   };
-  const onState = () => {
+  const onState = (s) => {
     staleCache = null;
+    // S12：新一次启动 / 重新构建开始 → 清掉上次的排障文件提示与构建输出
+    if ((s.state === 'starting' || s.state === 'building') && prevState === 'stopped') {
+      diagGen++;
+      platformDiag = null;
+      diagFor = null;
+      buildLines.length = 0;
+    }
+    prevState = s.state;
+    if (s.state === 'stopped' && s.error && DIAG_KINDS.has(s.error.kind) && s.error !== diagFor) {
+      diagFor = s.error;
+      writePlatformDiag(s, ++diagGen).catch((err) => log(`[manage] 排障文件没能写：${err?.message ?? err}`));
+    }
     broadcast('platform', platformPayload());
   };
   const onLog = (line) => broadcast('log', { line });
-  const onBuild = (line) => broadcast('build', { line });
+  const onBuild = (line) => {
+    buildLines.push(line);
+    if (buildLines.length > 200) buildLines.shift();
+    broadcast('build', { line });
+  };
   platform.on('state', onState);
   platform.on('log', onLog);
   platform.on('build', onBuild);
@@ -381,6 +468,13 @@ export function createManageServer({
     child.once('error', (err) => onLine(`下载程序无法启动：${err.message}`));
     child.once('close', (code) => {
       const result = { done: true, ok: code === 0, code, at: Date.now(), tail: fetchState.lines.slice(-20) };
+      if (!result.ok) {
+        result.diagnosis = diag({
+          stage: '下载运行时', message: '下载没有完成，可以再点一次继续', detail: [`下载程序退出码 ${code}`],
+          environment: diagEnv(),
+          sections: [{ title: '下载记录（最后 100 行）', lines: fetchState.lines.slice(-100) }, launcherSection(root)],
+        });
+      }
       Object.assign(fetchState, { running: false, child: null, result });
       broadcast('fetch', result);
     });
@@ -448,6 +542,14 @@ export function createManageServer({
     child.once('close', (code) => {
       const ok = code === 0;
       const result = { done: true, ok, code, version, backupDir, at: Date.now(), tail: updateState.lines.slice(-20) };
+      if (!ok) {
+        result.diagnosis = diag({
+          stage: '更新', phase: '下载并更新', message: updateResultText(result).text,
+          detail: [`v${currentVersion(root).current ?? '?'} → v${version}`, `更新程序退出码 ${code}`, ...(backupDir ? [`备份：${backupDir}`] : [])],
+          environment: diagEnv(),
+          sections: [{ title: '更新记录（最后 100 行）', lines: updateState.lines.slice(-100) }, launcherSection(root)],
+        });
+      }
       Object.assign(updateState, { running: false, child: null, result, waitingExit: ok });
       broadcast('update', result);
       staleCache = null;
@@ -482,7 +584,7 @@ export function createManageServer({
   api.get('/overview', async (_req, res) => {
     await migrationDone;
     const env = effectiveEnv(root);
-    const s = platform.status();
+    const s = platformStatus();
     const p = s.state === 'running' ? s.port : Number(env.PORT);
     const lesson = await lessonInfo(env.LESSON_CONFIG);
     // M3 审查：上课面板显示平台正在跑的课（启动时记录），.env 里换了课要重启才生效
@@ -514,6 +616,17 @@ export function createManageServer({
   // G1：课程卡片"做课步骤"第 3 步的"打开文件夹"——打开平台根目录
   api.post('/platform/open', async (_req, res) => {
     if (!(await openFolder(path.resolve(root)))) throw userError(lessonAdmin.MESSAGES.openFailed, 500);
+    res.json({ ok: true });
+  });
+
+  // S12：排障文件正文（"复制给 AI"）与打开 排障/ 文件夹
+  api.get('/diagnosis/:name', (req, res) => {
+    res.type('text/markdown; charset=utf-8').send(readDiagnosis(root, req.params.name));
+  });
+  api.post('/diagnosis/open', async (_req, res) => {
+    const dir = path.join(path.resolve(root), DIAG_DIR);
+    fs.mkdirSync(dir, { recursive: true });
+    if (!(await openFolder(dir))) throw userError(lessonAdmin.MESSAGES.openFailed, 500);
     res.json({ ok: true });
   });
 
@@ -655,6 +768,7 @@ export function createManageServer({
     if (stopOld !== null && !(Number.isInteger(stopOld) && stopOld > 0)) throw userError('进程号不对');
     if (blockedBy()) return busy(res, blockedBy());
     if (platform.status().state !== 'stopped') return busy(res, '平台已在运行或正在启动');
+    clearPlatformDiag();
     platform.start({ stopOld }).catch((err) => log(`[manage] 启动出错：${err?.stack ?? err}`));
     res.json({ ok: true });
   });
@@ -664,12 +778,14 @@ export function createManageServer({
   });
   api.post('/platform/restart', (_req, res) => {
     if (blockedBy()) return busy(res, blockedBy());
+    clearPlatformDiag();
     platform.restart().catch((err) => log(`[manage] 重启出错：${err?.stack ?? err}`));
     res.json({ ok: true });
   });
   api.post('/platform/rebuild', (_req, res) => {
     if (platform.status().state !== 'stopped') return busy(res, '请先停止平台再重新构建');
     if (updating()) return busy(res, '正在更新平台，请稍候');
+    clearPlatformDiag();
     platform.rebuild().catch((err) => log(`[manage] 构建出错：${err?.stack ?? err}`));
     res.json({ ok: true });
   });
@@ -881,6 +997,7 @@ export function createManageServer({
         httpServer.once('error', reject);
         httpServer.once('listening', () => {
           self.url = `http://127.0.0.1:${httpServer.address().port}/?t=${encodeURIComponent(token)}`;
+          manageInfo.port = httpServer.address().port;
           resolve(self.url);
         });
       });

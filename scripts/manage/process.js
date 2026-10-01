@@ -62,7 +62,10 @@ export function portBusyError(port, owner, suggest) {
   return { ...base, message: explainFailure(['EADDRINUSE'], port) };
 }
 
-const SEND_LOG = '点"查看详情"把记录发给技术同事';
+// S12：失败提示默认只说"查看详情"；工作台写成排障文件后用 withDiagHint 换成"复制给 AI"（server.js 的状态里换，文件没写成就不换）
+export const SEND_LOG = '点"查看详情"看出错记录';
+export const DIAG_HINT = '点"复制给 AI"把排障文件贴给 AI 工具';
+export const withDiagHint = (msg) => (typeof msg === 'string' ? msg.replace(SEND_LOG, DIAG_HINT) : msg);
 const WHAT = { 构建: '准备页面', 启动: '启动', 重启: '重启' };
 
 export function failMessage(kind, { what, seconds, count } = {}) {

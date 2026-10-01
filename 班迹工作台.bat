@@ -13,6 +13,10 @@ rem Self-copy: cmd.exe re-reads a running .bat by byte offset, and an update ove
 rem   So the first thing we do is copy ourselves to %TEMP% under a unique name and run the copy (with --copy
 rem   and the folder); the copy is what cmd keeps reading, the original can be replaced freely. The copy
 rem   deletes itself on the way out (:finish). If the copy fails (TEMP not writable), run in place with a warning.
+rem Launcher log: every step appends one English line to data\logs\launcher.log (:log; renamed to .1 past 1 MB).
+rem Troubleshooting file: on failure (no usable Node.js, npm install failed twice, console exit code other than
+rem   0 / 75 / 76) :diag runs scripts\launcher-diag.ps1, which writes the file and prints where (in Chinese; the
+rem   folder name never passes through cmd). Exit code 76 = the console already wrote one: no second file, no restart.
 rem Folder: pushd, not cd /d. cmd.exe cannot cd into a UNC path (\\server\share\..., e.g. a Mac folder shared
 rem   into a Windows VM); pushd maps a temporary drive letter for it. popd in :finish releases that letter.
 if /i "%~1"=="--copy" goto copied
@@ -24,10 +28,12 @@ exit /b
 
 :inplace
 echo Warning: could not copy this launcher to the TEMP folder; running it in place. If the platform updates itself, close this window and double-click again.
+set "EDU_START=%~dp0"
 pushd "%~dp0" || goto cdfail0
 goto main
 
 :copied
+set "EDU_START=%~2"
 pushd "%~2" || goto cdfail
 
 :main
@@ -35,6 +41,9 @@ set "EDU_LAUNCHER=1"
 title Banji Workbench
 set "NODE_VERSION=24.21.0"
 set "RESTARTS=0"
+set "EDU_NODE_WHY=no usable Node.js"
+rem The launcher's own folder as double-clicked (in place: dp0; the copy gets it as %~2): a UNC path still shows its \\ here, unlike %CD% after pushd.
+call :log "start in %EDU_START%"
 
 rem Leftovers from a download that stopped halfway.
 if exist "vendor\node-download.zip" del /f /q "vendor\node-download.zip"
@@ -59,6 +68,7 @@ set /p "ANSWER=> "
 if not defined ANSWER goto installnode
 set "ANSWER=%ANSWER:"=%"
 if /i "%ANSWER%"=="y" goto installnode
+set "EDU_NODE_WHY=declined the automatic Node.js download"
 goto nonode
 
 :installnode
@@ -66,7 +76,9 @@ set "NODE_ARCH=win-x64"
 if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "NODE_ARCH=win-arm64"
 if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "NODE_ARCH=win-arm64"
 rem Real 32-bit Windows: there is no portable Node for it, so show the manual install text instead.
+if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 set "EDU_NODE_WHY=32-bit Windows, no portable Node.js"
 if /i "%PROCESSOR_ARCHITECTURE%"=="x86" if not defined PROCESSOR_ARCHITEW6432 goto nonode
+call :log "downloading portable Node.js %NODE_VERSION%"
 if not exist "vendor" mkdir "vendor"
 call :say "0x6B63,0x5728,0x4ECE,0x56FD,0x5185,0x955C,0x50CF,0x4E0B,0x8F7D,0x20,0x4E,0x6F,0x64,0x65,0x2E,0x6A,0x73,0x2026"
 echo Downloading Node.js %NODE_VERSION% from npmmirror.com...
@@ -80,6 +92,7 @@ call :fetchnode
 if not errorlevel 1 goto nodeinstalled
 
 :nodefail
+set "EDU_NODE_WHY=portable Node.js download failed"
 echo.
 call :say "0x4E0B,0x8F7D,0x5931,0x8D25,0x3002"
 echo Download failed.
@@ -93,6 +106,11 @@ call :say "0x4E,0x6F,0x64,0x65,0x2E,0x6A,0x73,0x20,0x5DF2,0x88C5,0x5230,0x5E73,0
 echo Node.js is now kept in this folder and will be used from now on.
 
 :havenode
+set "EDU_NODE_EXE="
+for /f "delims=" %%p in ('where node 2^>nul') do if not defined EDU_NODE_EXE set "EDU_NODE_EXE=%%p"
+set "EDU_NODE_VER="
+for /f "delims=" %%v in ('node -v 2^>nul') do set "EDU_NODE_VER=%%v"
+call :log "node %EDU_NODE_EXE% %EDU_NODE_VER%"
 if "%EDU_LAUNCHER_DRY_RUN%"=="1" goto dryrun
 
 :checkinstall
@@ -112,10 +130,12 @@ goto installnow
 call :say "0x5E73,0x53F0,0x5DF2,0x66F4,0x65B0,0xFF0C,0x6B63,0x5728,0x91CD,0x65B0,0x5B89,0x88C5,0x4F9D,0x8D56,0x2026"
 echo The platform was updated: installing dependencies again...
 :installnow
+call :log "npm install start"
 call npm install
-if not errorlevel 1 goto run
+if not errorlevel 1 goto installok
 
 rem Retry once through the npmmirror.com mirror (registry and the better-sqlite3 binary). No .npmrc is written.
+call :log "npm install failed; retrying with https://registry.npmmirror.com"
 echo.
 call :say "0x6362,0x56FD,0x5185,0x6E90,0x518D,0x8BD5,0x4E00,0x6B21,0x2026"
 echo npm install failed. Retrying once with the npmmirror.com mirror...
@@ -125,10 +145,16 @@ call npm install
 if errorlevel 1 goto installfail
 set "npm_config_registry="
 set "npm_config_better_sqlite3_binary_host_mirror="
+:installok
+call :log "npm install ok"
 
 :run
+call :log "npm run manage"
 call npm run manage
-if not "%ERRORLEVEL%"=="75" goto afterrun
+set "MCODE=%ERRORLEVEL%"
+call :log "npm run manage exited with code %MCODE%"
+if "%MCODE%"=="76" goto diagdone
+if not "%MCODE%"=="75" goto afterrun
 if %RESTARTS% GEQ 3 goto afterrun
 set /a "RESTARTS=RESTARTS+1"
 echo.
@@ -137,9 +163,22 @@ echo The platform was updated. Restarting the console...
 goto checkinstall
 
 :afterrun
+if "%MCODE%"=="0" goto afterrunpause
+if "%MCODE%"=="75" goto afterrunpause
+call :diag manage "Workbench exited with code %MCODE%"
+:afterrunpause
 echo.
 pause
 set "CODE=0"
+goto finish
+
+rem Exit code 76: the console has already written its troubleshooting file. Not an error loop: no restart, no second file.
+:diagdone
+echo.
+call :say "0x5DE5,0x4F5C,0x53F0,0x5DF2,0x9000,0x51FA,0xFF0C,0x6392,0x969C,0x6587,0x4EF6,0x89C1,0x20,0x6392,0x969C,0x20,0x6587,0x4EF6,0x5939"
+echo The console has exited. Its troubleshooting file is in the troubleshooting folder inside this folder.
+pause
+set "CODE=1"
 goto finish
 
 :dryrun
@@ -151,6 +190,8 @@ goto finish
 call :say "0x8BF7,0x5148,0x5B89,0x88C5,0x20,0x4E,0x6F,0x64,0x65,0x2E,0x6A,0x73,0x20,0x32,0x32,0x20,0x6216,0x20,0x32,0x34,0xFF1A"
 echo Please install Node.js 22 or 24: https://nodejs.org/zh-cn
 echo Mirror in China: https://npmmirror.com/mirrors/node/
+call :log "%EDU_NODE_WHY%"
+call :diag node "%EDU_NODE_WHY%"
 echo.
 pause
 set "CODE=1"
@@ -160,6 +201,8 @@ goto finish
 echo.
 call :say "0x5B89,0x88C5,0x5931,0x8D25,0xFF1A,0x8BF7,0x68C0,0x67E5,0x7F51,0x7EDC,0xFF0C,0x6216,0x8BA9,0x540C,0x4E8B,0x628A,0x6574,0x4E2A,0x20,0x6E,0x6F,0x64,0x65,0x5F,0x6D,0x6F,0x64,0x75,0x6C,0x65,0x73,0x20,0x6587,0x4EF6,0x5939,0x62F7,0x7ED9,0x4F60,0xFF08,0x653E,0x8FDB,0x672C,0x6587,0x4EF6,0x5939,0xFF09,0x540E,0x518D,0x53CC,0x51FB,0x672C,0x6587,0x4EF6,0x3002"
 echo npm install failed. Check the network, or copy the whole node_modules folder from a colleague into this folder.
+call :log "npm install failed again (mirror)"
+call :diag install "npm install failed twice (default registry and npmmirror)"
 echo.
 pause
 set "CODE=1"
@@ -183,6 +226,22 @@ rem Main exits come here. A copy in TEMP deletes itself: "(goto)" ends this batc
 popd 2>nul
 if not "%~1"=="--copy" exit /b %CODE%
 (goto) 2>nul & del "%~f0"
+
+rem Append one English line to data\logs\launcher.log; past 1 MB it is renamed to launcher.log.1 first. Never fails the launcher.
+rem The text goes through a variable and is echoed inside double quotes, so a folder name with & or ( ) cannot break the line.
+:log
+if not exist "data\logs" mkdir "data\logs" >nul 2>nul
+if exist "data\logs\launcher.log" for %%F in ("data\logs\launcher.log") do if %%~zF GTR 1048576 move /y "data\logs\launcher.log" "data\logs\launcher.log.1" >nul 2>nul
+set "EDU_LOGLINE=%~1"
+>>"data\logs\launcher.log" 2>nul echo [%DATE% %TIME%] "%EDU_LOGLINE%"
+exit /b 0
+
+rem Write a troubleshooting file: %1 = install, node or manage; %2 = English one-liner (goes into its details).
+rem scripts\launcher-diag.ps1 maps the stage to the Chinese name, writes the file and prints where it is.
+:diag
+if not exist "scripts\launcher-diag.ps1" exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\launcher-diag.ps1 -Stage %~1 -Message "%~2"
+exit /b 0
 
 rem errorlevel 0 when vendor\node\node.exe runs with major version >= 22; then vendor\node goes first on PATH.
 :usevendor

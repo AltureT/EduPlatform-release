@@ -113,7 +113,7 @@ export function fetchProgress(lines = []) {
 }
 
 // ===== 启动失败的下一步 =====
-const LOG = { id: 'show-log', label: '查看日志', title: '打开最近 500 行运行记录，可以截图发给技术同事' };
+const LOG = { id: 'show-log', label: '查看日志', title: '打开最近 500 行运行记录' };
 const RETRY = { id: 'start', label: '已关掉，重试', title: '已经关掉占用端口的程序后，再启动一次' };
 const START = { id: 'start', label: '启动平台', title: '再启动一次平台' };
 // G3：goto-prepare = 去"上课准备"页并把光标放进 field 那一项（密码、端口、AI 接口在那里）

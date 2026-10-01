@@ -34,6 +34,9 @@ data/rosters/
 data/logs/
 backups/
 
+# 排障文件（S12：工作台与入口脚本出错时写，含本机路径与运行记录；老师发给 AI 工具用）
+排障/
+
 # Logs
 *.log
 

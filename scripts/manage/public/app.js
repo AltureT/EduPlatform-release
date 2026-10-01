@@ -384,6 +384,7 @@ function renderPlatform(p) {
     });
     box.hidden = box.childElementCount === 0;
   }
+  renderDiag($('#p-error-diag'), err ? p.diagnosis : null);
   // V1：检查有问题但照常启动了 → 横幅一行
   const band = err ? null : checkBandText(p);
   $('#p-check').hidden = !band;
@@ -593,6 +594,34 @@ async function copyText(text, button, done = `已复制：${text}`) {
     }, 1500);
   }
 }
+// S12：排障行（启动失败框、更新结果、下载结果共用）：diagnosis = { file, at } | null；同一份文件不重画（保留"已复制 ✓"）
+function renderDiag(box, d) {
+  const file = d?.file ?? '';
+  box.hidden = !file;
+  if ((box.dataset.file ?? '') === file) return;
+  box.dataset.file = file;
+  box.textContent = '';
+  if (file) box.append($('#diag-tpl').content.cloneNode(true));
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-diag]');
+  const file = b?.closest('[data-file]')?.dataset.file;
+  if (!b || b.disabled || !file) return;
+  if (b.dataset.diag === 'open') {
+    await run(() => api('/api/diagnosis/open', { method: 'POST' }));
+    return;
+  }
+  if (b.dataset.copied) return;
+  const name = file.split('/').pop();
+  try {
+    const res = await fetch(`/api/diagnosis/${encodeURIComponent(name)}`, { headers: { 'X-Manage-Token': TOKEN } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '读不到排障文件');
+    await copyText(await res.text(), b, '已复制，直接贴给 AI 工具就行');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
 document.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-copy]');
   if (!b || b.disabled || b.dataset.copied || !b.dataset.copy) return;
@@ -836,6 +865,7 @@ function renderPyodide() {
   const det = $('#s-py-detail');
   det.hidden = !fetchFailed || py.fetching;
   det.querySelector('pre').textContent = fetchLines.slice(-30).join('\n');
+  renderDiag($('#s-py-diag'), !py.fetching && py.result && !py.result.ok ? py.result.diagnosis : null);
   // 状态文字，版本与文件数只放 title
   setText('#s-py-state', ps.label);
   $('#s-py-state').title = ps.title;
@@ -1456,6 +1486,7 @@ function renderUpdate() {
     box.title = res.title;
     box.className = res.bad ? 'help warn' : 'help';
   }
+  renderDiag($('#s-up-diag'), update?.running ? null : (update?.result ? update.result.diagnosis : update?.recovered?.diagnosis) ?? null);
 }
 
 $('#p-update').addEventListener('click', () => showPage('platform'));
