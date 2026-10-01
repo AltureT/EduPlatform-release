@@ -1,7 +1,7 @@
 {
-  "version": "0.6.1",
-  "builtAt": "2026-10-01T06:14:28.837Z",
-  "commit": "2e0a5c6",
+  "version": "0.6.2",
+  "builtAt": "2026-10-01T06:30:46.995Z",
+  "commit": "96addf7",
   "protected": {
     ".clinerules/eduplatform.md": "3d03466c81c05084a7d2d81a77c76bd653764df658a2848df903e7eb928b151c",
     ".cursor/rules/eduplatform.mdc": "d67632dd642418b0aac906386f1ce404b61ce80c11adcc4818a94325e7e121c0",
@@ -191,7 +191,7 @@
     "kernel/test-utils/virtualStudent.js": "484797f63378d586f7f9cbf44821ca6ca2e9eeb2d391841d72ffded983bc4933",
     "kernel/test-utils/virtualTeacher.js": "472aef72c8124f225779e588104f20708baf2add58df69254cf7cc6d7d4b7c53",
     "kernel/test-utils/waitFor.js": "8a31fbd3f830af05a29edf523159ace8e4c05c7d3c0fe113ad370b0f72d6176a",
-    "package.json": "fc22c4c5d8ae24e2b90f2fe42a006423944e0bf61c2bd077ec0e6e990b54f1de",
+    "package.json": "c70bdbdadfeb817e78d745c9840a9dadff86a8ffd20412e34edf6bec60dbb7d5",
     "primitives/README.md": "e647a72797a30ecaa2c33f116734d126f413d17a656f819c58893cda276be092",
     "primitives/_shared/CodeStats.jsx": "a8b111bebcc3c70de4324862f19fb1705d1145f486d81f8d2b55223cec207c00",
     "primitives/_shared/DemoTools.jsx": "0c0344f78eaba98d332e00c9fa23fc1bc25c45117b587f279d9eb32a8114a7d9",
@@ -304,12 +304,12 @@
     "scripts/manage/public/app.js": "5d3394447f7efc7c71989482109d59c9e20ace123099c7c8cff86b4e40aedb9b",
     "scripts/manage/public/banji-192.png": "d2b9eb391a4050c4fa46471edcd3bef0d5c39598fd05cbf02c403a26deba9bd1",
     "scripts/manage/public/banji-32.png": "487d81e91741cf39b639b20969deb96db80eaac4a6e3c89e892d70c3026c31f9",
-    "scripts/manage/public/index.html": "079c633d5fec1cc3f04f3b0f3f205fa251d2f2acf8e41cb03c120d89304c5429",
+    "scripts/manage/public/index.html": "2ad47c35ecd640b7c4ab41a32b310f125e06a318cc2c78115ce045ba11870fbc",
     "scripts/manage/public/style.css": "af3d548fd7b1b5a448a40b53b07790d96cd5f4f85bdb1a36129bef4c07e15ae7",
     "scripts/manage/qr.js": "9fce4045443c1e2603920cee7224b3ee781b2e4a1071cfd1b0de506f5bf029e0",
     "scripts/manage/roster.js": "37e522dd1c9892ae14a7216d888a81caa8a204cb30a31aef555b9a1fae402947",
     "scripts/manage/server.js": "341ec8aafb50d124ebbe5b5f6b32788b569877552796d7e81f085035a6b5ad92",
-    "scripts/manage/ui-logic.js": "ac50b4dddedbbe7901cc8771654d32ba1a449be24c72e0ef4e2b7adebd79dab0",
+    "scripts/manage/ui-logic.js": "c9fcb5d739508c27b1c30fe18096f3a8ff992aab27d9e3a6d0176fa19c6e6690",
     "scripts/manage/upload.js": "0b76c87822f1d76eae219c58ff4c01a05fbf602a3ce4242fb80296af99719059",
     "scripts/new-component.mjs": "42b3086a55c8da4cd6ef08c7edcbc67abbafbb98a0064cf7b8ff077d1e6ef571",
     "scripts/new-lesson.mjs": "34c1fd3d9144277e61e9b1407e9837da2fa1d5cccb63a61668c0fa1791c7da03",
@@ -334,7 +334,7 @@
     "skills/参考/进度文件模板.md": "cba187eedc8c4d5d2e14ef4bf8c65d36f42d224eddbfe4a7c9176853eaefe225",
     "skills/参考/选项话术.md": "f2cfb22519ea76bd9744be03cf9e2a8e135b324f4001ef42ce927ef43e2d60fc",
     "vite.config.js": "fc3dde4efe6a0a16902d1bb29aa8f62ccd76a3f3894248ce22805f1d8227581b",
-    "班迹工作台.bat": "cf98a93c80c1cbcf230131c5625519d6fc94c258819f934c872bc010321acf81",
+    "班迹工作台.bat": "f638416e37718946ce78d0bc7317d35780064be10e017bc89d994f87d310d156",
     "班迹工作台.command": "92f7ac292c1a48a93d86cf15e6eb469083d2176eb49d7fb5cab28265f6c5aaa0"
   }
 }

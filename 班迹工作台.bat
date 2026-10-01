@@ -13,6 +13,8 @@ rem Self-copy: cmd.exe re-reads a running .bat by byte offset, and an update ove
 rem   So the first thing we do is copy ourselves to %TEMP% under a unique name and run the copy (with --copy
 rem   and the folder); the copy is what cmd keeps reading, the original can be replaced freely. The copy
 rem   deletes itself on the way out (:finish). If the copy fails (TEMP not writable), run in place with a warning.
+rem Folder: pushd, not cd /d. cmd.exe cannot cd into a UNC path (\\server\share\..., e.g. a Mac folder shared
+rem   into a Windows VM); pushd maps a temporary drive letter for it. popd in :finish releases that letter.
 if /i "%~1"=="--copy" goto copied
 set "EDU_LAUNCHER_COPY=%TEMP%\eduplatform-launcher-%RANDOM%%RANDOM%.bat"
 copy /y "%~f0" "%EDU_LAUNCHER_COPY%" >nul 2>nul
@@ -22,12 +24,11 @@ exit /b
 
 :inplace
 echo Warning: could not copy this launcher to the TEMP folder; running it in place. If the platform updates itself, close this window and double-click again.
-cd /d "%~dp0"
+pushd "%~dp0" || goto cdfail0
 goto main
 
 :copied
-cd /d "%~2"
-if errorlevel 1 goto cdfail
+pushd "%~2" || goto cdfail
 
 :main
 set "EDU_LAUNCHER=1"
@@ -164,15 +165,22 @@ pause
 set "CODE=1"
 goto finish
 
-rem The copy could not change into the platform folder (moved or renamed?): do not install anything in TEMP.
+rem Could not change into the platform folder (moved or renamed? a share that even pushd cannot map?): do not install anything in TEMP.
+:cdfail0
+set "EDU_FOLDER=%~dp0"
+goto cdfailmsg
 :cdfail
-echo Could not open the platform folder "%~2". Close this window and double-click the launcher in the platform folder again.
+set "EDU_FOLDER=%~2"
+:cdfailmsg
+call :say "0x6253,0x4E0D,0x5F00,0x5E73,0x53F0,0x6587,0x4EF6,0x5939,0x3002,0x5982,0x679C,0x5B83,0x5728,0x7F51,0x7EDC,0x76D8,0x6216,0x5171,0x4EAB,0x6587,0x4EF6,0x5939,0x91CC,0xFF08,0x8DEF,0x5F84,0x4EE5,0x20,0x5C,0x5C,0x20,0x5F00,0x5934,0xFF09,0xFF0C,0x8BF7,0x628A,0x6574,0x4E2A,0x6587,0x4EF6,0x5939,0x62F7,0x5230,0x8FD9,0x53F0,0x7535,0x8111,0x7684,0x78C1,0x76D8,0x4E0A,0xFF08,0x6BD4,0x5982,0x684C,0x9762,0xFF09,0xFF0C,0x518D,0x53CC,0x51FB,0x3002"
+echo Could not open the platform folder "%EDU_FOLDER%". If it is on a network or shared drive (path starts with \\), copy the whole folder to this computer (for example the Desktop) and double-click the launcher there.
 pause
 set "CODE=1"
 goto finish
 
 rem Main exits come here. A copy in TEMP deletes itself: "(goto)" ends this batch first, so the file is not in use.
 :finish
+popd 2>nul
 if not "%~1"=="--copy" exit /b %CODE%
 (goto) 2>nul & del "%~f0"
 
