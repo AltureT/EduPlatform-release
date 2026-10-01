@@ -17,6 +17,10 @@ rem Launcher log: every step appends one English line to data\logs\launcher.log 
 rem Troubleshooting file: on failure (no usable Node.js, npm install failed twice, console exit code other than
 rem   0 / 75 / 76) :diag runs scripts\launcher-diag.ps1, which writes the file and prints where (in Chinese; the
 rem   folder name never passes through cmd). Exit code 76 = the console already wrote one: no second file, no restart.
+rem Exit code 77 = the dependencies were installed on another computer (other system or chip, e.g. node_modules copied
+rem   from a Mac): delete node_modules\.package-lock.json, better-sqlite3, rolldown and @rolldown, install again (same
+rem   mirror retry), run npm rebuild better-sqlite3, start the console again. Only once (NATIVEFIX); a second 77 writes
+rem   a troubleshooting file (install) and asks to delete the whole node_modules folder.
 rem Folder: pushd, not cd /d. cmd.exe cannot cd into a UNC path (\\server\share\..., e.g. a Mac folder shared
 rem   into a Windows VM); pushd maps a temporary drive letter for it. popd in :finish releases that letter.
 if /i "%~1"=="--copy" goto copied
@@ -41,6 +45,8 @@ set "EDU_LAUNCHER=1"
 title Banji Workbench
 set "NODE_VERSION=24.21.0"
 set "RESTARTS=0"
+set "NATIVEFIX=0"
+set "EDU_NATIVE_PENDING="
 set "EDU_NODE_WHY=no usable Node.js"
 rem The launcher's own folder as double-clicked (in place: dp0; the copy gets it as %~2): a UNC path still shows its \\ here, unlike %CD% after pushd.
 call :log "start in %EDU_START%"
@@ -122,6 +128,7 @@ goto run
 :install
 rem better-sqlite3 without its binary: remove it so npm installs it again and fetches the binary.
 if exist "node_modules\better-sqlite3\package.json" if not exist "node_modules\better-sqlite3\build\Release\better_sqlite3.node" rmdir /s /q "node_modules\better-sqlite3"
+if defined EDU_NATIVE_PENDING goto installnow
 if %RESTARTS% GTR 0 goto installupdated
 call :say "0x7B2C,0x4E00,0x6B21,0x4F7F,0x7528,0xFF0C,0x6B63,0x5728,0x5B89,0x88C5,0x4F9D,0x8D56,0xFF08,0x9700,0x8981,0x8054,0x7F51,0xFF0C,0x7EA6,0x51E0,0x5206,0x949F,0xFF09,0x2026"
 echo First run: installing dependencies (needs internet, a few minutes)...
@@ -147,19 +154,38 @@ set "npm_config_registry="
 set "npm_config_better_sqlite3_binary_host_mirror="
 :installok
 call :log "npm install ok"
-
+if not defined EDU_NATIVE_PENDING goto run
+set "EDU_NATIVE_PENDING="
+call :log "npm rebuild better-sqlite3"
+call npm rebuild better-sqlite3
 :run
 call :log "npm run manage"
 call npm run manage
 set "MCODE=%ERRORLEVEL%"
 call :log "npm run manage exited with code %MCODE%"
 if "%MCODE%"=="76" goto diagdone
+if "%MCODE%"=="77" goto nativemismatch
 if not "%MCODE%"=="75" goto afterrun
 if %RESTARTS% GEQ 3 goto afterrun
 set /a "RESTARTS=RESTARTS+1"
 echo.
 call :say "0x5E73,0x53F0,0x5DF2,0x66F4,0x65B0,0xFF0C,0x6B63,0x5728,0x91CD,0x65B0,0x542F,0x52A8,0x5DE5,0x4F5C,0x53F0,0x2026"
 echo The platform was updated. Restarting the console...
+goto checkinstall
+
+rem Exit code 77: dependencies from another computer. Remove only the packages with native parts, then install again (once).
+:nativemismatch
+if "%NATIVEFIX%"=="1" goto nativefail
+set "NATIVEFIX=1"
+set "EDU_NATIVE_PENDING=1"
+echo.
+call :say "0x4F9D,0x8D56,0x548C,0x8FD9,0x53F0,0x7535,0x8111,0x4E0D,0x914D,0xFF0C,0x6B63,0x5728,0x91CD,0x65B0,0x5B89,0x88C5,0x2026"
+echo The dependencies were installed on another computer and do not fit this one. Installing them again...
+call :log "native modules do not match this computer; reinstalling"
+if exist "node_modules\.package-lock.json" del /f /q "node_modules\.package-lock.json"
+if exist "node_modules\better-sqlite3" rmdir /s /q "node_modules\better-sqlite3"
+if exist "node_modules\rolldown" rmdir /s /q "node_modules\rolldown"
+if exist "node_modules\@rolldown" rmdir /s /q "node_modules\@rolldown"
 goto checkinstall
 
 :afterrun
@@ -177,6 +203,18 @@ rem Exit code 76: the console has already written its troubleshooting file. Not 
 echo.
 call :say "0x5DE5,0x4F5C,0x53F0,0x5DF2,0x9000,0x51FA,0xFF0C,0x6392,0x969C,0x6587,0x4EF6,0x89C1,0x20,0x6392,0x969C,0x20,0x6587,0x4EF6,0x5939"
 echo The console has exited. Its troubleshooting file is in the troubleshooting folder inside this folder.
+pause
+set "CODE=1"
+goto finish
+
+rem Exit code 77 again after reinstalling: give up, write a troubleshooting file.
+:nativefail
+echo.
+call :say "0x91CD,0x88C5,0x540E,0x4ECD,0x4E0D,0x80FD,0x7528,0xFF0C,0x8BF7,0x628A,0x20,0x6E,0x6F,0x64,0x65,0x5F,0x6D,0x6F,0x64,0x75,0x6C,0x65,0x73,0x20,0x6587,0x4EF6,0x5939,0x6574,0x4E2A,0x5220,0x6389,0x518D,0x53CC,0x51FB"
+echo Still not usable after reinstalling. Delete the whole node_modules folder and double-click this file again.
+call :log "native modules still do not match after reinstalling"
+call :diag install "Dependencies still do not match this computer after reinstalling (exit code 77)"
+echo.
 pause
 set "CODE=1"
 goto finish

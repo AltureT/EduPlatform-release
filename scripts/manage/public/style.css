@@ -478,6 +478,9 @@ dialog p { margin: 0 0 var(--sp-3); line-height: 1.6; white-space: pre-line; }
 .l-data { margin: 0; overflow-wrap: anywhere; }
 .l-draft { margin: var(--sp-2) 0 0; font-size: var(--fs-min); color: var(--good); overflow-wrap: anywhere; }
 .l-draft.bad { color: var(--bad); }
+/* S17 教案页：粘贴教案文字 */
+.d-paste { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+.d-paste-head { margin: 0 0 var(--sp-2); font-weight: 600; }
 .l-ops { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: auto; padding-top: var(--sp-2); }
 
 /* ===== ③ 用 AI 做课：三步 + 收起 / 展开说明；平台文件夹位置可断行 ===== */

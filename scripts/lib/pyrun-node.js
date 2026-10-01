@@ -22,6 +22,13 @@ import { parseJunit } from '../../components/sandbox/client/parseJunit.js';
 
 export const NOT_DOWNLOADED = 'Python 环境还没准备好（工作台会自动准备，没好时到 平台 → 环境与版本 看状态）';
 // 缓存键里的运行器版本：Python 逻辑或 Pyodide 版本变了，旧缓存自动失效
+// Windows 修正（用户 2026-10-01 在 Windows 实测代码题"测试没验证"）：Pyodide 在 Node 里从 lockFileURL 推包目录时只认正斜杠
+//   （calculateInstallBaseUrl 用 lastIndexOf("/")），反斜杠路径会推成 "./"，pytest 的 wheel 从当前目录读 → 装不上。
+//   所以给 loadPyodide 的三个路径一律用正斜杠，并显式传 packageBaseUrl（不让它自己推）；fs.readFile 两种斜杠都认。
+export function pyodideLoadOptions(dir) {
+  const base = String(dir).replace(/\\/g, '/').replace(/\/?$/, '/');
+  return { indexURL: base, lockFileURL: `${base}pyodide-lock.json`, packageBaseUrl: base };
+}
 export const PYRUN_VERSION = `pyrun-1+pyodide-${PYODIDE_VERSION}`;
 // 同 code 原语 primitive.config.js 的 TEST_NAME_RE
 export const TEST_NAME_RE = /^[A-Za-z0-9_]+\.py$/;

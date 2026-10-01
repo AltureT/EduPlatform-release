@@ -12,6 +12,9 @@
 #   每一步追加到 data/logs/launcher.log（[时间] 文字；> 1 MB 改名 .1 重来）；出错时 bash scripts/launcher-diag.sh 写 排障/ 里的排障文件
 #   （没有 Node 且老师拒绝 / 下载失败、npm install 两次都失败、工作台退出码不是 0 / 75 / 76）；
 #   工作台退出码 76 = 它自己已写好排障文件：不再另写、不重启
+#   工作台退出码 77 = 依赖是在别的电脑上装的（系统 / 芯片不配，原生依赖架构不符自动重装规格 §2）：删 .package-lock.json、
+#   better-sqlite3、rolldown、@rolldown → npm install（失败换国内源）→ npm rebuild better-sqlite3 → 重新启动；最多 1 次，
+#   第二次仍 77 → 提示删掉整个 node_modules、写排障文件（安装依赖）
 # 本窗口开着平台就开着；关闭本窗口即关闭工作台和平台
 cd "$(dirname "$0")" || exit 1
 printf '\033]0;班迹工作台\007'
@@ -149,7 +152,9 @@ ensure_installed() {
   if [ -f node_modules/better-sqlite3/package.json ] && [ ! -f "$SQLITE_BIN" ]; then
     rm -rf node_modules/better-sqlite3
   fi
-  if [ "$restarts" -gt 0 ]; then
+  if [ "$native_pending" = 1 ]; then
+    : # 已说过"依赖和这台电脑不配，正在重新安装…"
+  elif [ "$restarts" -gt 0 ]; then
     echo "平台已更新，正在重新安装依赖…"
   else
     echo "第一次使用，正在安装依赖（需要联网，约几分钟）…"
@@ -172,8 +177,16 @@ ensure_installed() {
 
 # 工作台以退出码 75 退出 = 平台刚更新完：重新判断"装好了"、再启动工作台；最多重启 3 次（防止反复 75）
 restarts=0
+native_fixes=0
+native_pending=0
 while :; do
   ensure_installed
+  # 77 之后的重装：装完再按本机重新编译 / 取一次 better-sqlite3 的二进制；失败也照常启动，由工作台再判一次
+  if [ "$native_pending" = 1 ]; then
+    native_pending=0
+    log "npm rebuild better-sqlite3"
+    npm rebuild better-sqlite3 || log "npm rebuild better-sqlite3 failed"
+  fi
   log "npm run manage"
   npm run manage
   code=$?
@@ -184,8 +197,25 @@ while :; do
     echo "平台已更新，正在重新启动工作台…"
     continue
   fi
+  # 77 = 依赖是在别的电脑上装的：删掉带原生绑定的几个包，让 npm 重新取本机平台的；最多处理 1 次
+  if [ "$code" -eq 77 ] && [ "$native_fixes" -lt 1 ]; then
+    native_fixes=1
+    native_pending=1
+    echo ""
+    echo "依赖和这台电脑不配，正在重新安装…"
+    log "native modules do not match this computer; reinstalling"
+    rm -f node_modules/.package-lock.json
+    rm -rf node_modules/better-sqlite3 node_modules/rolldown node_modules/@rolldown
+    continue
+  fi
   break
 done
+if [ "$code" -eq 77 ]; then
+  echo ""
+  echo "重装后仍不能用，请把 node_modules 文件夹整个删掉再双击"
+  diag install "重装依赖后仍和这台电脑不配（工作台退出码 77）"
+  pause_exit 1
+fi
 # 76 = 工作台已写好排障文件（工作台启动失败），入口脚本不再另写
 if [ "$code" -eq 76 ]; then
   echo ""

@@ -14,6 +14,8 @@
 // S12（排障文件与 AI 排障规格 §1.2）：工作台自身起不来（取锁出错、监听失败、端口都被占、创建服务出错）或运行中未捕获异常 →
 //   写 排障/<时间>-工作台启动.md，打印"排障文件已写到…"，以退出码 76 退出（入口脚本见 76 不再另写）；文件没写成仍以 1 退出。
 //   "已有工作台窗口"这类已有专门提示的不写、仍以 1 退出
+// S18（原生依赖架构不符自动重装规格 §1）：取锁之后、起服务之前跑一次 checkNativeModules；better-sqlite3 / rolldown 是别的电脑装的 →
+//   提示要重装、以退出码 77 退出（不写排障文件）；入口脚本见 77 删掉这几个包重装一次。直接 npm run manage 的多打印一句"删掉 node_modules 后重新 npm install"
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +24,7 @@ import { createManageServer } from './server.js';
 import { openBrowser } from './net.js';
 import { acquireManageLock, LOCK_FILE, pingManage, decideTakeover, replaceOldManage, takeoverMessage } from './process.js';
 import { writeDiagnosis, collectEnvironment, launcherSection } from './diagnosis.js';
+import { checkNativeModules } from '../lib/native-check.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const START_PORT = (() => {
@@ -32,6 +35,7 @@ const PORTS = Array.from({ length: 10 }, (_, i) => START_PORT + i);
 const TITLE = '班迹工作台';
 const NO_REPLACE = process.argv.slice(2).includes('--no-replace');
 const DIAG_EXIT_CODE = 76;
+const NATIVE_MISMATCH_EXIT_CODE = 77;
 const manageInfo = { port: null, startedAt: Date.now() };
 
 // 写"工作台启动"排障文件；写成了返回 76，没写成返回 1
@@ -109,6 +113,24 @@ process.on('exit', () => {
   manage?.killChildrenNow();
   lock.release();
 });
+
+// S18：原生依赖是在别的电脑上装的（架构 / 系统不配）→ 说一句、以 77 退出；入口脚本见 77 自动重装。不是故障，不写排障文件
+{
+  let native = { ok: true, failed: [] };
+  try {
+    native = await checkNativeModules(ROOT);
+  } catch {
+    // 自检本身出错：不拦启动，照常往下走
+  }
+  if (!native.ok) {
+    console.log('');
+    console.log('  平台依赖是在别的电脑上装的，和这台电脑不配，需要重装（约几分钟，要联网）');
+    for (const f of native.failed) console.log(`  （${f.name}：${f.message.split('\n')[0]}）`);
+    if (process.env.EDU_LAUNCHER !== '1') console.log('  请删掉 node_modules 后重新 npm install，再运行 npm run manage');
+    console.log('');
+    process.exit(NATIVE_MISMATCH_EXIT_CODE);
+  }
+}
 
 const token = crypto.randomBytes(24).toString('base64url');
 const UPDATED_EXIT_CODE = 75;

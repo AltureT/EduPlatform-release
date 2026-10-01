@@ -320,9 +320,16 @@ export function lessonCardMeta(row) {
   return Number.isInteger(n) && n > 0 ? `${n} 个环节` : '还没有环节';
 }
 
+// S17（教案 PDF 抽文本与粘贴规格 §3）：读出了文字 → 字数 + 开头 60 字；PDF 读不出（扫描件 / 抽失败）→ 请传 Word 或粘贴；docx 读不出照旧
 export function draftNote(draft) {
   if (!draft) return null;
+  if (draft.ext === '.pdf' && !draft.hasText) return { text: LESSON_TEXT.draftScanned, bad: true };
   if (draft.ext === '.docx' && !draft.hasText) return { text: '已保存原稿，AI 读不了 Word 时请上传 txt 或 pdf', bad: true };
+  if (draft.hasText && draft.chars > 0) {
+    const head = String(draft.head ?? '');
+    const more = draft.chars > head.replace(/\s+/g, '').length ? '…' : '';
+    return { text: `${LESSON_TEXT.draftRead(draft.chars)}，AI 会读它。开头：${head}${more}`, bad: false };
+  }
   return { text: `已上传：${draft.file}`, bad: false };
 }
 
@@ -510,6 +517,10 @@ export const LESSON_TEXT = {
   cardContinue: '继续 →',
   cardContinueTitle: '去当前该做的那一步',
   draftUploaded: (note) => `${note}，接着去做课`,
+  draftRead: (n) => `已读出 ${n} 字`,
+  draftScanned: '这份 PDF 读不出文字（多半是扫描件）。请上传 Word 或文本，或在下面粘贴。',
+  pasteEmpty: '框里还没有文字，先把教案粘进来',
+  pasteTooBig: '文字太长了，粘贴不能超过 200 KB；请改成上传文件',
   draftGoSkip: '没有教案，跳过 → 去做课',
   draftGoNext: '接着去做课 →',
   notMine: '示例课不能上传教案、复制开场话；想照着它做一门，请先新建课程',

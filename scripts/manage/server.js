@@ -11,7 +11,7 @@
 //   L1：POST /api/lesson/check { path? } → { ok, errors, warnings, lesson, path, at }（check:lesson，worker 线程）；
 //     overview.check = 当前课最近一次检查结果（本接口或启动前的检查，取较新的），没有则 null；checkLesson(root, rel) 可注入
 //   M4：课程列表（第 1 步）接口 /api/lessons/overview、/templates、/template.{docx,md}、POST /api/lessons（新建）、
-//     /api/lessons/:scope/:name/{current,draft,open,opening}、DELETE /api/lessons/:scope/:name（lesson-admin.js）；
+//     /api/lessons/:scope/:name/{current,draft,draft-text,open,opening}、DELETE /api/lessons/:scope/:name（lesson-admin.js）；
 //     openFolder(dir) 与 maxDraftBytes 可注入（测试用）
 //   G1（做课步骤引导规格 §2.3）：overview 增 platformDir（平台根目录绝对路径）；POST /api/platform/open → { ok }（openFolder(root)，打不开 500）
 //   K7：GET /api/settings 多一项 platformFiles（框架自描述规格 §4）：{ checked, version, builtAt?, total?, changes?, modified?, missing?, added? }
@@ -707,6 +707,12 @@ export function createManageServer({
     const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name, { mineOnly: lessonAdmin.MESSAGES.exampleNoUpload });
     const file = await readUpload(req, { maxBytes: maxDraftBytes });
     const r = await serial(() => lessonAdmin.saveDraft(d.abs, file));
+    res.json({ ok: true, ...r });
+  });
+  // S17：教案页粘贴的文字 { text } → 教学设计原稿.md（≤ 200 KB；示例课 403）
+  api.post('/lessons/:scope/:name/draft-text', async (req, res) => {
+    const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name, { mineOnly: lessonAdmin.MESSAGES.exampleNoUpload });
+    const r = await serial(() => lessonAdmin.saveDraftText(d.abs, { text: req.body?.text }));
     res.json({ ok: true, ...r });
   });
   api.post('/lessons/:scope/:name/open', async (req, res) => {

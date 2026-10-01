@@ -1498,9 +1498,8 @@ async function uploadDraft(row, file, label) {
       return;
     }
     if (!res.ok) throw new Error(data.error || LESSON_TEXT.uploadFailed);
-    const note = draftNote(data.draft);
     // 不自动跳：教师可能要再传；提示里说接着去做课，按钮变成"接着去做课 →"
-    toast(LESSON_TEXT.draftUploaded(note.text), note.bad);
+    draftSavedToast(data.draft);
     await refresh();
   } catch (err) {
     toast(err.message, true);
@@ -1508,6 +1507,45 @@ async function uploadDraft(row, file, label) {
     label.classList.remove('busy');
   }
 }
+
+// S17：保存后的提示——读出了文字"已读出 N 字，接着去做课"；读不出（扫描件等）原样说哪里不行
+function draftSavedToast(draft) {
+  const note = draftNote(draft);
+  if (!note) return;
+  const ok = !note.bad && draft.hasText && draft.chars > 0;
+  toast(note.bad ? note.text : LESSON_TEXT.draftUploaded(ok ? LESSON_TEXT.draftRead(draft.chars) : note.text), note.bad);
+}
+
+// S17：粘贴教案文字 → 存成原稿（≤ 200 KB；空的不发）
+$('#d-paste-save').addEventListener('click', async () => {
+  const row = currentLesson();
+  if (!row) return;
+  if (!isMine(row)) {
+    toast(LESSON_TEXT.notMine, true);
+    return;
+  }
+  const text = $('#d-paste').value.trim();
+  if (!text) {
+    toast(LESSON_TEXT.pasteEmpty, true);
+    return;
+  }
+  if (new Blob([text]).size > 200 * 1024) {
+    toast(LESSON_TEXT.pasteTooBig, true);
+    return;
+  }
+  const btn = $('#d-paste-save');
+  btn.disabled = true;
+  try {
+    const r = await api(lessonUrl(row, '/draft-text'), { method: 'POST', body: { text } });
+    $('#d-paste').value = '';
+    draftSavedToast(r.draft);
+    await refresh();
+  } catch (err) {
+    if (err.message !== '链接已失效') toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ③ 用 AI 做课：引导句 + 三步（说明可收起 / 展开，记住在本机）+ 教案一行；下方"备课进度"折叠（只读）
 //   force = 刚打开这一页；否则只有当前课的状态变了才重画（免得刷新时把"已复制 ✓"冲掉）

@@ -7,7 +7,7 @@
 // 失败 → { id, ok: false, message }
 import { parentPort } from 'node:worker_threads';
 import { pathToFileURL } from 'node:url';
-import { PYRUN_PY } from './pyrun-node.js';
+import { PYRUN_PY, pyodideLoadOptions } from './pyrun-node.js';
 
 // 不出网：任何 http(s) 请求直接失败（loadPackage 若去外网取包，init 就失败，运行器变成不可用）
 const realFetch = globalThis.fetch;
@@ -21,8 +21,9 @@ let py = null;
 
 async function init(indexURL) {
   const t0 = Date.now();
-  const { loadPyodide } = await import(pathToFileURL(`${indexURL}pyodide.mjs`).href);
-  py = await loadPyodide({ indexURL, lockFileURL: `${indexURL}pyodide-lock.json`, stdout: () => {}, stderr: () => {} });
+  const opts = pyodideLoadOptions(indexURL); // Windows：正斜杠 + 显式 packageBaseUrl（pyrun-node.js 注释）
+  const { loadPyodide } = await import(pathToFileURL(`${opts.indexURL}pyodide.mjs`).href);
+  py = await loadPyodide({ ...opts, stdout: () => {}, stderr: () => {} });
   py.setStdin({ error: true }); // 测试里没喂 input() 就报错，不挂住
   await py.loadPackage(['pytest'], { messageCallback: () => {}, errorCallback: () => {} });
   py.runPython(PYRUN_PY);

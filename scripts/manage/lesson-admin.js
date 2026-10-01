@@ -7,6 +7,12 @@
 //   findDraft(dir) / saveDraft(dir, { filename, data }) → 原稿固定存为 教学设计原稿.<ext>（ext 白名单 .md .txt .docx .pdf，
 //     文件名不取用户输入）；已有的原稿（任何扩展名，含 docx 抽出的 .txt）先改名 <原名>.bak；.docx 抽纯文本另存 .txt
 //     （docx-text.js：document.xml 解压后 > 30 MB 不抽；mammoth 在 worker 里跑，512 MB 内存上限、30 s 超时；失败 textError）
+//     S17：.pdf 同样在 worker 里抽（pdf-text.js：≤ 300 页、60 s、512 MB；失败 textError）；平均每页 < 20 字 → 扫描件，不写 .txt；
+//     每次保存把 { ext, scanned, textError } 写进 <课程目录>/.draft.json
+//   findDraft(dir) → { file, ext, hasText, chars, scanned, head } | null：chars = 文本版（.txt / .md）非空白字数，head = 开头 60 字
+//     （空白并成一个空格）；scanned 读 .draft.json，没有（S17 以前传的 PDF）就按 .txt 在不在推
+//   saveDraftText(dir, { text })（S17 §2）：教案页粘贴的文字 → 去首尾空白存成 教学设计原稿.md（旧原稿同样改名 .bak）；
+//     空的 400 emptyText、UTF-8 超过 200 KB 400 pasteTooBig；返回值与 saveDraft 同形
 //   openingText({ title, rel, draft })：复制给 AI 的开场话（规格 §4 句式；S14 末尾自证"工作台已经打开"）
 //   lessonOverview(root, { current, checks }) → 课程列表（第 1 步）列表行（只列 lessons/；读不出来的课也列出，broken: true）
 //     G3（管理台线性路径重设计规格 §2.4）：示例课不列，只有当前课还指着 examples/<x>（旧安装）时多出那一行（kind: 'example'）
@@ -33,6 +39,7 @@ import { readLesson, lessonStatus } from './lessons.js';
 import { pickLessonId } from '../lib/lesson-id.js';
 import { newLesson } from '../new-lesson.mjs';
 import { docxTextTooBig, docxToTextInWorker } from './docx-text.js';
+import { pdfToTextInWorker, isScanned } from './pdf-text.js';
 import { moveLessonData, dataSummary, lessonPaths } from './backup.js';
 import { customDbPath, writeEnv } from './env-file.js';
 import { defaultObject, quoteJs } from '../lib/config-edit.js';
@@ -42,6 +49,7 @@ import { computeNeeds, needsLessons, ENV_KINDS } from './env-prepare.js';
 export const DRAFT_BASE = '教学设计原稿';
 export const DRAFT_EXTS = ['.md', '.txt', '.docx', '.pdf'];
 export const MAX_DRAFT_BYTES = 20 * 1024 * 1024;
+export const MAX_PASTE_BYTES = 200 * 1024;
 export const MAX_TITLE_LEN = 40;
 const SCOPES = { lessons: 'mine', examples: 'example' };
 const DELETED_DIR = 'backups/deleted-lessons';
@@ -61,6 +69,8 @@ export const MESSAGES = {
   badExt: '只能上传 Word（.docx）、PDF、Markdown（.md）或纯文本（.txt）文件',
   tooBig: '文件太大了，教案不能超过 20 MB',
   noFile: '没有收到文件，请重新选择后上传',
+  emptyText: '没有收到文字，请把教案粘进框里再保存',
+  pasteTooBig: '文字太长了，粘贴不能超过 200 KB；请改成上传文件',
   uploadFailed: '上传没有完成，请再试一次',
   badTitle: `请填写课名（一行文字，不超过 ${MAX_TITLE_LEN} 个字）`,
   broken: '这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试',
@@ -104,13 +114,58 @@ export function resolveLessonDir(root, scope, name, { mineOnly = false } = {}) {
 // ===== 原稿 =====
 const draftFile = (dir, ext) => path.join(dir, DRAFT_BASE + ext);
 
+export const DRAFT_META = '.draft.json';
+export const HEAD_CHARS = 60;
+const EXTRACTED = ['.docx', '.pdf']; // 这两种的文本版是旁边抽出来的 .txt
+
+// 文本版的字数与开头：按修改时间 + 大小缓存（overview 常被轮询）
+const statsCache = new Map();
+function textStats(file) {
+  let st;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    return { chars: 0, head: '' };
+  }
+  const hit = statsCache.get(file);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.stats;
+  let text = '';
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    // 读不出来按没有文字算
+  }
+  const stats = {
+    chars: text.replace(/\s+/g, '').length,
+    head: Array.from(text.replace(/\s+/g, ' ').trim()).slice(0, HEAD_CHARS).join(''),
+  };
+  statsCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, stats });
+  return stats;
+}
+
+function readMeta(dir) {
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(dir, DRAFT_META), 'utf8'));
+    return m && typeof m === 'object' ? m : null;
+  } catch {
+    return null;
+  }
+}
+
 export function findDraft(dir) {
   const has = (ext) => fs.existsSync(draftFile(dir, ext));
-  // 主文件：教师上传的那份（docx 旁边的 .txt 是抽出来的文本）
+  // 主文件：教师上传的那份（docx / pdf 旁边的 .txt 是抽出来的文本）
   for (const ext of ['.docx', '.pdf', '.md', '.txt']) {
     if (!has(ext)) continue;
-    const hasText = ext === '.docx' ? has('.txt') : ext !== '.pdf';
-    return { file: DRAFT_BASE + ext, ext, hasText };
+    const textExt = EXTRACTED.includes(ext) ? '.txt' : ext;
+    const hasText = has(textExt);
+    let scanned = false;
+    if (ext === '.pdf') {
+      const meta = readMeta(dir);
+      scanned = meta?.ext === '.pdf' && typeof meta.scanned === 'boolean' ? meta.scanned : !hasText;
+    }
+    const { chars, head } = hasText ? textStats(draftFile(dir, textExt)) : { chars: 0, head: '' };
+    return { file: DRAFT_BASE + ext, ext, hasText, chars, scanned, head };
   }
   return null;
 }
@@ -120,20 +175,22 @@ export async function docxToText(buf) {
   return docxToTextInWorker(buf);
 }
 
+export async function pdfToText(buf) {
+  const r = await pdfToTextInWorker(buf);
+  return { text: r.text, scanned: isScanned(r.text, r.pages) };
+}
+
 export const normLessonPath = (p) => path.posix.normalize(String(p ?? '').replace(/\\/g, '/')).replace(/^(\.\/)+/, '');
 export const sameLessonPath = (a, b) => Boolean(a) && Boolean(b) && normLessonPath(a) === normLessonPath(b);
 
-export async function saveDraft(dir, { filename, data }, { extractText = docxToText } = {}) {
+export async function saveDraft(dir, { filename, data }, { extractText = docxToText, extractPdf = pdfToText } = {}) {
   const ext = path.extname(String(filename ?? '')).toLowerCase();
   if (!DRAFT_EXTS.includes(ext)) throw userError(MESSAGES.badExt, 400);
   if (!Buffer.isBuffer(data)) throw userError(MESSAGES.noFile, 400);
-  // 旧原稿（任何扩展名）改名 .bak：不留下和新原稿对不上的文本版
-  for (const e of DRAFT_EXTS) {
-    const f = draftFile(dir, e);
-    if (fs.existsSync(f)) fs.renameSync(f, `${f}.bak`);
-  }
+  backupDrafts(dir);
   fs.writeFileSync(draftFile(dir, ext), data);
   let textError = false;
+  let scanned = false;
   if (ext === '.docx') {
     try {
       const text = await extractText(data);
@@ -142,8 +199,44 @@ export async function saveDraft(dir, { filename, data }, { extractText = docxToT
     } catch {
       textError = true;
     }
+  } else if (ext === '.pdf') {
+    try {
+      const r = await extractPdf(data);
+      scanned = Boolean(r.scanned);
+      // 扫描件不写 .txt：几个零散的字只会误导 AI
+      if (!scanned) fs.writeFileSync(draftFile(dir, '.txt'), r.text);
+    } catch {
+      textError = true;
+    }
   }
+  writeMeta(dir, { ext, scanned, textError });
   return { draft: findDraft(dir), textError };
+}
+
+// 旧原稿（任何扩展名）改名 .bak：不留下和新原稿对不上的文本版
+function backupDrafts(dir) {
+  for (const e of DRAFT_EXTS) {
+    const f = draftFile(dir, e);
+    if (fs.existsSync(f)) fs.renameSync(f, `${f}.bak`);
+  }
+}
+
+export function saveDraftText(dir, { text } = {}) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (t === '') throw userError(MESSAGES.emptyText, 400);
+  if (Buffer.byteLength(t, 'utf8') > MAX_PASTE_BYTES) throw userError(MESSAGES.pasteTooBig, 400);
+  backupDrafts(dir);
+  fs.writeFileSync(draftFile(dir, '.md'), `${t}\n`);
+  writeMeta(dir, { ext: '.md', scanned: false, textError: false });
+  return { draft: findDraft(dir), textError: false };
+}
+
+function writeMeta(dir, meta) {
+  try {
+    fs.writeFileSync(path.join(dir, DRAFT_META), `${JSON.stringify(meta)}\n`);
+  } catch {
+    // 写不进去也不影响原稿；findDraft 会按 .txt 推
+  }
 }
 
 // ===== 开场话 =====
@@ -151,7 +244,7 @@ export function openingText({ title, rel, draft }) {
   const dir = `${rel}/`;
   const head = `我要做《${title}》这节课。课程目录是 ${dir}，`;
   const middle = draft
-    ? `教学设计原稿在 ${dir}${draft.file}${draft.ext === '.docx' && draft.hasText ? '（有 .txt 版）' : ''}。`
+    ? `教学设计原稿在 ${dir}${draft.file}${EXTRACTED.includes(draft.ext) && draft.hasText ? '（有 .txt 版）' : ''}。`
     : '教学设计我口述给你。';
   // S14：自证工作台已打开，弱模型也不再让教师双击工作台、装软件或设密码（不走 00）
   return `${head}${middle}工作台已经打开、平台已装好，不用让我双击工作台、装软件或设密码。请先读 skills/SKILL.md，按它做。`;

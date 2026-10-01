@@ -181,6 +181,12 @@
               <a id="d-go" class="button" href="#build" title="到&quot;做课&quot;页签，用 AI 做这门课">没有教案，跳过 → 去做课</a>
             </div>
             <p id="d-note" class="l-draft" hidden></p>
+            <!-- S17：粘贴教案文字 → 存成原稿（替换已上传的那份，旧的自动留一份） -->
+            <div class="d-paste">
+              <p class="d-paste-head">没有文件？粘贴也行</p>
+              <textarea id="d-paste" rows="6" placeholder="把教案文字粘到这里" title="从 Word、网页或聊天里复制教案文字粘进来；保存会替换已上传的教案，旧的自动留一份"></textarea>
+              <div class="row"><button id="d-paste-save" type="button" title="保存成这门课的教案，AI 会先读它">保存</button></div>
+            </div>
             <details class="more-help"><summary>详细说明</summary><p>有现成的 Word / PDF / 文本就传上来，AI 会先读它；没有也没关系，AI 会和你聊着把课定下来。</p></details>
           </div>
         </div>
