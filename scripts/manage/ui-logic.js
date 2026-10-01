@@ -1,4 +1,4 @@
-// 管理台页面逻辑里的纯函数（M2、M3）：页面 public/app.js 以 ES module 从 /ui-logic.js 引入；测试直接 import（__tests__/ui-logic.test.js）
+// 工作台页面逻辑里的纯函数（M2、M3）：页面 public/app.js 以 ES module 从 /ui-logic.js 引入；测试直接 import（__tests__/ui-logic.test.js）
 // 只用浏览器与 Node 都有的标准 API，不依赖 DOM
 //   G3（管理台线性路径重设计规格 §2）：pathSteps(overview) → 左侧五步；courseOptions → 顶栏课程下拉；routeFor(hash, currentId) → 页面；
 //     buildDescOpen / buildSteps → "用 AI 做课"页三步与说明收展；classChecklist → "启动上课"页四行提醒（见"G3 线性路径"一节）
@@ -594,13 +594,13 @@ export const UPDATE_TEXT = {
   dev: '开发版，不更新',
   stopFirst: '先停止平台',
   wait: '平台正在启动或停止，请稍候',
-  done: '更新完成，管理台正在重新打开；这个页面可以关掉',
-  reopened: '新的管理台已打开，这个页面可以关掉',
+  done: '更新完成，工作台正在重新打开；这个页面可以关掉',
+  reopened: '新的工作台已打开，这个页面可以关掉',
   recovered: '上次更新没有完成，已恢复到更新前',
   recoverFailed: '上次更新没有完成，恢复也没有全部成功：请重新解压发布包覆盖平台文件夹（课程、课堂数据和设置不会丢）',
 };
 
-// 管理台启动时发现上次更新被打断并已恢复（update.recovered）→ 首页一行；备份目录只放 title
+// 工作台启动时发现上次更新被打断并已恢复（update.recovered）→ 首页一行；备份目录只放 title
 export function updateRecoveredText(u) {
   const r = u?.recovered;
   if (!r) return null;

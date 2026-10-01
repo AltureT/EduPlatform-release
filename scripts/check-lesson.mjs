@@ -85,7 +85,7 @@ export const AI_CODE_RULES = [
 export const AI_BEARER = { auth: /\bauthorization\b/i, bearer: /\bBearer\b/ };
 export const AI_IN_CLIENT = /\bc?ctx\s*(?:\??\.\s*ai\b|(?:\?\.)?\[\s*(['"`])ai\1\s*\])/;
 export const CLIENT_FETCH_HTTP = /\bfetch\s*\(\s*(['"`])https?:\/\//;
-const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在管理台第 4 步'上课准备'填，课程代码里不写";
+const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在工作台第 4 步'上课准备'填，课程代码里不写";
 // 13 课程组件：契约 §八的槽位名（与 kernel/client/stores/componentRegistry.js 的 SLOT_NAMES 一致，测试核对）
 export const CONTRACT_SLOTS = [
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
@@ -748,7 +748,7 @@ function readCache(file) {
   }
 }
 
-// 原子写：先写 .tmp 再 rename（管理台检查 worker 超时被结束时不会留下半截文件）
+// 原子写：先写 .tmp 再 rename（工作台检查 worker 超时被结束时不会留下半截文件）
 function writeCache(file, cache) {
   if (!fs.existsSync(path.dirname(file))) return; // data/ 不在：不写也不报错
   const keys = Object.keys(cache).sort((a, b) => (Number(cache[a]?.at) || 0) - (Number(cache[b]?.at) || 0));
@@ -1011,11 +1011,11 @@ async function checkCodeTests({
         }
         if (!r.available) {
           const why = String(r.reason ?? '').replace(/（[^）]*）$/, '') || 'Python 运行时不可用';
-          w(cfgFile, testsLine, `${why}，${where}的测试没验证`, '在管理台左边第 4 步"上课准备"下载 Python 运行时后再跑一次 check:lesson', 'tests-unverified');
+          w(cfgFile, testsLine, `${why}，${where}的测试没验证`, '在工作台左边第 4 步"上课准备"下载 Python 运行时后再跑一次 check:lesson', 'tests-unverified');
           entry.solution = 'unverified';
           continue;
         }
-        // 每段跑完立即写（管理台检查 worker 超时被结束时，已跑完的段下次直接命中）
+        // 每段跑完立即写（工作台检查 worker 超时被结束时，已跑完的段下次直接命中）
         if (m.solution !== 'timeout' && !m.incomplete && cacheable) {
           const disk = readCache(cacheFile);
           disk[key] = { hash, at: Date.now(), result: m };

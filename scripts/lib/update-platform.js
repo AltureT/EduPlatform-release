@@ -1,4 +1,4 @@
-// 平台更新（管理台更新规格 §2 检查、§3 更新）：纯函数 + 流程；scripts/update-platform.mjs 只是命令行壳，管理台 server.js 用检查部分
+// 平台更新（管理台更新规格 §2 检查、§3 更新）：纯函数 + 流程；scripts/update-platform.mjs 只是命令行壳，工作台 server.js 用检查部分
 //   RELEASE_API：Gitee → GitHub 的发布列表接口（两边都混着 runtime-v… 的 tag，所以不用 /releases/latest，自己挑）
 //   pickLatest(releases, current) → { tag, version, url, size?, publishedAt? } | null：tag 是 vX.Y.Z、不是预发布 / 草稿、
 //     资源里有名字正好是 EduPlatform-v<版本>.zip 的，取版本最大的；不比 current 新 → null
@@ -11,7 +11,7 @@
 //   runUpdate({ root, version, urls, size?, fetch?, log, now, beforeApply?, protocols?, statfs? }) → 同上：先查空间、再下载（只允许 https:，边下边卡 50 MB；
 //     第一个地址失败换下一个）再 applyUpdate；beforeApply() 在开始校验 / 备份 / 覆盖之前调用（命令行壳在这里屏蔽 Ctrl+C / 关窗口信号）
 //   S9 磁盘空间预检（更新容灾补强规格 §1.1）：freeBytes(root, statfs) → 可用字节 | null（取不到 = 不拦）；
-//     needBytesFor(pkg) = 解压总大小 × 3 + 20 MB（写入前）；downloadNeedBytes(size) = 包大小（没有按 50 MB）+ 20 MB（下载前，管理台起子进程前也用它）；
+//     needBytesFor(pkg) = 解压总大小 × 3 + 20 MB（写入前）；downloadNeedBytes(size) = 包大小（没有按 50 MB）+ 20 MB（下载前，工作台起子进程前也用它）；
 //     spaceShortage(root, need, statfs) → null | diskFullMessage(差额)；statfs 可注入（测试不碰真实磁盘）
 //   备份目录的 manifest.json 带 done：写备份时 false，更新成功或回滚成功后 true；
 //   recoverInterruptedUpdate(root, { log, isAlive?, now? }) → null | { ok, action, from, to, backupDir, errors, pid? }：
@@ -20,7 +20,9 @@
 //     manifest 记的更新子进程 pid 还活着 → action 'running'，不动（ok: false）；
 //     平台文件已完好（checkPlatformFiles 无改动 / 缺失，例如教师已重新解压覆盖）→ action 'intact'，只把 done 标 true；
 //     否则按 manifest 回滚 → action 'rolled-back'（done 标 true）或 'failed'（ok: false，保留 done:false 下次再试）。
-//     管理台启动时调用（管理台页面上方横幅提示"上次更新没有完成，已恢复到更新前"）；也可 node scripts/update-platform.mjs --recover 手动跑
+//     工作台启动时调用（工作台页面上方横幅提示"上次更新没有完成，已恢复到更新前"）；也可 node scripts/update-platform.mjs --recover 手动跑
+//   LEGACY_FILES（S10 班迹改名规格 §2.2）：改名前的双击入口，备份时进 manifest.files，写入阶段删掉，回滚随备份恢复；
+//     根上的 *.command 写入后补可执行位
 //   退出码 EXIT：0 成功、1 参数或前置不对（没改文件）、2 下载失败、3 包不对、4 失败已回滚、5 回滚也失败
 // 注意：本模块在 scripts/lib/ 里，更新时会被新版本覆盖。它 import 的模块（zip.js、runtime-zip.js → pyodide-fetch.js、platform-files.js）
 //   全部是顶部的静态 import，进程启动时就已加载进内存；覆盖开始后不得再有动态 import（回滚也只用 node: 内置模块与已加载的函数）
@@ -57,6 +59,8 @@ export const STALE_BACKUP_MS = 10 * 60 * 1000;
 export const EXIT = { OK: 0, ERROR: 1, DOWNLOAD: 2, BAD_PACKAGE: 3, ROLLED_BACK: 4, ROLLBACK_FAILED: 5 };
 // 包里有也不写、本机有也不删（末尾 / = 目录）
 export const SKIP = ['lessons/', 'data/', 'backups/', 'vendor/', 'node_modules/', 'dist/', '.env', '.env.local', '.manage.lock', '.teacher-secret'];
+// S10 班迹改名规格 §2.2：改名前的双击入口。平台目录里有、新包里没有 → 先备份（进 manifest.files）再删，回滚时随备份恢复
+export const LEGACY_FILES = ['管理台.command', '管理台.bat'];
 const TAG_RE = /^v(\d+)\.(\d+)\.(\d+)$/;
 
 // 大小写不敏感（Mac / Windows 默认文件系统）：Lessons/ 与 lessons/ 是同一个目录
@@ -399,7 +403,7 @@ function sweepBackups(updates, names, { log, now }) {
   return valid;
 }
 
-// 管理台启动时：最新的备份 done === false → 覆盖中途被打断（Ctrl+C、关窗口、断电），按 manifest 回滚一次
+// 工作台启动时：最新的备份 done === false → 覆盖中途被打断（Ctrl+C、关窗口、断电），按 manifest 回滚一次
 // pid 是否还活着：signal 0 只检查不发信号（Windows 同样可用）；EPERM = 活着但不是我们的
 export function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -498,6 +502,7 @@ export function applyUpdate({
   for (let i = 2; exists(abs(root, backupRel)); i += 1) backupRel = `${UPDATES_DIR}/before-v${oldInfo.version}-${stamp(now)}-${i}`;
   const backupAbs = abs(root, backupRel);
   const manifest = { from: oldInfo.version, to: version, done: false, pid: process.pid, files: [], added: [], modes: {} };
+  const saved = new Set();
   try {
     const save = (rel) => {
       const from = abs(root, rel);
@@ -507,9 +512,13 @@ export function applyUpdate({
       manifest.files.push(rel);
       if (process.platform !== 'win32') manifest.modes[rel] = fs.statSync(from).mode & 0o777;
     };
-    const saved = new Set();
     for (const rel of [...Object.keys(oldProt).filter((r) => !isSkipped(r)), VERSION_FILE]) {
       if (saved.has(rel) || !isFile(abs(root, rel))) continue;
+      save(rel);
+      saved.add(rel);
+    }
+    for (const rel of LEGACY_FILES) {
+      if (saved.has(rel) || isSkipped(rel) || !isFile(abs(root, rel))) continue;
       save(rel);
       saved.add(rel);
     }
@@ -542,12 +551,17 @@ export function applyUpdate({
       fs.rmSync(f);
       pruneEmptyDirs(root, rel);
     }
+    // S10：旧双击入口（已备份）；新包里有同名文件就照常覆盖，不删
+    for (const rel of LEGACY_FILES) {
+      if (pkg.files.has(rel) || !saved.has(rel)) continue;
+      fs.rmSync(abs(root, rel), { force: true });
+    }
     for (const rel of writes) {
       const f = abs(root, rel);
       fs.mkdirSync(path.dirname(f), { recursive: true });
       writeFile(`${f}.updating`, pkg.files.get(rel));
       rename(`${f}.updating`, f);
-      if (rel === '管理台.command' && process.platform !== 'win32') fs.chmodSync(f, 0o755);
+      if (rel.endsWith('.command') && !rel.includes('/') && process.platform !== 'win32') fs.chmodSync(f, 0o755);
     }
     afterWrite?.(root, { backupDir: backupRel });
     log('5/5 检查写入的文件…');

@@ -7,11 +7,11 @@
 - `lesson.config.js`：`components: ['coach']` 或 `{ id: 'coach', maxPerStage: 5, cooldownMs: 20000, refusedCooldownMs: 60000 }`（缺省即此值；每段每人最多问几次、两次提问至少隔多少毫秒、本段被拒 3 次后额外等多少毫秒）。只认这三个参数；AI 接口地址与密钥只从环境读，不要写进课程配置（组件参数会随课堂状态下发到学生端）。
 - 阶段 `stage.config.js` **顶层**（原语段与自写段都在顶层，不进 `options`）：`coach: true` | `false`（缺省）| `{ intro: '横幅那一行的话，≤ 60 字' }`。只有 `coach` 为真的段学生才看到入口。
 - `check:lesson`：`coach` 不是 boolean 或 `{ intro: ≤ 60 字 }` → 错误；有段写了 coach 而 `components` 没有 `'coach'` → 警告。
-- AI 接口：本组件不自己连模型，调 `cctx.ai.chat(messages, { caller: 'coach' })`；地址、模型、密钥由管理台第 4 步"上课准备"的三项环境变量决定，超时、并发、排队、日志都由内核 `kernel/server/ai.js` 统一管（统一 AI 接口规格 §2）。
+- AI 接口：本组件不自己连模型，调 `cctx.ai.chat(messages, { caller: 'coach' })`；地址、模型、密钥由工作台第 4 步"上课准备"的三项环境变量决定，超时、并发、排队、日志都由内核 `kernel/server/ai.js` 统一管（统一 AI 接口规格 §2）。
 
 ## 未配置
 
-内核 `cctx.ai.configured` 为 false（"上课准备"的 AI 接口地址或模型没填）→ 组件"未配置"（`perClass.reason` 取 `cctx.ai.reason`）：学生端不出现入口，教师顶栏芯片"AI 助手未配置"（悬停：到管理台第 4 步"上课准备"填 AI 接口）；`coach:s-ask` 一律拒绝。改了设置要重启平台才生效。
+内核 `cctx.ai.configured` 为 false（"上课准备"的 AI 接口地址或模型没填）→ 组件"未配置"（`perClass.reason` 取 `cctx.ai.reason`）：学生端不出现入口，教师顶栏芯片"AI 助手未配置"（悬停：到工作台第 4 步"上课准备"填 AI 接口）；`coach:s-ask` 一律拒绝。改了设置要重启平台才生效。
 
 ## 事件
 

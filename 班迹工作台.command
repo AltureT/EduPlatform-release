@@ -1,17 +1,17 @@
 #!/bin/bash
-# 课堂互动平台 · 管理台（Mac 双击入口）
+# 班迹工作台（Mac 双击入口）
 # 切到本文件所在目录 → 找 Node（vendor/node 便携版 → 系统 node；都没有或第一个数字 < 22 → 问一句，回车自动下载到 vendor/node）
 #   → 依赖没装好则 npm install（失败换国内源 npmmirror 再试一次）→ npm run manage
 #   便携 Node：国内镜像 → 官方，按同一来源的 SHASUMS256.txt 校验；不改系统、不要管理员权限、不写系统 PATH
 #   EDU_LAUNCHER_DRY_RUN=1：找到 / 装好 Node 后打印版本就退出（实测用）
 #   "装好了" = node_modules/.package-lock.json 在（npm 装完才写）且 better-sqlite3 的二进制在（二进制没到位就重装）
 #   不写 .npmrc：国内源只在重试这一次用，境外用户不会被强制走镜像
-#   管理台退出码 75（平台已更新，管理台更新规格 §4）→ 重新判断"装好了"再启动管理台，最多 3 次；
-#   设 EDU_LAUNCHER=1：管理台据此知道由入口脚本启动（75 时不再打印"请重新运行 npm run manage"）
+#   工作台退出码 75（平台已更新，见更新规格 §4）→ 重新判断"装好了"再启动工作台，最多 3 次；
+#   设 EDU_LAUNCHER=1：工作台据此知道由入口脚本启动（75 时不再打印"请重新运行 npm run manage"）
 #   更新会覆盖本文件：bash 读的是打开时的旧文件（旧 inode），不受影响（.bat 另做了自我复制）
-# 本窗口开着平台就开着；关闭本窗口即关闭管理台和平台
+# 本窗口开着平台就开着；关闭本窗口即关闭工作台和平台
 cd "$(dirname "$0")" || exit 1
-printf '\033]0;课堂互动平台\007'
+printf '\033]0;班迹工作台\007'
 # 双击启动时 PATH 可能不含常见安装位置
 export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
 export EDU_LAUNCHER=1
@@ -139,7 +139,7 @@ ensure_installed() {
   fi
 }
 
-# 管理台以退出码 75 退出 = 平台刚更新完：重新判断"装好了"、再启动管理台；最多重启 3 次（防止反复 75）
+# 工作台以退出码 75 退出 = 平台刚更新完：重新判断"装好了"、再启动工作台；最多重启 3 次（防止反复 75）
 restarts=0
 while :; do
   ensure_installed
@@ -148,13 +148,13 @@ while :; do
   if [ "$code" -eq 75 ] && [ "$restarts" -lt 3 ]; then
     restarts=$((restarts + 1))
     echo ""
-    echo "平台已更新，正在重新启动管理台…"
+    echo "平台已更新，正在重新启动工作台…"
     continue
   fi
   break
 done
 if [ "$code" -ne 0 ]; then
   echo ""
-  echo "管理台已退出（上面是出错信息）。"
+  echo "工作台已退出（上面是出错信息）。"
   pause_exit "$code"
 fi

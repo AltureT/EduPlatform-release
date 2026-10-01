@@ -79,7 +79,7 @@ export const TEXT = Object.freeze({
   label: 'AI 助手',
   notConfigured: 'AI 助手未配置',
   // T9a：课前页一行与侧栏"求助"标题行
-  preloginOff: 'AI 助手没配置，学生不会看到求助入口；要用就到管理台第 4 步"上课准备"填 AI 接口',
+  preloginOff: 'AI 助手没配置，学生不会看到求助入口；要用就到工作台第 4 步"上课准备"填 AI 接口',
   answeredShort: (n) => `已答 ${n}`,
   pause: '暂停',
   resume: '恢复',
@@ -91,7 +91,7 @@ export const TEXT = Object.freeze({
   refusedFlag: (n) => `索答 ${n} 次`,
   refusedTag: { answer: '（已拒绝：索要答案）', inject: '（已拒绝：无关请求）' },
   // K8（coach 规格 §15）：AI 线路提示
-  backupTitle: (t) => `主接口从 ${t} 起不可用，已自动改用备用接口；课后到管理台设置页点"测一下"看看主接口`,
+  backupTitle: (t) => `主接口从 ${t} 起不可用，已自动改用备用接口；课后到工作台第 4 步"上课准备"的"AI 接口"一节点"测一下"看看主接口`,
   errorTitle: (why) => `AI 接口最近一次请求失败（${why}），学生会看到"AI 现在没回应"`,
   backupTag: '（备用）',
   // C6：学生 check 与教师"AI 看一遍"
@@ -113,7 +113,7 @@ export const TEXT = Object.freeze({
   reviewTruncated: '结果太多，保存时理由被截短了',
 });
 
-// K8：AI 失败原因的中文（教师工具栏 title）；与内核 kernel/server/ai.js 的 AI_REASON_TEXT / aiReasonText 一致（管理台"测一下"用那份，有单测对照）
+// K8：AI 失败原因的中文（教师工具栏 title）；与内核 kernel/server/ai.js 的 AI_REASON_TEXT / aiReasonText 一致（工作台"测一下"用那份，有单测对照）
 export const REASON_TEXT = Object.freeze({
   timeout: '超时',
   network: '连不上',

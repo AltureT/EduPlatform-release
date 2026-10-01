@@ -1,5 +1,5 @@
 @echo off
-rem Classroom platform - management console (Windows double-click entry).
+rem Banji workbench (Windows double-click entry).
 rem This file must stay pure ASCII. Chinese messages are printed through PowerShell from code points.
 rem Keep this window open while teaching; closing it stops the console and the platform.
 rem Node.js: vendor\node (portable) first, then the system node, each only if its major version is >= 22.
@@ -31,7 +31,7 @@ if errorlevel 1 goto cdfail
 
 :main
 set "EDU_LAUNCHER=1"
-title Classroom Platform
+title Banji Workbench
 set "NODE_VERSION=24.21.0"
 set "RESTARTS=0"
 
@@ -131,7 +131,7 @@ if not "%ERRORLEVEL%"=="75" goto afterrun
 if %RESTARTS% GEQ 3 goto afterrun
 set /a "RESTARTS=RESTARTS+1"
 echo.
-call :say "0x5E73,0x53F0,0x5DF2,0x66F4,0x65B0,0xFF0C,0x6B63,0x5728,0x91CD,0x65B0,0x542F,0x52A8,0x7BA1,0x7406,0x53F0,0x2026"
+call :say "0x5E73,0x53F0,0x5DF2,0x66F4,0x65B0,0xFF0C,0x6B63,0x5728,0x91CD,0x65B0,0x542F,0x52A8,0x5DE5,0x4F5C,0x53F0,0x2026"
 echo The platform was updated. Restarting the console...
 goto checkinstall
 

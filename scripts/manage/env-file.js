@@ -1,4 +1,4 @@
-// .env 读写（管理台规格 §3）：管理台是 .env 的唯一编辑者；服务端仍用 dotenv 读取
+// .env 读写（管理台规格 §3）：工作台是 .env 的唯一编辑者；服务端仍用 dotenv 读取
 //   readEnv(root) → { values, exists }
 //   writeEnv(root, patch)：逐行读取；已知键原位替换值（重复出现的键每一处都替换），缺失的已知键追加到末尾，其余行原样保留；未知键忽略
 //   ensureEnv(root, platform?)：.env 缺失时从 .env.example 生成（PORT：darwin / win32 取 80，linux 等取 3001）；
@@ -25,7 +25,7 @@ export const EDITABLE_KEYS = [
 ];
 // 上课准备页脱敏显示的密钥（K8：第二组备用接口的密钥同样处理）
 export const SECRET_KEYS = ['AI_API_KEY', 'AI_API_KEY_2'];
-// 下载 Python 运行时用的键（国内镜像与 Gitee 同步规格 §4）：管理台起下载子进程时从 .env 传入；平台本身不用，改了不需要重启平台
+// 下载 Python 运行时用的键（国内镜像与 Gitee 同步规格 §4）：工作台起下载子进程时从 .env 传入；平台本身不用，改了不需要重启平台
 export const DOWNLOAD_KEYS = ['RUNTIME_ZIP_URL', 'PYODIDE_MIRROR', 'PYPI_MIRROR', 'FONT_URL'];
 export const DEFAULTS = {
   PORT: '80',
@@ -60,7 +60,7 @@ export function customDbPath(root) {
   return effectiveEnv(root).DB_PATH ?? null;
 }
 
-// 下载子进程的环境：base（管理台自己的环境）+ .env 里非空的 DOWNLOAD_KEYS（.env 优先）
+// 下载子进程的环境：base（工作台自己的环境）+ .env 里非空的 DOWNLOAD_KEYS（.env 优先）
 export function downloadEnv(root, base = process.env) {
   const { values } = readEnv(root);
   const out = { ...base };

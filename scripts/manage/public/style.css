@@ -1,6 +1,6 @@
-/* 管理台样式（管理台规格 §5；G3 管理台线性路径重设计规格 §2.5、§5 偏差）
-   管理台独立配色，不再与内核令牌一致（G3）：清爽简约的浅色方案——白底侧栏（右侧 1 px 边框）+ 浅灰页面底 + 一个蓝色主色 + 绿色启动，
-   和学生 / 教师页面的米色 / 藏青 / 赭红明显区分；管理台是独立原生页面，不引用内核样式（kernel/client/global.css 不动）。
+/* 工作台样式（管理台规格 §5；G3 管理台线性路径重设计规格 §2.5、§5 偏差）
+   工作台独立配色，不再与内核令牌一致（G3）：清爽简约的浅色方案——白底侧栏（右侧 1 px 边框）+ 浅灰页面底 + 一个蓝色主色 + 绿色启动，
+   和学生 / 教师页面的米色 / 藏青 / 赭红明显区分；工作台是独立原生页面，不引用内核样式（kernel/client/global.css 不动）。
    所有颜色只写在 :root 令牌里（选择器里不写死色值），换一套配色只改这一段 */
 :root {
   --bg: #F6F7F9;
@@ -71,10 +71,10 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.92em;
 .tb-course, .tb-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
 .tb-course { flex: 1 1 320px; flex-wrap: nowrap; }
 .tb-icon {
-  width: 22px; height: 22px; flex: none; border-radius: 5px; background: var(--brand);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h11a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z' fill='black'/%3E%3C/svg%3E") center / 18px no-repeat;
-          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 4h11a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z' fill='black'/%3E%3C/svg%3E") center / 18px no-repeat;
+  width: 22px; height: 22px; flex: none; border-radius: 5px;
+  background: url("banji-192.png") center / cover no-repeat;
 }
+.tb-brand { font-size: 15px; white-space: nowrap; margin-right: var(--sp-2); }
 .tb-label { color: var(--ink-soft); font-size: var(--fs-min); white-space: nowrap; }
 .tb-course select { font-weight: 600; min-width: 120px; flex: 0 1 340px; }
 .tb-course button { flex: none; }
@@ -153,6 +153,9 @@ details summary { cursor: pointer; color: var(--ink-soft); font-size: var(--fs-m
 
 main { padding: var(--sp-5) var(--sp-5) var(--sp-6); min-width: 0; }
 .page { max-width: 880px; }
+
+/* 手机宽度：品牌字让位给课程下拉（图标还在） */
+@media (max-width: 479px) { .tb-brand { display: none; } }
 
 @media (max-width: 899px) {
   .topbar { position: static; padding: var(--sp-2) var(--sp-4); }

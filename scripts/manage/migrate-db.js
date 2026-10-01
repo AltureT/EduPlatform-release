@@ -1,4 +1,4 @@
-// 一次性迁移（名单与数据以课程为主体规格 §2.2）：管理台启动时调用
+// 一次性迁移（名单与数据以课程为主体规格 §2.2）：工作台启动时调用
 //   migrateDb(root, { now?, customDb?, log? }) → null（无需迁移）| 记录 { at, from, to, lessonId, unsorted, shown: false }
 //     data/classroom.sqlite（旧的全平台一个库）存在、是普通文件、.env 没有自定义 DB_PATH 时：
 //     先 checkpoint（-wal 并进主文件），读 sessions.classroom_snapshot.lessonId；

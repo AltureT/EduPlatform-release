@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { PYODIDE_VERSION } from '../../components/sandbox/packages.js';
 import { parseJunit } from '../../components/sandbox/client/parseJunit.js';
 
-export const NOT_DOWNLOADED = 'Python 运行时还没下载（管理台左边第 4 步"上课准备"可下载）';
+export const NOT_DOWNLOADED = 'Python 运行时还没下载（工作台左边第 4 步"上课准备"可下载）';
 // 缓存键里的运行器版本：Python 逻辑或 Pyodide 版本变了，旧缓存自动失效
 export const PYRUN_VERSION = `pyrun-1+pyodide-${PYODIDE_VERSION}`;
 // 同 code 原语 primitive.config.js 的 TEST_NAME_RE
@@ -32,7 +32,7 @@ export const validRelPath = (p) => typeof p === 'string' && p !== '' && !p.start
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const WORKER = new URL('./pyrun-worker.js', import.meta.url);
 
-// 平台目录下的 Pyodide 目录：按管理台 pyodideInfo 的规则读 vendor/pyodide/manifest.json → vendor/pyodide/v<版本>/
+// 平台目录下的 Pyodide 目录：按工作台 pyodideInfo 的规则读 vendor/pyodide/manifest.json → vendor/pyodide/v<版本>/
 export function resolvePyodideDir(root = DEFAULT_ROOT) {
   try {
     const m = JSON.parse(fs.readFileSync(path.join(root, 'vendor', 'pyodide', 'manifest.json'), 'utf8'));
@@ -46,7 +46,7 @@ export function resolvePyodideDir(root = DEFAULT_ROOT) {
 // 目录齐不齐：目录在、有 pyodide.mjs、lock 里 pytest 的轮子在
 function checkDir(dir) {
   if (!dir || !fs.existsSync(dir)) return NOT_DOWNLOADED;
-  if (!fs.existsSync(path.join(dir, 'pyodide.mjs'))) return 'Python 运行时不完整：缺 pyodide.mjs（管理台左边第 4 步"上课准备"重新下载）';
+  if (!fs.existsSync(path.join(dir, 'pyodide.mjs'))) return 'Python 运行时不完整：缺 pyodide.mjs（工作台左边第 4 步"上课准备"重新下载）';
   try {
     const lock = JSON.parse(fs.readFileSync(path.join(dir, 'pyodide-lock.json'), 'utf8'));
     const file = lock?.packages?.pytest?.file_name;
@@ -54,7 +54,7 @@ function checkDir(dir) {
   } catch {
     // 落到下面
   }
-  return 'Python 运行时不完整：缺 pytest（管理台左边第 4 步"上课准备"重新下载）';
+  return 'Python 运行时不完整：缺 pytest（工作台左边第 4 步"上课准备"重新下载）';
 }
 
 export function createPyRunner({

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>课堂互动平台 · 管理台</title>
+  <title>班迹 · 工作台</title>
+  <link rel="icon" type="image/png" href="banji-32.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,6 +12,7 @@
   <header class="topbar">
     <div class="tb-course">
       <span class="tb-icon" aria-hidden="true"></span>
+      <strong class="tb-brand">班迹工作台</strong>
       <label for="t-course" class="tb-label">当前课程</label>
       <select id="t-course" title="换一门课；平台运行中换课，重启后生效"></select>
       <button id="t-none" class="linkish" type="button" hidden title="到第 1 步新建一门课">还没有课程 · 先新建一门</button>
@@ -38,7 +40,7 @@
     <!-- R4：有新版本（文字由 updateBandText 填）→ 去"平台"页 -->
     <button id="p-update" class="pending pending-link" type="button" hidden title="到平台页的平台版本一节下载并更新"></button>
 
-    <!-- R4：上次更新覆盖到一半被打断，管理台启动时已按备份恢复（备份目录只放 title） -->
+    <!-- R4：上次更新覆盖到一半被打断，工作台启动时已按备份恢复（备份目录只放 title） -->
     <div id="p-recovered" class="pending" role="status" hidden>
       <span id="p-recovered-text"></span>
     </div>
@@ -232,7 +234,10 @@
                 <button id="r-cancel" type="button" title="收起预览，回到上面修改">不对，回去修改</button>
               </div>
             </div>
-            <details class="more-help"><summary>详细说明</summary><p>第一行是"姓名"表头会自动跳过；同名只保留一次，超过 16 个字的名字会跳过。不想用名单时点"清空名单"，学生加入时自己填名字。</p></details>
+            <details class="more-help"><summary>详细说明</summary>
+              <p>一行一个姓名；第一行是"姓名"表头会自动跳过；同名只保留一次，超过 16 个字的名字会跳过。用 Excel 的话把姓名放第一列再"另存为 CSV"，后面几列（学号等）会被忽略。</p>
+              <p>名单只管当前课程，每门课各导一次；这门课没在上时也能导入，下次上它时自动生效，重启平台不用重新导入。不想用名单时点"清空名单"，学生加入时自己填名字。</p>
+            </details>
           </div>
 
           <div class="card" id="prep-ai">
@@ -329,6 +334,10 @@
             </div>
             <p id="c-busy" class="busy-line" hidden><span class="spinner" aria-hidden="true"></span> <span id="c-busy-text"></span></p>
             <p class="desc">第一次启动要等一会儿。</p>
+            <details class="more-help"><summary>详细说明</summary>
+              <p>启动后这一页变成上课面板：左边是学生地址和二维码，右边点"打开教师端"，输入教师密码登录后投到大屏。学生扫码或在平板浏览器输入地址，选自己的名字加入。</p>
+              <p>那个黑色窗口开着平台才开着，上课时别关（可以最小化）；下课点"停止平台"。启动没成功时，页面上方会写原因并给出下一步按钮。</p>
+            </details>
           </article>
 
           <article id="classroom" class="card classroom" hidden aria-label="上课面板">
@@ -383,6 +392,10 @@
                 </dl>
               </details>
             </footer>
+            <details class="more-help"><summary>详细说明</summary>
+              <p>教师端底部切换三个视图：演示和学生看到的一样，可以直接操作（不算进学生记录）；统计看全班；明细看每个学生，作答可以"投到大屏"。想看某个学生此刻的屏幕点"镜像"。</p>
+              <p>上课中改了课程文件，顶部会出现"重启并应用"，点了重启平台，学生进度会保留，刷新页面就能看到新内容。</p>
+            </details>
           </article>
         </div>
       </section>
@@ -403,19 +416,21 @@
             <h3>备份</h3>
             <p class="desc">建议每节课下课后备份一次。</p>
             <button data-action="backup" class="primary" title="把这门课的课堂数据存一份">备份这门课</button>
+            <details class="more-help"><summary>详细说明</summary><p>平台运行中也可以备份。备份存在平台文件夹的 backups 文件夹里，文件名带日期和时间；列表里可以"下载"单个备份，拷到别处保存。</p></details>
           </div>
           <div class="card">
             <h3>恢复</h3>
             <p class="desc">回到某次备份的时刻；这门课正在上时先停止平台。</p>
             <ul id="b-list" class="backup-list"></ul>
             <p class="muted" id="b-empty" hidden>还没有备份。</p>
-            <details class="more-help"><summary>详细说明</summary><p>恢复前会自动把当前数据再存一份，恢复后学生下次进入会回到登录页。</p></details>
+            <details class="more-help"><summary>详细说明</summary><p>恢复前会自动把当前数据再存一份（列表里标"恢复前自动快照"），恢复错了还能换回来；恢复后学生下次进入会回到登录页。平台在上别的课时可以直接恢复这门课。</p></details>
           </div>
           <div class="card">
             <h3>重置课堂</h3>
             <p class="desc">换班或新一节课之前清掉上一节的数据；会先自动备份。</p>
             <p id="reset-desc" class="help"></p>
             <button data-action="reset" class="danger" title="清掉上一节课的数据，课堂回到第一环节">重置并回到第一环节</button>
+            <details class="more-help"><summary>详细说明</summary><p>清除这门课的学生记录、平板对应关系和学生做的内容，课堂回到第一个环节，名单保留。重置前会自动存一份（列表里标"重置前自动快照"），需要时可以恢复。</p></details>
           </div>
           <div class="card">
             <h3>其它</h3>
@@ -423,6 +438,7 @@
               <button data-action="reset-bindings" title="解除所有平板和名字的对应关系；所有平板回到登录页重新选名字">重置设备绑定</button>
               <p class="help">学生换了平板或点错名字时。</p>
             </div>
+            <details class="more-help"><summary>详细说明</summary><p>学生第一次选好名字后，这台平板就和这个名字对应起来，防止别人冒用。重置后学生重新打开页面再选一次即可。</p></details>
           </div>
           <div id="u-card" class="card" hidden>
             <h3>未归类的旧数据</h3>
@@ -446,7 +462,7 @@
           <p class="state-line" id="s-up-line">还没检查过</p>
           <div class="row">
             <button type="button" id="s-up-check" title="联网看一下有没有新版本">检查更新</button>
-            <button type="button" id="s-up-apply" class="primary" hidden title="下载新版本并替换平台文件；课程、课堂数据、设置和名单都不动；完成后管理台会自动重新打开">下载并更新</button>
+            <button type="button" id="s-up-apply" class="primary" hidden title="下载新版本并替换平台文件；课程、课堂数据、设置和名单都不动；完成后工作台会自动重新打开">下载并更新</button>
           </div>
           <p id="s-up-help" class="help" hidden></p>
           <pre id="s-up-log" class="log small" hidden></pre>

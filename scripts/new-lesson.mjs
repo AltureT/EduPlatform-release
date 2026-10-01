@@ -18,7 +18,7 @@ export const DEFAULT_COMPONENTS = ['mirror', 'share', 'report'];
 function lessonConfigSource({ id, title }) {
   const glyph = Array.from(title.trim())[0];
   return `// ${title}（npm run new:lesson 生成）。阶段用 npm run new:stage 添加，改完跑 npm run check:lesson。
-// 字段说明见契约（docs/02-阶段模块契约.md）§一；管理台最上面"当前课程"下拉框里显示 title。
+// 字段说明见契约（docs/02-阶段模块契约.md）§一；工作台顶栏"当前课程"下拉框里显示 title。
 export default {
   id: ${quoteJs(id)},${' '.repeat(Math.max(1, 22 - id.length))}// 持久化用，改名视为新课
   title: ${quoteJs(title)},
@@ -37,7 +37,7 @@ export default {
 function readmeSource({ title, configRel, dirRel }) {
   return `# ${title}
 
-这门课由 \`npm run new:lesson\` 生成。启动：在管理台最上面"当前课程"下拉框里选《${title}》（或 \`.env\` 写 \`LESSON_CONFIG=${configRel}\`），然后在左边第 5 步"启动上课"点"启动平台"。
+这门课由 \`npm run new:lesson\` 生成。启动：在工作台顶栏"当前课程"下拉框里选《${title}》（或 \`.env\` 写 \`LESSON_CONFIG=${configRel}\`），然后在左边第 5 步"启动上课"点"启动平台"。
 加阶段：\`npm run new:stage -- --lesson ${configRel} --id <id> --label <阶段名> --primitive <vote|quiz|free-text|code|data-analysis|none>\`，
 会在 \`${dirRel}/stages/\` 下生成 \`NN-<id>/\`（阶段卡 STAGE.md + 配置或骨架）并追加进 \`lesson.config.js\` 的 \`stages\`；
 按阶段卡把 \`TODO：\` 占位填完，再跑 \`npm run check:lesson\`，直到只剩"通过"。

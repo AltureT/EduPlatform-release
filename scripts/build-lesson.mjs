@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // npm run build:lesson -- [lesson.config 路径]（K3 收尾）：把一门课的前端打包到系统临时目录，只为确认"学生页能打开"，
-//   不碰平台自己的 dist/（管理台用的那份）。缺省课程取 .env 的 LESSON_CONFIG，再缺省 ./lesson.config.js。
+//   不碰平台自己的 dist/（工作台用的那份）。缺省课程取 .env 的 LESSON_CONFIG，再缺省 ./lesson.config.js。
 //   退出码：0 打包成功（末行"通过：页面能打包"）；1 打包失败（原样打印 vite 的报错，末行"打包失败"）；2 参数错误。
 //   buildLesson({ root, lesson, outDir?, command? }) → Promise<{ ok, code, outDir }>
 import fs from 'node:fs';

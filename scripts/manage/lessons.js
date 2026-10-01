@@ -90,7 +90,7 @@ export async function listLessonChoices(root, { warn = (m) => console.warn(m), c
 //     没有 进度.md：examples/ 下 { kind: 'example' }，其它 { kind: 'none' }
 //     读出："当前环：NN"、"下一步：…"、阶段表里做完的段数（骨架到审查五格都以 ✓ 开头）/ 总段数
 //       → { kind: 'progress', ring, ringName, next, stagesDone, stagesTotal, stages }
-//     stages（V1 代码题测试验证规格 §5，管理台只读备课表）：阶段表逐行 { label, dir, how, cells: [骨架, 内容, 检查, 模拟, 审查, 存档] 原文, done }
+//     stages（V1 代码题测试验证规格 §5，工作台只读备课表）：阶段表逐行 { label, dir, how, cells: [骨架, 内容, 检查, 模拟, 审查, 存档] 原文, done }
 //     两行都找不到（格式不对）→ { kind: 'unknown' }
 export const RING_NAMES = ['环境与项目', '教学设计', '平台规格', '脚手架与计划', '执行与审查', '磨课', '上课与课后'];
 

@@ -1,5 +1,5 @@
 // 反诈攻防对抗课（npm run new:lesson 生成）。阶段用 npm run new:stage 添加，改完跑 npm run check:lesson。
-// 字段说明见契约（docs/02-阶段模块契约.md）§一；教师管理台顶上"当前课程"下拉框里显示 title。
+// 字段说明见契约（docs/02-阶段模块契约.md）§一；工作台顶栏"当前课程"下拉框里显示 title。
 export default {
   id: 'anti-fraud',            // 持久化用，改名视为新课
   title: '反诈攻防对抗课',

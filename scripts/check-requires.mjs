@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 启动前检查（代码沙盒规格 §2.3；内核附带，组件无关）：命令行版；管理台启动平台前在进程内做同样的检查（scripts/manage/process.js）
+// 启动前检查（代码沙盒规格 §2.3；内核附带，组件无关）：命令行版；工作台启动平台前在进程内做同样的检查（scripts/manage/process.js）
 // 读课程配置（.env / 环境变量 LESSON_CONFIG，默认 ./lesson.config.js），对已打开组件在 component.config.js 里
 // 声明的 requires: [{ path, hint }] 逐项检查 path（相对项目根）是否存在；缺则打印该项 hint 并以 1 退出，全部存在以 0 退出
 // 测试用覆盖：COMPONENTS_ROOT（默认 <项目根>/components）、VENDOR_ROOT（requires 路径的基准，默认 <项目根>，与 createApp 的 vendorRoot 同义）

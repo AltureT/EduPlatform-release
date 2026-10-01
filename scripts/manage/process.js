@@ -1,4 +1,4 @@
-// 平台进程管理（管理台规格 §4.2）：平台是管理台的子进程，关窗即停；不做后台守护、不 kill 他人进程
+// 平台进程管理（管理台规格 §4.2）：平台是工作台的子进程，关窗即停；不做后台守护、不 kill 他人进程
 //   （M2：本项目自己之前没关掉的平台不算他人进程，教师点"停止它并启动"时可结束，见 port-owner.js 与规格 §7.3）
 //   createPlatform({ root, serverCommand?, buildCommand?, env?, log?, readyTimeoutMs?, stopTimeoutMs?, portOwner?, stopOwn? })
 //     → { status(), start({ forceBuild, stopOld }), stop(), restart(), rebuild(), killNow(), tail(n), on(event, fn), off(event, fn) }
@@ -12,7 +12,7 @@
 //   G3：LESSON_CONFIG 空值（还没有课程）→ error = { kind: 'no-lesson', message: '还没有课程，先新建一门' }，不启动
 //   status().lessonConfig：M3 审查，平台启动时的 LESSON_CONFIG（上课面板显示正在跑的课）
 //   status().dbPath：M6 审查，平台启动时实际用的库（绝对路径；启动前算好、以 DB_PATH 传给子进程：.env 自定义 DB_PATH，否则 data/lessons/<课程 id>.sqlite）；
-//     管理台据它判断名单 / 数据页选中的课是不是"正在跑"（比较库路径）
+//     工作台据它判断名单 / 数据页选中的课是不是"正在跑"（比较库路径）
 //   端口被占时 error = { kind: 'port', reason: 'in-use', port, owner, suggestPort, message }；
 //     reason 'no-permission'（需要管理员权限）/ 'not-ours'（stopOld 指向的不是本项目平台；同样带 suggestPort）
 //   运行中意外退出：error = { kind: 'crash', phase: 'running', message, detail }
@@ -398,7 +398,7 @@ export function createPlatform({
     return op;
   }
 
-  // 同步结束子进程（管理台进程退出时用，不等待）：平台收到 SIGTERM 会自行关库退出
+  // 同步结束子进程（工作台进程退出时用，不等待）：平台收到 SIGTERM 会自行关库退出
   function killNow() {
     try {
       buildChild?.kill();
@@ -466,11 +466,11 @@ export function createPlatform({
   };
 }
 
-// ===== 管理台单实例锁 =====
-// 项目根的 .manage.lock（JSON：{ pid, port, url, startedAt }，权限 600）：同一项目根只允许一个管理台，
-// 否则第二个管理台看不到第一个拉起的平台，会对运行中的库做离线操作。
+// ===== 工作台单实例锁 =====
+// 项目根的 .manage.lock（JSON：{ pid, port, url, startedAt }，权限 600）：同一项目根只允许一个工作台，
+// 否则第二个工作台看不到第一个拉起的平台，会对运行中的库做离线操作。
 //   acquireManageLock(root, { pid?, isAlive?, probe? }) → { ok: true, update(info), release() } | { ok: false, other }
-//   已有锁：持有进程已不在，或记录的管理台端口已无人监听（进程号被别的程序复用）→ 视为残留，清理后重试；
+//   已有锁：持有进程已不在，或记录的工作台端口已无人监听（进程号被别的程序复用）→ 视为残留，清理后重试；
 //   持有进程还在但尚未写端口 → other.starting = true
 export const LOCK_FILE = '.manage.lock';
 
@@ -537,10 +537,10 @@ export async function acquireManageLock(root, { pid = process.pid, isAlive = pid
   throw new Error(`无法获取 ${LOCK_FILE}`);
 }
 
-// ===== S6：npm run manage 遇旧管理台窗口时自动接管 =====
+// ===== S6：npm run manage 遇旧工作台窗口时自动接管 =====
 //   pingManage(port, { timeoutMs = 1000 }) → GET http://127.0.0.1:<port>/api/ping 的 JSON；连不上 / 超时 / 非 200 / 非 JSON → null
 //   decideTakeover({ other, pingResult, root }) → 纯函数：
-//     { action: 'replace', pid }：旧窗口已写端口、ping 回的是本项目管理台（app 相符、root 与本项目相同、pid 与锁里一致）且平台 stopped
+//     { action: 'replace', pid }：旧窗口已写端口、ping 回的是本项目工作台（app 相符、root 与本项目相同、pid 与锁里一致）且平台 stopped
 //     { action: 'busy', state }：同上但 platformState 不是 stopped（running / starting / building / stopping；
 //       'updating' = 正在更新平台或更新成功等重启；'busy' = 离线恢复 / 重置中或 Python 运行时下载中）→ 不接管
 //   takeoverMessage(state) → busy 时给教师的一句话（按 state 区分）
@@ -613,5 +613,5 @@ export async function replaceOldManage({
 export function takeoverMessage(state) {
   if (state === 'updating') return '那个窗口正在更新平台，等它完成后会自动重启，请用重启后的窗口。';
   if (state === 'busy') return '那个窗口正在恢复 / 重置数据或下载运行时，等它完成再试。';
-  return '另一个管理台窗口正在上课，请用那个窗口；确实要换窗口，先在那边停止平台。';
+  return '另一个工作台窗口正在上课，请用那个窗口；确实要换窗口，先在那边停止平台。';
 }

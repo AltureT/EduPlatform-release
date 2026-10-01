@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // 下载 Pyodide 运行时到 vendor/pyodide/（代码沙盒规格 §2.3；内核附带，组件无关）
-// 用法：npm run fetch:pyodide（或管理台"Python 运行时"磁贴的下载按钮）；可重复执行：已存在且 sha256 校验通过的文件跳过，失败的下次重下
+// 用法：npm run fetch:pyodide（或工作台第 4 步"上课准备"的"Python 运行时"一节的下载按钮）；可重复执行：已存在且 sha256 校验通过的文件跳过，失败的下次重下
 //       --sources（或 --dry-run）只列出来源顺序；--help 用法
 // 多源回退（国内镜像与 Gitee 同步规格 §4，lib/runtime-zip.js）：已就绪且校验通过 → 直接完成；否则按序尝试，任一成功即完成：
 //   0. vendor/ 下拷来的 EduPlatform-runtime-v<ver>.zip（不联网；导入后不删原 zip）
-//   1. RUNTIME_ZIP_URL（管理台"平台"页"下载源（高级）"写进 .env，管理台起本脚本时传入）
+//   1. RUNTIME_ZIP_URL（工作台"平台"页"下载源（高级）"写进 .env，工作台起本脚本时传入）
 //   2. zip: Gitee Release 整包  3. zip: GitHub Release 整包（RUNTIME_SOURCES，tag RUNTIME_RELEASE_TAG）
 //   4. files: 逐文件下载（下面的原有方式）
 //   每换一个来源打印"来源：国内镜像（Gitee）/ GitHub / 逐文件下载"；整包打印"整包 x / y MB（n%）"；全部失败末尾一句"……拷给你，放进 vendor 文件夹后再点一次"

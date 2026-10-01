@@ -1,9 +1,9 @@
 // 平台文件改动检查（框架自描述规格 §4）：发布包 版本.json 的 protected 清单（相对路径 → sha256）与本机文件比对。
 //   打包（仓库根 scripts/pack-release.mjs）：protectedManifest(templateDir, 打包文件清单) 写进 版本.json 的 protected
-//   检查（check:lesson 第 12 项、管理台"平台"页）：checkPlatformFiles(平台目录) →
+//   检查（check:lesson 第 12 项、工作台"平台"页的"平台版本"一节）：checkPlatformFiles(平台目录) →
 //     { checked: false, reason, version }（没有 版本.json / 没有 protected / 读不出，开发仓库即如此）
 //     { checked: true, version, builtAt, total, modified, missing, added, changes }（三个数组都是排好序的相对路径）
-//   受保护 = kernel/ components/ primitives/ scripts/ docs/ skills/ 下的文件 + index.html vite.config.js package.json + 各 AI 工具入口文件；
+//   受保护 = kernel/ components/ primitives/ scripts/ docs/ skills/ 下的文件 + index.html vite.config.js package.json + 各 AI 工具入口文件 + 两个双击入口（班迹工作台.command / .bat）；
 //   不含 examples/、lessons/、README.md。"多出"只在六个受保护目录里找（系统自动生成的 .DS_Store 等不算）。
 //   比对时容忍换行符：哈希不符、但把 CRLF 换成 LF 后相符的算完好（Windows 上 git 检出发布仓库会改行尾）。
 import crypto from 'node:crypto';
@@ -13,7 +13,9 @@ import { AI_ENTRY_PATHS } from './ai-entry.js';
 
 export const VERSION_FILE = '版本.json';
 export const PROTECTED_DIRS = ['kernel/', 'components/', 'primitives/', 'scripts/', 'docs/', 'skills/'];
-export const PROTECTED_FILES = ['index.html', 'vite.config.js', 'package.json', ...AI_ENTRY_PATHS];
+// 双击入口（S10 班迹改名规格 §2.2）：受保护，被改过 check:lesson 第 12 项能报
+export const LAUNCHER_FILES = ['班迹工作台.command', '班迹工作台.bat'];
+export const PROTECTED_FILES = ['index.html', 'vite.config.js', 'package.json', ...AI_ENTRY_PATHS, ...LAUNCHER_FILES];
 // 系统或工具自动生成、不算"多出"的文件与目录
 const IGNORED_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini']);
 const IGNORED_DIRS = new Set(['node_modules', '__pycache__']);

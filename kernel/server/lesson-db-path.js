@@ -1,4 +1,4 @@
-// 每门课一个库（名单与数据以课程为主体规格 §2.1）：管理台与平台共用
+// 每门课一个库（名单与数据以课程为主体规格 §2.1）：工作台与平台共用
 //   LESSON_ID_RE：课程 id 规则（小写字母开头，只含小写字母、数字、连字符，2–40 个字符）
 //   lessonIdError(id) → null | 中文报错（缺少 / 不合法）；loadLesson 与 check:lesson 用同一句
 //   lessonDbPath(root, id) → <root>/data/lessons/<id>.sqlite（id 不合法抛错；UNSORTED_ID 例外）
@@ -18,7 +18,7 @@ export function lessonIdError(id) {
   return null;
 }
 
-// 旧缺省 DB_PATH（全平台一个库时的位置）：.env 里写的是它，视为"没设置"（按课程分库）；平台与管理台同一口径
+// 旧缺省 DB_PATH（全平台一个库时的位置）：.env 里写的是它，视为"没设置"（按课程分库）；平台与工作台同一口径
 export const OLD_DEFAULT_DB_PATH = 'data/classroom.sqlite';
 export function isOldDefaultDbPath(v) {
   const s = String(v ?? '').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '');

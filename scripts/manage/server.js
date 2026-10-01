@@ -1,4 +1,4 @@
-// 管理台 HTTP 服务（管理台规格 §4.7、§4.6）：只监听 127.0.0.1；/api/* 全部要求 X-Manage-Token
+// 工作台 HTTP 服务（管理台规格 §4.7、§4.6）：只监听 127.0.0.1；/api/* 全部要求 X-Manage-Token
 //   createManageServer({ root, token, port = 0, platform?, serverCommand?, buildCommand?, fetchCommand?, statfs?, log? })
 //     → { app, platform, listen(port?) → Promise<url>, close(), killChildrenNow(), url }
 //   url 形如 http://127.0.0.1:3900/?t=<token>；页面（public/ 与 /ui-logic.js）本身无需 token
@@ -20,7 +20,7 @@
 //     overview / settings 带 update: { current, dev, latest, checkedAt, running, result }（读缓存，不联网）；
 //     POST /api/update/apply { version } → 起 scripts/update-platform.mjs 子进程，逐行经 SSE update 事件广播，结束时 update { done, ok, code, version, backupDir?, tail }；
 //       起子进程前查磁盘空间（statfs 注入；包大小或 50 MB + 20 MB），不够 400"磁盘空间不够：还需要约 N MB，清理后再更新"（S9 更新容灾补强规格 §1.1）；发布页带包大小时传 --size；
-//     成功 → 1 s 后调 onUpdated(version)（index.js 停平台、释放锁、以退出码 75 退出，入口脚本重启管理台）；
+//     成功 → 1 s 后调 onUpdated(version)（index.js 停平台、释放锁、以退出码 75 退出，入口脚本重启工作台）；
 //     scheduleUpdateCheck({ delayMs })：启动静默检查（缓存不足 24 小时跳过，失败不写缓存）；fetch / updateSources / updateCommand 可注入（测试用）；
 //     创建时先 recoverInterruptedUpdate（上次更新覆盖到一半被打断 → 按备份恢复），结果放 update.recovered（首页提示）；
 //     waitForUpdate(ms) → Promise<boolean>：更新子进程在跑就等它结束（index.js 关闭时用，最多 60 s），不在跑立即 true
@@ -178,7 +178,7 @@ export function createManageServer({
     try {
       const p = Number(effectiveEnv(root).PORT);
       if (Number.isInteger(p) && p > 0 && p <= 65535 && (await probePort(p)) === 'in-use') {
-        if (fs.existsSync(path.join(root, 'data', 'classroom.sqlite'))) log('[manage] 平台似乎正在别的窗口里运行，这次不整理旧课堂数据，下次启动管理台再试');
+        if (fs.existsSync(path.join(root, 'data', 'classroom.sqlite'))) log('[manage] 平台似乎正在别的窗口里运行，这次不整理旧课堂数据，下次启动工作台再试');
         return;
       }
       migrateDb(root, { customDb: customDbPath(root), log });
@@ -189,7 +189,7 @@ export function createManageServer({
   const clients = new Set();
   const fetchState = { running: false, child: null, lines: [], result: null };
   let exclusive = null; // 正在恢复 / 离线重置时，禁止启动平台
-  // R4：更新子进程；waitingExit = 已更新成功、等管理台退出重启（期间同样禁止启动平台）
+  // R4：更新子进程；waitingExit = 已更新成功、等工作台退出重启（期间同样禁止启动平台）
   const updateState = { running: false, child: null, lines: [], result: null, waitingExit: false };
   // 上次更新覆盖到一半被打断（Ctrl+C 之外的强行结束、断电、Windows 关窗口）→ 先恢复到更新前再开张
   let recovered = null;
@@ -254,7 +254,7 @@ export function createManageServer({
     return run;
   };
 
-  // 离线直接读写库之前：.env 的端口被占，说明平台很可能正由别的窗口（另一个管理台或命令行）运行着，
+  // 离线直接读写库之前：.env 的端口被占，说明平台很可能正由别的窗口（另一个工作台或命令行）运行着，
   // 此时直接改库会与运行中的平台冲突，拒绝
   async function guardOffline() {
     const p = Number(effectiveEnv(root).PORT);
@@ -446,7 +446,7 @@ export function createManageServer({
       broadcast('update', result);
       staleCache = null;
       if (ok) {
-        log(`[manage] 平台已更新到 v${version}，管理台即将重新启动`);
+        log(`[manage] 平台已更新到 v${version}，工作台即将重新启动`);
         setTimeout(() => onUpdated(version), UPDATE_EXIT_DELAY);
       }
     });
@@ -462,13 +462,13 @@ export function createManageServer({
   });
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }));
   app.get('/ui-logic.js', (_req, res) => res.type('text/javascript').sendFile('ui-logic.js', { root: HERE }));
-  // S6：无鉴权 ping（新开的管理台窗口据此判断旧窗口是不是本项目的、能不能替换）；只回这五项，不含 token
+  // S6：无鉴权 ping（新开的工作台窗口据此判断旧窗口是不是本项目的、能不能替换）；只回这五项，不含 token
   app.get('/api/ping', (_req, res) => res.json(pingInfo()));
 
   const api = express.Router();
   api.use((req, res, next) => {
     const given = req.get('X-Manage-Token') ?? (req.method === 'GET' && req.path === '/events' ? req.query.t : undefined);
-    if (!tokenOk(given, token)) return res.status(401).json({ error: '管理台链接已失效，请回到终端窗口里重新打开链接' });
+    if (!tokenOk(given, token)) return res.status(401).json({ error: '工作台链接已失效，请回到终端窗口里重新打开链接' });
     next();
   });
   api.use(express.json({ limit: '2mb' }));
@@ -831,7 +831,7 @@ export function createManageServer({
   const self = {
     app,
     platform,
-    // 同步结束平台与下载子进程（管理台进程 'exit' 时用）
+    // 同步结束平台与下载子进程（工作台进程 'exit' 时用）
     killChildrenNow() {
       platform.killNow();
       try {

@@ -1,4 +1,4 @@
-// 管理台"课程"页的服务端逻辑（发布包与课程管理规格 §4，M4）：路由在 server.js
+// 工作台第 1 步"新建课程"（课程列表）的服务端逻辑（发布包与课程管理规格 §4，M4）：路由在 server.js
 //   resolveLessonDir(root, scope, name, { mineOnly }) → { abs, rel, scope, name, kind, configRel }
 //     安全：scope 只能是 lessons / examples；name 是一层目录名（不含分隔符、不以 . 开头）；解析后必须正好在 root/<scope> 下；
 //     root/<scope> 的目录项里必须有与 name 完全相同的一项（审查 A1：不区分大小写的文件系统上 PYTHON-2 不能命中 python-2，

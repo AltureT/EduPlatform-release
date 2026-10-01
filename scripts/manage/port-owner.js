@@ -6,7 +6,7 @@
 //     win32：一次 PowerShell 调用（UTF-8 输出，10 s 超时）：Get-NetTCPConnection -LocalPort N -State Listen（含 IPv6，
 //       Node 在 Windows 上 listen(port) 只绑 [::]，netstat -p TCP 看不到；且输出不受系统语言影响）取 OwningProcess，
 //       Get-CimInstance Win32_Process 取进程 Name 与 CommandLine，ConvertTo-Json 输出；
-//       Windows 上拿不到别的进程的工作目录，只认命令行里带本项目根绝对路径的平台（管理台自己启动平台时用绝对路径）
+//       Windows 上拿不到别的进程的工作目录，只认命令行里带本项目根绝对路径的平台（工作台自己启动平台时用绝对路径）
 //   isOurPlatform({ root, commandLine | argv, cwd, platform?, realpath? })：脚本必须是命令行里第一个非选项参数（跳过可执行文件
 //     与以 - 开头的选项；字符串形式时其后不能再有别的参数），且
 //     - 脚本是绝对路径：规范化后必须等于 <本项目根>/kernel/server/index.js（macOS、Windows 忽略大小写）
@@ -208,7 +208,7 @@ export async function findPortOwner(port, {
   return { pid, name, ours: isOurPlatform({ root, commandLine, argv: argv?.length ? argv : undefined, cwd, platform, realpath }) };
 }
 
-const NOT_OURS = '这个进程不是本平台，管理台不能结束它';
+const NOT_OURS = '这个进程不是本平台，工作台不能结束它';
 
 export async function stopOwnPlatform(port, pid, {
   root, probe = probePort, kill = (p, sig) => process.kill(p, sig), timeoutMs = 5000, killTimeoutMs = 2000,

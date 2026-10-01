@@ -12,7 +12,7 @@ function toInt(raw, flag, min, max) {
   return n;
 }
 
-// 管理台在 3900–3909 里找空闲端口（scripts/manage/index.js）：simulate / load 的随机端口避开这一段（P4）
+// 工作台在 3900–3909 里找空闲端口（scripts/manage/index.js）：simulate / load 的随机端口避开这一段（P4）
 const MANAGE_MIN = 3900;
 const MANAGE_MAX = 3909;
 const SKIP = MANAGE_MAX - MANAGE_MIN + 1;
@@ -23,7 +23,7 @@ export function randomPort(random = Math.random) {
   return port >= MANAGE_MIN ? port + SKIP : port;
 }
 
-// S6：随机端口还要避开 3001（本机常驻服务）与管理台段，并先探测空闲（--port 显式给的照用，不探测）
+// S6：随机端口还要避开 3001（本机常驻服务）与工作台段，并先探测空闲（--port 显式给的照用，不探测）
 const USER_PORT = 3001;
 export function isExcludedPort(port) {
   return port === USER_PORT || (port >= MANAGE_MIN && port <= MANAGE_MAX);

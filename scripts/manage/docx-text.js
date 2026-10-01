@@ -1,4 +1,4 @@
-// docx 抽纯文本（M4 课程列表（第 1 步）上传教案；审查 A2）：不让一个"解压炸弹"拖垮管理台
+// docx 抽纯文本（M4 课程列表（第 1 步）上传教案；审查 A2）：不让一个"解压炸弹"拖垮工作台
 //   zipEntrySizes(buf) → Map<名字, { compressed, uncompressed }> | null：只读 zip 的中央目录（不解压、无依赖）；不是 zip 返回 null
 //   docxTextTooBig(buf, limit) → true：不是 zip、没有 word/document.xml、document.xml 解压后超过 limit（默认 30 MB）或是 zip64 大小
 //   docxToTextInWorker(buf, { timeoutMs = 30 s, maxOldGenerationSizeMb = 512 }) → Promise<string>：

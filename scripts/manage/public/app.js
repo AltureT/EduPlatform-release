@@ -1,4 +1,4 @@
-// 管理台页面（管理台规格 §5；G3 管理台线性路径重设计规格 §2）：原生 JS（ES module），无依赖；fetch + EventSource
+// 工作台页面（管理台规格 §5；G3 管理台线性路径重设计规格 §2）：原生 JS（ES module），无依赖；fetch + EventSource
 // 纯函数（左侧五步、井号路由、下拉项、失败后的下一步、文案）在 /ui-logic.js（scripts/manage/ui-logic.js，有单测）
 // G3：顶栏当前课程（全局唯一）+ 平台状态；横幅区；左侧五步线性路径（pathSteps）+ 数据 / 平台；主区七页，井号即页面（routeFor）
 import {
@@ -51,7 +51,7 @@ let currentPage = null;
 let logLines = [];
 let fetchLines = [];
 let fetchFailed = false;
-// R4 平台更新：update = overview / settings 的 update；updatedAway = 已更新成功、旧管理台即将退出（不再请求接口）
+// R4 平台更新：update = overview / settings 的 update；updatedAway = 已更新成功、旧工作台即将退出（不再请求接口）
 let update = null;
 let updateChecking = false;
 let updateArmed = false;
@@ -62,14 +62,14 @@ let events = null;
 
 // ===== 通用 =====
 async function api(path, { method = 'GET', body } = {}) {
-  if (updatedAway) throw new Error('链接已失效'); // 旧凭据随旧管理台一起失效，不再请求
+  if (updatedAway) throw new Error('链接已失效'); // 旧凭据随旧工作台一起失效，不再请求
   const res = await fetch(path, {
     method,
     headers: { 'X-Manage-Token': TOKEN, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 401) {
-    showFatal('管理台链接已失效。请回到启动管理台时打开的那个窗口，按提示重新打开管理台链接。');
+    showFatal('工作台链接已失效。请回到启动工作台时打开的那个窗口，按提示重新打开工作台链接。');
     throw new Error('链接已失效');
   }
   const data = await res.json().catch(() => ({}));
@@ -504,8 +504,8 @@ function connectEvents() {
   });
   es.onerror = () => {
     if (updatedAway) return;
-    setText('#p-state', '与管理台的连接中断，正在重连…');
-    $('#p-state').title = '若一直如此，说明启动管理台时打开的那个窗口已关闭';
+    setText('#p-state', '与工作台的连接中断，正在重连…');
+    $('#p-state').title = '若一直如此，说明启动工作台时打开的那个窗口已关闭';
     $('#dot').className = 'dot busy';
   };
   es.onopen = () => {
@@ -1257,7 +1257,7 @@ async function uploadDraft(row, file, label) {
     const res = await fetch(lessonUrl(row, '/draft'), { method: 'POST', headers: { 'X-Manage-Token': TOKEN }, body: fd });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
-      showFatal('管理台链接已失效。请回到启动管理台时打开的那个窗口，按提示重新打开管理台链接。');
+      showFatal('工作台链接已失效。请回到启动工作台时打开的那个窗口，按提示重新打开工作台链接。');
       return;
     }
     if (!res.ok) throw new Error(data.error || LESSON_TEXT.uploadFailed);
@@ -1436,7 +1436,7 @@ function renderUpdate() {
   log.hidden = updateLines.length === 0;
   log.textContent = updateLines.join('\n');
   log.scrollTop = log.scrollHeight;
-  // 更新进行中（或已更新、等管理台重启）：启动 / 重启 / 重建与出错框里的下一步按钮一律禁用
+  // 更新进行中（或已更新、等工作台重启）：启动 / 重启 / 重建与出错框里的下一步按钮一律禁用
   if (update?.running || updatedAway) {
     for (const b of $$('[data-action="start"], [data-action="restart"], [data-action="rebuild"], #p-error-actions button')) {
       b.disabled = true;
@@ -1494,8 +1494,8 @@ $('#s-up-apply').addEventListener('click', async () => {
   }
 });
 
-// 更新成功：旧管理台 1 s 后退出（入口脚本会重新打开新管理台与新页面）；本页不再请求接口，
-// 3 s 后每 3 s 试一下 GET /（不带凭据）：探到 200 → 新的管理台已打开，停止探测；最多探 2 分钟
+// 更新成功：旧工作台 1 s 后退出（入口脚本会重新打开新工作台与新页面）；本页不再请求接口，
+// 3 s 后每 3 s 试一下 GET /（不带凭据）：探到 200 → 新的工作台已打开，停止探测；最多探 2 分钟
 function afterUpdated() {
   updatedAway = true;
   events?.close();
@@ -1526,7 +1526,7 @@ function afterUpdated() {
 }
 
 // ===== 启动：先读一次总览（没有井号时要知道当前该做哪一步），再按井号显示页面 =====
-if (!TOKEN) showFatal('缺少访问凭据。请回到启动管理台时打开的那个窗口，按提示打开管理台链接。');
+if (!TOKEN) showFatal('缺少访问凭据。请回到启动工作台时打开的那个窗口，按提示打开工作台链接。');
 $('#p-migrated-close').addEventListener('click', () => { $('#p-migrated').hidden = true; });
 refresh().finally(() => renderPage(location.hash));
 run(() => api('/api/logs?lines=50')).then((r) => { if (r) logLines = r.lines; });

@@ -46,7 +46,7 @@ export function isSwitchable(reason) {
   return /^http-5\d\d$/.test(String(reason));
 }
 
-// 失败原因的中文（AI 备用线路规格 §4：coach 教师端提示、管理台"测一下"）；coach client.jsx 的 REASON_TEXT 与此一致（有单测）
+// 失败原因的中文（AI 备用线路规格 §4：coach 教师端提示、工作台"测一下"）；coach client.jsx 的 REASON_TEXT 与此一致（有单测）
 export const AI_REASON_TEXT = Object.freeze({
   timeout: '超时',
   network: '连不上',

@@ -8,7 +8,7 @@ import net from 'node:net';
 import os from 'node:os';
 
 // ===== 局域网地址 =====
-// 与 kernel/server/admin.js lanAddresses 保持一致（M2：管理台不引用 kernel 的实现，改这里时两处一起改；样例测试见 __tests__/net.test.js）：
+// 与 kernel/server/admin.js lanAddresses 保持一致（M2：工作台不引用 kernel 的实现，改这里时两处一起改；样例测试见 __tests__/net.test.js）：
 // - 只返回私有网段 10/8、172.16/12、192.168/16（因此 169.254/16、198.18/15、100.64/10、回环与公网都不返回）
 // - 排序：实体网卡在前、虚拟网卡（utun / feth / zt / docker / vboxnet / vmnet / vEthernet / VirtualBox / VMware）在后；
 //   同类里 192.168 > 10 > 172.16/12；再按网卡顺序；去重
@@ -58,7 +58,7 @@ export async function isPortFree(port, host) {
 }
 
 // 建议端口要求"所有地址"与 127.0.0.1 都空闲：macOS 上别的程序只占 127.0.0.1:N 时，监听 [::]:N 仍会成功，
-// 平台能起来但管理台的就绪探测会打到那个程序上
+// 平台能起来但工作台的就绪探测会打到那个程序上
 const probeBoth = async (p) => {
   const all = await probePort(p);
   return all === 'free' ? probePort(p, '127.0.0.1') : all;
