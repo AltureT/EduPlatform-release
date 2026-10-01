@@ -80,7 +80,10 @@ export default defineConfig(async () => {
     plugins: kernelPlugins(aliases),
     // K3：与 index.html 的兜底检查和代码沙盒规格 §1 的浏览器下限对齐
     build: { target: ['chrome85', 'edge85', 'safari15'] },
-    resolve: { alias: aliases },
+    // Windows 网络路径（平台文件夹在 \\server\share 共享盘上，入口 .bat 用 pushd 映射成盘符）：Vite 默认把解析到的文件
+    // 做 realpath，再按 net use 表换回"第一个"映射盘符，可能与 cwd 的盘符不同（Z: 与 U:），import.meta.glob 就拼出 ./U:/... 而失败。
+    // 平台目录里没有符号链接，直接不做 realpath，所有路径都留在 cwd 的盘符上。
+    resolve: { alias: aliases, preserveSymlinks: true },
     server: {
       // host:true 让 vite 监听 0.0.0.0，学生平板可从 LAN IP 访问
       host: true,

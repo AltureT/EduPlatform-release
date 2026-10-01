@@ -1,7 +1,7 @@
 {
-  "version": "0.6.2",
-  "builtAt": "2026-10-01T06:30:46.995Z",
-  "commit": "96addf7",
+  "version": "0.6.3",
+  "builtAt": "2026-10-01T07:32:57.920Z",
+  "commit": "562b258",
   "protected": {
     ".clinerules/eduplatform.md": "3d03466c81c05084a7d2d81a77c76bd653764df658a2848df903e7eb928b151c",
     ".cursor/rules/eduplatform.mdc": "d67632dd642418b0aac906386f1ce404b61ce80c11adcc4818a94325e7e121c0",
@@ -191,7 +191,7 @@
     "kernel/test-utils/virtualStudent.js": "484797f63378d586f7f9cbf44821ca6ca2e9eeb2d391841d72ffded983bc4933",
     "kernel/test-utils/virtualTeacher.js": "472aef72c8124f225779e588104f20708baf2add58df69254cf7cc6d7d4b7c53",
     "kernel/test-utils/waitFor.js": "8a31fbd3f830af05a29edf523159ace8e4c05c7d3c0fe113ad370b0f72d6176a",
-    "package.json": "c70bdbdadfeb817e78d745c9840a9dadff86a8ffd20412e34edf6bec60dbb7d5",
+    "package.json": "6b196c76f268d23aaa0a88aff62ba6f5f50437a326313ebb92e954380feccaca",
     "primitives/README.md": "e647a72797a30ecaa2c33f116734d126f413d17a656f819c58893cda276be092",
     "primitives/_shared/CodeStats.jsx": "a8b111bebcc3c70de4324862f19fb1705d1145f486d81f8d2b55223cec207c00",
     "primitives/_shared/DemoTools.jsx": "0c0344f78eaba98d332e00c9fa23fc1bc25c45117b587f279d9eb32a8114a7d9",
@@ -333,7 +333,7 @@
     "skills/参考/课程组件.md": "ea141d7699cfe297ee757d22782d6f4f5659b4e196345d5f6adc5d9812213978",
     "skills/参考/进度文件模板.md": "cba187eedc8c4d5d2e14ef4bf8c65d36f42d224eddbfe4a7c9176853eaefe225",
     "skills/参考/选项话术.md": "f2cfb22519ea76bd9744be03cf9e2a8e135b324f4001ef42ce927ef43e2d60fc",
-    "vite.config.js": "fc3dde4efe6a0a16902d1bb29aa8f62ccd76a3f3894248ce22805f1d8227581b",
+    "vite.config.js": "dae3aab4b091e42af8c56aee0ea503c46fb91ff443ddbdc07edc374431ba27c2",
     "班迹工作台.bat": "f638416e37718946ce78d0bc7317d35780064be10e017bc89d994f87d310d156",
     "班迹工作台.command": "92f7ac292c1a48a93d86cf15e6eb469083d2176eb49d7fb5cab28265f6c5aaa0"
   }
