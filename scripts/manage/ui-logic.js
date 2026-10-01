@@ -743,7 +743,7 @@ export function tabMarks(o) {
   const env = envCurrent(o);
   const running = runningThis(o);
   const mk = {};
-  mk.draft = cl.draft || started ? 'done' : 'todo';
+  mk.draft = cl.draft || started || stages > 0 ? 'done' : 'todo'; // 已有环节 = AI 早开始了，教案这步算过
   if ((o?.check?.errors?.length ?? 0) > 0) mk.build = 'todo';
   else if (stages > 0) mk.build = 'done';
   else mk.build = started ? 'wait' : 'todo';
@@ -755,6 +755,13 @@ export function tabMarks(o) {
     const st = o?.platform?.state ?? 'stopped';
     const idle = st === 'stopped' || st === 'running';
     mk.class = idle && ['draft', 'build', 'prepare'].every((id) => mk[id] === 'done') ? 'todo' : 'wait';
+  }
+  // 步骤是顺序的：第一个没做完的步骤之后，一律显示数字（"还没到"），哪怕它自己没有要做的事
+  //   （例：刚新建的课，上课准备什么都不需要，也不能先打勾）；正在上这门课时"启动上课"仍是 ✓
+  let blocked = false;
+  for (const id of ids) {
+    if (blocked && !(id === 'class' && running)) mk[id] = 'wait';
+    else if (mk[id] !== 'done') blocked = true;
   }
   const r = make(mk);
   r.nextId = running ? 'class' : ids.find((id) => mk[id] !== 'done') ?? 'class';

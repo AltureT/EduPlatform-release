@@ -1,7 +1,7 @@
 {
-  "version": "0.8.0",
-  "builtAt": "2026-10-01T11:07:37.418Z",
-  "commit": "986f516",
+  "version": "0.8.1",
+  "builtAt": "2026-10-01T11:23:19.986Z",
+  "commit": "f629ae4",
   "protected": {
     ".clinerules/eduplatform.md": "7e1b28f03e4df2a26210939d10ab75c1b968842d68de9e01a81eedcf21dcc578",
     ".cursor/rules/eduplatform.mdc": "ac08631e3cfd7379541fef9e4d53753dcde7215b180fca6ffb316d22a32ff025",
@@ -192,7 +192,7 @@
     "kernel/test-utils/virtualStudent.js": "484797f63378d586f7f9cbf44821ca6ca2e9eeb2d391841d72ffded983bc4933",
     "kernel/test-utils/virtualTeacher.js": "472aef72c8124f225779e588104f20708baf2add58df69254cf7cc6d7d4b7c53",
     "kernel/test-utils/waitFor.js": "8a31fbd3f830af05a29edf523159ace8e4c05c7d3c0fe113ad370b0f72d6176a",
-    "package.json": "b91509a15955747ff18c212568f3bc261ffa18e2eab79f6aff0eb7a8cf24f82b",
+    "package.json": "069dd09c787e02f637a7b1269ccf4c870577984308846fbbc71b8c53ba5c37c5",
     "primitives/README.md": "e647a72797a30ecaa2c33f116734d126f413d17a656f819c58893cda276be092",
     "primitives/_shared/CodeStats.jsx": "a8b111bebcc3c70de4324862f19fb1705d1145f486d81f8d2b55223cec207c00",
     "primitives/_shared/DemoTools.jsx": "0c0344f78eaba98d332e00c9fa23fc1bc25c45117b587f279d9eb32a8114a7d9",
@@ -314,7 +314,7 @@
     "scripts/manage/qr.js": "9fce4045443c1e2603920cee7224b3ee781b2e4a1071cfd1b0de506f5bf029e0",
     "scripts/manage/roster.js": "37e522dd1c9892ae14a7216d888a81caa8a204cb30a31aef555b9a1fae402947",
     "scripts/manage/server.js": "23453a1f731aedf949b7a55a65d0149feeee736cdb7593dd776dc941b5673d03",
-    "scripts/manage/ui-logic.js": "5c2330f43b2d57cabbcc56229d062710c6332ac23fd9bebe8ec079946d01e096",
+    "scripts/manage/ui-logic.js": "4655f12918a6556f55fd96e39b82afd446b5511cafba5ec0fa067e320138e1b1",
     "scripts/manage/upload.js": "0b76c87822f1d76eae219c58ff4c01a05fbf602a3ce4242fb80296af99719059",
     "scripts/new-component.mjs": "42b3086a55c8da4cd6ef08c7edcbc67abbafbb98a0064cf7b8ff077d1e6ef571",
     "scripts/new-lesson.mjs": "0a1c3385cf3f69ec644c65bc5d48660fca05dd5b71505abdef37736ae0f6e9c3",
