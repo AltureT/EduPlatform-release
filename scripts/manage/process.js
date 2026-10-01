@@ -5,7 +5,7 @@
 //     serverCommand 缺省用 kernel/server/index.js 的绝对路径（Windows 上据此认出本项目的平台进程）
 //     portOwner(port) → { pid, name, ours } | null；stopOwn(port, pid) → { ok, message? }（缺省为 port-owner.js 的实现，测试可注入）
 //     状态 stopped | building | starting | running | stopping；事件 'state'（status 对象）、'log' / 'build'（一行文本）
-//   启动顺序：读 .env（密码为空即失败）→ requires 检查 → 端口探测 → 需要时构建 → spawn 平台 → 轮询 GET /api/roster ≤ 15 s
+//   启动顺序：读 .env（密码为空即失败）→ requires 检查（只提醒，G4）→ 端口探测 → 需要时构建 → spawn 平台 → 轮询 GET /api/roster ≤ 15 s
 //   日志：stdout / stderr 写 data/logs/server.log（> 5 MB 改名为 .1 保留一份）并进内存环形缓冲（500 行）
 //   explainFailure(lines, port) / describeExit(code, signal) / portBusyError(port, owner, suggestPort)：纯函数，给教师看的一句话原因
 //   failMessage(kind, { what, seconds })：M3 审查，端口以外各类失败的一句话（不含原始报错、退出码、"构建"；原始信息只进 detail）
@@ -21,6 +21,8 @@
 //     V1（代码题测试验证规格 §5.5）：只有课程加载不了（rule 'loader' 的错误）→ error = { kind: 'check', message: '课程文件加载不了…', detail: 每条一行, check }，
 //     不构建不启动；其它错误与警告照常构建启动（任何检查结果都不拦上课），页面状态带显示"课程有 N 处问题、M 处提醒，已照常启动"；
 //     status().check = 最近一次启动时的检查结果 { ok, errors, warnings, path, at, tests }
+//   G4（工作台课程与平台两区重构规格 §3.2）：课程需要的环境缺（requires 的文件不在）不再拦启动（原 error.kind 'requires' 删除），
+//     照常构建启动，status().envWarning = ENV_WARNING（一句提醒）；环境齐了或没有要求时 null；每次启动重新算
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -68,11 +70,13 @@ export const DIAG_HINT = '点"复制给 AI"把排障文件贴给 AI 工具';
 export const withDiagHint = (msg) => (typeof msg === 'string' ? msg.replace(SEND_LOG, DIAG_HINT) : msg);
 const WHAT = { 构建: '准备页面', 启动: '启动', 重启: '重启' };
 
+// G4 §3.2：启动时环境还没准备好的提醒（现在只有 Python 环境一种）
+export const ENV_WARNING = 'Python 环境还没准备好，写程序的段上课时用不了；准备好后重启平台生效';
+
 export function failMessage(kind, { what, seconds, count } = {}) {
   switch (kind) {
     case 'no-lesson': return '还没有课程，先新建一门';
     case 'password': return '请先在设置里填写教师密码';
-    case 'requires': return '当前课程需要的文件还没准备好，请先下载';
     case 'lesson': return '这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试，或换一门课';
     case 'check': return `课程文件加载不了，平台起不来：有 ${count} 处要改；点"查看详情"看是哪几处，可以"复制给 AI"让它照着改`;
     case 'build': return `页面没能准备好，${SEND_LOG}`;
@@ -165,7 +169,7 @@ export function createPlatform({
   const ee = new EventEmitter();
   const ring = [];
   const writer = createLogWriter(logFile);
-  const st = { state: 'stopped', port: null, startedAt: null, lesson: null, lessonConfig: null, dbPath: null, error: null, lastExit: null, check: null };
+  const st = { state: 'stopped', port: null, startedAt: null, lesson: null, lessonConfig: null, dbPath: null, error: null, lastExit: null, check: null, envWarning: null };
   let child = null;
   let buildChild = null;
   let op = null; // 进行中的 start / rebuild
@@ -213,7 +217,7 @@ export function createPlatform({
   }
 
   async function doStart(forceBuild, stopOld) {
-    set({ state: 'starting', error: null, port: null, startedAt: null });
+    set({ state: 'starting', error: null, port: null, startedAt: null, envWarning: null });
     const fail = (error) => {
       if (abort) return { ok: false, error: null };
       set({ state: 'stopped', error, port: null, startedAt: null });
@@ -266,13 +270,10 @@ export function createPlatform({
       if (check && check.errors.length > 0) return checkFail(check.errors.length);
       return fail({ kind: 'lesson', message: failMessage('lesson'), detail: [String(err?.message ?? err)] });
     }
+    // G4：环境缺只提醒，不拦启动（随下一次状态事件一起发出）
     if (req.missing.length) {
-      return fail({
-        kind: 'requires',
-        message: failMessage('requires'),
-        detail: req.missing.map((m) => `「${m.label}」缺少 ${m.path}：${m.hint}`),
-        missing: req.missing,
-      });
+      st.envWarning = ENV_WARNING;
+      log(`[manage] 课程需要的环境还没准备好，照常启动：${req.missing.map((m) => m.path).join('、')}`);
     }
     if (stopOld) {
       // "停止它并启动"：只结束此刻占着端口、且判定为本项目平台的那个进程（port-owner.js 里再确认一次）

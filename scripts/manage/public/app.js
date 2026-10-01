@@ -1,13 +1,21 @@
 // 工作台页面（管理台规格 §5；G3 管理台线性路径重设计规格 §2）：原生 JS（ES module），无依赖；fetch + EventSource
-// 纯函数（左侧五步、井号路由、下拉项、失败后的下一步、文案）在 /ui-logic.js（scripts/manage/ui-logic.js，有单测）
-// G3：顶栏当前课程（全局唯一）+ 平台状态；横幅区；左侧五步线性路径（pathSteps）+ 数据 / 平台；主区七页，井号即页面（routeFor）
+// 纯函数（页签圆标 tabMarks、侧栏课程 sideCourses、井号路由、失败后的下一步、文案）在 /ui-logic.js（scripts/manage/ui-logic.js，有单测）
+// G3：顶栏当前课程（全局唯一）+ 平台状态；横幅区；左侧五步线性路径 + 数据 / 平台；主区七页，井号即页面（routeFor）
+// G4（工作台两区重构规格 §1）：左栏两区——课程（五步 + 管理 + 数据）、平台（设置 + 环境与版本）；主区九页；
+//   密码 / 端口 / AI 接口在平台 → 设置（#settings），第 4 步只剩名单、课前检查、链接
+// G5（工作台侧栏常规化与页签步骤条规格）：左栏只做菜单——课程一门一条（sideCourses，点了设为当前课程）、新建课程（#new）、
+//   全部课程（#courses，原"管理"）、数据；平台两项；底部排障文件（overview.diagnoses）与版本行（sideVersion）；顶栏下拉删除；
+//   主区：课名标题行 + "…"菜单 + 一句状态（courseLead）+ 页签式步骤条（tabMarks，四页 #draft #build #prepare #class）；没有课程时"新建第一门课"卡
+// G4 收尾（§3.1–§3.4）：课程要用的环境由工作台自动准备——overview.env / SSE env → 平台 → 环境与版本（#env-section）、顶栏一句、
+//   横幅 #p-env、第 4 步 #c-env、第 5 步提醒；"重试""导入整包"都是 POST /api/env/retry（renderEnv）
 import {
-  pathSteps, courseOptions, routeFor, buildDescOpen, buildSteps, classChecklist, PAGES,
-  passwordError, pyodideStatus, fetchProgress,
+  tabMarks, courseLead, TAB_PAGES, routeFor, buildDescOpen, buildSteps, classChecklist, PAGES, sideCourses, sideVersion, diagCountText,
+  passwordError,
+  envCurrent, envCheckRow, envLine, envTopText, envBanner, envRetryText, envCleansWith,
   errorActions, backupSummary, fmtDate, fmtSize,
   splitAddresses, stateLabel, classroomLesson,
   checkSummary, checkNotice, checkItems, checkReportText, checkBandText,
-  lessonCardStatus, lessonCardMeta, draftNote, lessonCardOps, uploadCheck, LESSON_TEXT, lessonName,
+  lessonCardStatus, lessonCardMeta, draftNote, lessonCardOps, uploadCheck, LESSON_TEXT, lessonName, nextCurrentAfterDelete,
   progressTableRows, PROGRESS_COLUMNS, lessonNextLead,
   platformFilesStatus, updateStatus, updateBandText, updateResultText, updateRecoveredText, UPDATE_TEXT,
   aiTestText,
@@ -49,8 +57,6 @@ let platformDir = null;
 let platform = { state: 'stopped' };
 let currentPage = null;
 let logLines = [];
-let fetchLines = [];
-let fetchFailed = false;
 // R4 平台更新：update = overview / settings 的 update；updatedAway = 已更新成功、旧工作台即将退出（不再请求接口）
 let update = null;
 let updateChecking = false;
@@ -124,13 +130,16 @@ function setLink(a, url, text = url) {
   else a.removeAttribute('href');
 }
 
-const steps = () => pathSteps({ ...(overview ?? {}), platform });
+const marks = () => tabMarks({ ...(overview ?? {}), platform });
 const currentLesson = () => overview?.currentLesson ?? null;
 
-// ===== 页面：地址栏井号即页面（#course #draft #build #prepare #class #data #platform；旧井号见 routeFor） =====
+// 当前该做的那一页（没有井号时、点侧栏的课、"继续 →"）= tabMarks 的 nextId；还没有课程 → 教案页（主区显示"新建第一门课"卡）
+const nextPage = () => marks().nextId;
+
+// ===== 页面：地址栏井号即页面（#new #draft #build #prepare #class #courses #data #settings #platform；旧井号见 routeFor） =====
 let pendingFocus = null;
 function showPage(page, { focus, lesson } = {}) {
-  if (!PAGES.includes(page)) page = 'course';
+  if (!PAGES.includes(page)) page = 'new';
   pendingFocus = focus || null;
   if (page === 'data' && lesson) dataLesson = lesson;
   const hash = page === 'data' && lesson ? `data?lesson=${encodeURIComponent(lesson)}` : page;
@@ -140,7 +149,7 @@ function showPage(page, { focus, lesson } = {}) {
 window.addEventListener('hashchange', () => renderPage(location.hash));
 
 function renderPage(hash) {
-  const r = routeFor(hash, overview ? steps().currentId : null);
+  const r = routeFor(hash, overview ? nextPage() : null);
   if (r.focus) pendingFocus = r.focus;
   // 数据页：带 ?lesson= 就看那门课；不带（侧栏点"数据"）就复位回当前课、收起选课框
   if (r.page === 'data') {
@@ -152,19 +161,18 @@ function renderPage(hash) {
   if (location.hash !== want) history.replaceState(null, '', want);
   currentPage = r.page;
   for (const s of $$('.page')) s.hidden = s.id !== `page-${r.page}`;
-  for (const a of $$('.side a[data-page]')) {
-    if (a.dataset.page === r.page) a.setAttribute('aria-current', 'page');
-    else a.removeAttribute('aria-current');
-  }
-  // 窄屏横向步骤条：把正在看的那一项滚进视野
-  $(`.side a[data-page="${r.page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  if (r.page === 'course') loadLessons();
+  markSide();
+  renderCourseHead();
+  renderCourseBits();
+  // 窄屏页签条横向滚动：只把正在看的页签滚进视野（不滚到中间，免得第一个页签被截半）；页面随后回到顶部
+  if (!$('#course-head').hidden) $(`.tabs a[data-page="${r.page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (r.page === 'courses') loadLessons();
   if (r.page === 'draft') renderDraft();
   if (r.page === 'build') renderBuild(true);
-  if (r.page === 'prepare') { loadSettings(); loadRoster(); }
+  if (r.page === 'prepare') { loadRoster(); renderPrepChecks(); }
   if (r.page === 'class') renderClass();
   if (r.page === 'data') loadBackups();
-  if (r.page === 'platform') loadSettings();
+  if (r.page === 'settings' || r.page === 'platform') loadSettings();
   window.scrollTo(0, 0);
   refresh();
 }
@@ -178,84 +186,181 @@ for (const a of $$('.side a[data-page]')) {
   });
 }
 
-// 页面里要聚焦的一节或一项（错误按钮"去设置密码""换一个端口"、上课页提醒"去下载""导入名单"、旧井号 #roster）
+// 页面里要聚焦的一节或一项（错误按钮"去设置密码""换一个端口"、上课页提醒"去设置""导入名单"、旧井号 #roster）
 function applyFocus() {
   if (!pendingFocus) return;
   const f = pendingFocus;
-  const section = { roster: '#prep-roster', pyodide: '#prep-python', 'l-title': '#l-title' }[f];
+  const section = { roster: '#prep-roster', 'l-title': '#l-title' }[f];
   let target = section ? $(section) : null;
   if (!target) {
     const form = $('#settings-form');
     target = form.elements[f] ?? null;
   }
-  if (f === 'TEACHER_PASSWORD' && currentPage === 'prepare') showPasswordEdit(true);
+  if (f === 'TEACHER_PASSWORD' && currentPage === 'settings') showPasswordEdit(true);
   if (!target || target.closest('[hidden]')) return;
   pendingFocus = null;
   target.scrollIntoView({ block: 'center' });
   if (typeof target.focus === 'function' && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) target.focus();
 }
 
-// ===== 侧栏五步（pathSteps）：done ✓ / current 蓝条 / todo 描边，三种都可点 =====
-function renderSide() {
-  const g = steps();
-  for (const s of g.steps) {
-    const li = $(`.path li[data-step="${s.id}"]`);
-    if (!li) continue;
-    const cls = s.done ? 'done' : s.current ? 'current' : 'todo';
-    li.className = s.done && s.current ? 'done current' : cls;
-    li.querySelector('.p-dot').textContent = s.done ? '✓' : String(s.n);
-    li.querySelector('.p-sum').textContent = s.summary;
-    li.querySelector('a').title = s.done || s.current ? s.title : '先做上面的步骤更顺，也可以先看看';
+// ===== G5 侧栏（§1）：课程一门一条（≤ 8 门）+ 新建课程 / 全部课程 / 数据 + 平台两项；底部排障文件与版本行 =====
+// lessonRows = /api/lessons/overview（全部课程页、侧栏、删课换课共用）；启动时、换课后、当前课变了（例如 AI 新建了课）时重新读
+// 选中态：正在看的页面；课程条目在看这门课的步骤页（教案 / 做课 / 上课准备 / 启动上课）时选中
+const COURSE_PAGES = TAB_PAGES;
+function markSide() {
+  for (const a of $$('.side [data-page]')) {
+    if (a.dataset.page === currentPage) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
+  for (const b of $$('#side-courses [data-course]')) {
+    if (b.dataset.current === '1' && COURSE_PAGES.includes(currentPage)) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
   }
 }
-
-// ===== 顶栏：当前课程下拉（courseOptions，只列我的课）+ 新建；没有课程时"还没有课程 · 先新建一门" =====
-let lessonList = null;
-async function renderTopCourse() {
-  if (!overview) return;
-  if (!lessonList) lessonList = await run(() => api('/api/lessons'));
-  const cur = overview.lesson?.path ?? '';
-  const opts = courseOptions(lessonList ?? [], cur, overview.lesson);
-  const sel = $('#t-course');
-  const none = opts.length === 0;
-  sel.hidden = none;
-  $('#t-none').hidden = !none;
-  $('#t-new').hidden = none;
-  const sig = JSON.stringify([cur, opts]);
-  if (sel.dataset.sig === sig) return;
-  sel.dataset.sig = sig;
-  sel.textContent = '';
-  for (const o of opts) sel.append(el('option', { value: o.value, textContent: o.label, title: o.title ?? '' }));
-  sel.value = cur;
+let sideSig = '';
+function renderSideCourses() {
+  if (!lessonRows) return;
+  const s = sideCourses(lessonRows);
+  const count = $('#side-count');
+  count.hidden = s.count === null;
+  count.textContent = s.count === null ? '' : String(s.count);
+  const sig = JSON.stringify(s.items);
+  if (sig !== sideSig) {
+    sideSig = sig;
+    const ul = $('#side-courses');
+    ul.textContent = '';
+    ul.hidden = s.items.length === 0;
+    for (const it of s.items) {
+      const b = el('button', { type: 'button', className: 'nav', title: it.label },
+        svgIcon('i-book'), el('span', { textContent: it.label }));
+      b.dataset.course = it.dir;
+      b.dataset.current = it.current ? '1' : '';
+      b.addEventListener('click', () => pickCourse(it));
+      ul.append(el('li', {}, b));
+    }
+  }
+  markSide();
 }
-$('#t-course').addEventListener('change', async (e) => {
-  const value = e.target.value;
-  if (!value || value === overview?.lesson?.path) return;
-  try {
-    const r = await api('/api/settings', { method: 'PUT', body: { LESSON_CONFIG: value } });
-    const label = e.target.selectedOptions[0]?.textContent ?? '';
-    const differs = platform.state === 'running' && overview?.runningLesson?.path !== value;
-    toast(LESSON_TEXT.current(label.replace(/（示例.*$/, ''), differs));
-    await afterLessonChange(r);
-  } catch (err) {
-    if (err.message !== '链接已失效') toast(err.data?.errors?.LESSON_CONFIG || err.message, true);
-    e.target.value = overview?.lesson?.path ?? '';
+function svgIcon(id) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(NS, 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
+}
+function renderSideFoot() {
+  const n = diagCountText(overview?.diagnoses);
+  $('#side-diag-n').hidden = !n;
+  setText('#side-diag-n', n);
+  const v = sideVersion(update);
+  setText('#side-ver', v.text);
+  $('#side-ver').classList.toggle('fresh', v.fresh);
+}
+$('#side-diag').addEventListener('click', () => run(() => api('/api/diagnosis/open', { method: 'POST' }), '已打开排障文件夹'));
+// G5 §5 窄屏：左栏是抽屉——☰ 打开；点遮罩、点菜单里的一项（页面、课程、排障文件、版本行）或按 Esc 收起
+function setSideOpen(on) {
+  document.body.classList.toggle('side-open', on);
+  $('#side-mask').hidden = !on;
+  $('#side-toggle').setAttribute('aria-expanded', String(on));
+  $('#side-toggle').title = on ? '收起菜单' : '打开菜单';
+  if (on) $('#side .nav')?.focus();
+}
+$('#side-toggle').addEventListener('click', () => setSideOpen(!document.body.classList.contains('side-open')));
+$('#side-mask').addEventListener('click', () => setSideOpen(false));
+$('#side').addEventListener('click', (e) => {
+  if (e.target.closest('.nav')) setSideOpen(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.classList.contains('side-open')) {
+    setSideOpen(false);
+    $('#side-toggle').focus();
   }
 });
-$('#t-new').addEventListener('click', () => showPage('course', { focus: 'l-title' }));
-$('#t-none').addEventListener('click', () => showPage('course', { focus: 'l-title' }));
+function renderSide() {
+  renderSideCourses();
+  renderSideFoot();
+  renderCourseHead();
+}
 
-// 当前课程的名字填进各页标题（.ln）；没有当前课 → 各页空状态"先新建一门课"
+// ===== G5 主区课名标题行与页签（§2.1、§2.2）：只在四个页签页、有当前课时显示 =====
+function renderCourseHead() {
+  const cl = currentLesson();
+  const show = Boolean(cl) && TAB_PAGES.includes(currentPage);
+  $('#course-head').hidden = !show;
+  if (!show) {
+    closeCourseMenu();
+    return;
+  }
+  setText('#ch-title', cl.broken ? LESSON_TEXT.brokenTitle : cl.title || LESSON_TEXT.noTitle);
+  setText('#ch-lead', courseLead({ ...overview, platform }));
+  const MARK = { done: '✓', todo: '!' };
+  for (const t of marks().tabs) {
+    const a = $(`.tabs a[data-page="${t.id}"]`);
+    const i = a.querySelector('.tab-mark');
+    i.dataset.mark = t.mark;
+    i.textContent = MARK[t.mark] ?? String(t.n);
+    a.title = { done: '这一步做完了', todo: '这一步有要你做的事', wait: '还没到这一步' }[t.mark];
+    if (t.id === currentPage) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
+  renderCourseMenu(cl);
+}
+// "…"菜单：复用全部课程页卡片的按钮（lessonCardOps）与动作（lessonAction）——重命名 / 打开文件夹 / 删除这门课
+let menuSig = '';
+function renderCourseMenu(cl) {
+  const ops = cl.kind === 'mine' || cl.kind === 'example' ? lessonCardOps(cl).filter((op) => ['rename', 'open', 'delete'].includes(op.id)) : [];
+  $('#ch-more').hidden = ops.length === 0;
+  const sig = JSON.stringify([cl.dir, cl.title, ops.map((op) => op.id)]);
+  if (sig === menuSig) return;
+  menuSig = sig;
+  const menu = $('#ch-menu');
+  menu.textContent = '';
+  for (const op of ops) {
+    const b = el('button', { type: 'button', textContent: op.label, title: op.title, className: op.id === 'delete' ? 'danger' : '' });
+    b.setAttribute('role', 'menuitem');
+    b.addEventListener('click', () => {
+      closeCourseMenu();
+      lessonAction(op.id, cl);
+    });
+    menu.append(b);
+  }
+}
+function closeCourseMenu() {
+  $('#ch-menu').hidden = true;
+  $('#ch-more').setAttribute('aria-expanded', 'false');
+}
+$('#ch-more').addEventListener('click', () => {
+  const open = $('#ch-menu').hidden;
+  $('#ch-menu').hidden = !open;
+  $('#ch-more').setAttribute('aria-expanded', String(open));
+  if (open) $('#ch-menu button')?.focus();
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.ch-more-wrap')) closeCourseMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#ch-menu').hidden) {
+    closeCourseMenu();
+    $('#ch-more').focus();
+  }
+});
+
+// 当前课程的名字填进各页标题（.ln）；没有当前课 → 四个页签页与数据页的内容收起，主区只显示"新建第一门课"卡（G5 §2.3）
+const NEED_COURSE = [...TAB_PAGES, 'data'];
 function renderCourseBits() {
   const cl = currentLesson();
   const running = platform.state === 'running';
   for (const span of $$('.ln')) span.textContent = lessonName(cl);
+  let empty = false;
   for (const s of $$('.page')) {
     // 上课页：平台在跑时（哪怕当前课已换走）照常显示上课面板
     const has = Boolean(cl) || (s.id === 'page-class' && running);
-    for (const e of s.querySelectorAll('[data-empty]')) e.hidden = has;
     for (const e of s.querySelectorAll('[data-need-course]')) e.hidden = !has;
+    if (!has && s.id === `page-${currentPage}` && NEED_COURSE.includes(currentPage)) empty = true;
   }
+  $('#no-course').hidden = !empty;
 }
 
 // ===== 课程检查（L1） =====
@@ -310,8 +415,9 @@ $('#pf-log').addEventListener('click', () => openDrawer());
 // 出错框里的按钮统一走这里
 async function doAction(a, button) {
   switch (a.id) {
-    case 'goto-prepare': showPage('prepare', { focus: a.field }); break;
-    case 'course': showPage('course', { focus: 'l-title' }); break;
+    case 'goto-settings': showPage('settings', { focus: a.field }); break;
+    case 'new': showPage('new', { focus: 'l-title' }); break;
+    case 'courses': showPage('courses'); break;
     case 'show-log': openDrawer(); break;
     case 'copy-check': await copyCheck(platform.error?.check, button); return; // 不刷新：按钮上的"已复制 ✓"要留一会儿
     case 'stop-old': {
@@ -393,30 +499,79 @@ function renderPlatform(p) {
   renderResetDesc();
   renderSide();
   renderCourseBits();
+  renderEnv();
   if (currentPage === 'class') renderClass();
   renderUpdate(); // 放最后：更新进行中把上面刚设好的启动 / 重启 / 重建按钮再禁用
 }
 
+// ===== G4 收尾：课程要用的环境（overview.env；SSE env 实时更新）=====
+// 顶栏一句：正在准备 → "正在准备 Python 环境 N%"；否则平台启动时环境缺（platform.envWarning）且还没好 → 那句提醒（不是错误框）
+// 横幅 #p-env（envBanner）：准备好（知道了）/ 运行中准备好了要重启（重启平台）/ 没准备好（重试 + 排障行）
+// 平台 → 环境与版本：状态行 + 重试 + 排障行；第 4 步 #c-env、第 5 步提醒在各自的页面渲染时读 overview.env
+const ENV_SEEN_KEY = 'env-ok-seen';
+function renderEnv() {
+  if (!overview) return;
+  const env = overview.env;
+  const ready = env?.pyodide?.state === 'ready';
+  const note = envTopText(env) ?? (platform.envWarning && !ready ? platform.envWarning : null);
+  $('#p-env-top').hidden = !note;
+  setText('#p-env-top', note ?? '');
+  $('#p-env-top').title = envTopText(env) && platform.envWarning ? platform.envWarning : '';
+
+  const seen = Number(store.get(ENV_SEEN_KEY)) || null;
+  const b = envBanner(env, { platform, dismissedAt: seen, needed: envCurrent(overview).needed });
+  $('#p-env').hidden = !b;
+  $('#p-env').dataset.at = b?.at ?? '';
+  setText('#p-env-text', b?.text ?? '');
+  $('#p-env-ok').hidden = b?.kind !== 'ok';
+  $('#p-env-restart').hidden = b?.kind !== 'restart';
+  $('#p-env-retry').hidden = b?.kind !== 'failed';
+  renderDiag($('#p-env-diag'), b?.kind === 'failed' ? b.diagnosis : null);
+
+  const line = envLine(env);
+  $('#env-dot').className = `dot ${line.dot}`;
+  setText('#env-state', line.text);
+  $('#env-retry').hidden = !line.retry;
+  renderDiag($('#env-diag'), line.diagnosis);
+
+  renderSide();
+  if (currentPage === 'prepare') renderPrepChecks();
+  if (currentPage === 'class' && platform.state !== 'running') renderClass();
+}
+$('#p-env-ok').addEventListener('click', () => {
+  store.set(ENV_SEEN_KEY, $('#p-env').dataset.at);
+  renderEnv();
+});
+// "重试"（横幅、环境一节）与"导入整包"：拷来的压缩包放进 vendor/ 后，下载脚本的"本机文件"来源会先用它
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-env-retry]');
+  if (!b || b.disabled) return;
+  b.disabled = true;
+  const r = await run(() => api('/api/env/retry', { method: 'POST' }));
+  b.disabled = false;
+  if (!r) return;
+  toast(envRetryText(r));
+  if (overview) overview.env = r.env;
+  renderEnv();
+});
+
 function renderOverview(o) {
   overview = o;
   if (o.platformDir && o.platformDir !== platformDir) platformDir = o.platformDir;
-  if (o.pyodide.result && !o.pyodide.fetching && !o.pyodide.result.ok && fetchLines.length === 0) {
-    fetchFailed = true;
-    fetchLines = o.pyodide.result.tail || [];
-  }
-  if (o.pyodide.ready && !o.pyodide.fetching) fetchFailed = false;
   if (o.update) update = o.update;
+  renderSideFoot();
   // M6：旧课堂数据刚按课程整理过（接口只给一次）→ 横幅一行，教师点"知道了"收起
   if (o.migrated) {
     setText('#p-migrated-text', migratedText(o.migrated));
     $('#p-migrated').hidden = false;
   }
-  renderTopCourse();
-  renderPyodide();
+  // 当前课变了（侧栏、全部课程页没经手的换课，例如 AI 用命令新建了课）→ 重读课程列表
+  if (lessonRows && (o.lesson?.path ?? '') !== lessonRowsFor) loadLessons();
   renderPasswordState();
   renderPlatform({ ...o.platform, pendingRestart: o.pendingRestart });
   if (currentPage === 'draft') renderDraft();
   if (currentPage === 'build') renderBuild(false);
+  if (currentPage === 'prepare') renderPrepChecks();
   applyFocus();
 }
 
@@ -468,19 +623,13 @@ function connectEvents() {
   es.addEventListener('log', (e) => pushLog(JSON.parse(e.data).line));
   // 准备页面的输出只进运行记录，页面上只显示状态文字与转圈
   es.addEventListener('build', (e) => pushLog(JSON.parse(e.data).line));
-  es.addEventListener('fetch', (e) => {
-    const d = JSON.parse(e.data);
-    if (d.line !== undefined) {
-      fetchLines.push(d.line);
-      if (fetchLines.length > 200) fetchLines.shift();
-      renderPyodide();
-    }
-    if (d.done) {
-      fetchFailed = !d.ok;
-      if (d.ok) toast('Python 运行时已就绪');
-      else toast('下载没有完成，可以再点一次继续', true);
-      refreshSoon();
-    }
+  // G4 收尾：环境状态（开始 / 进度变化 / 结束 / 需求变化）；状态一变（不是只有进度变）就刷新一次，侧栏、检查单跟着变
+  es.addEventListener('env', (e) => {
+    if (!overview) return;
+    const before = overview.env?.pyodide?.state;
+    overview.env = JSON.parse(e.data);
+    renderEnv();
+    if (overview.env?.pyodide?.state !== before) refreshSoon();
   });
   // R4：更新子进程的逐行进度、结束（done）、启动静默检查的结果（checked）
   es.addEventListener('update', (e) => {
@@ -521,15 +670,6 @@ const ACTIONS = {
   stop: () => run(() => api('/api/platform/stop', { method: 'POST' })),
   restart: () => run(() => api('/api/platform/restart', { method: 'POST' })),
   rebuild: () => run(() => api('/api/platform/rebuild', { method: 'POST' }), '开始重新构建页面，完成后再启动平台'),
-  'fetch-pyodide': async () => {
-    fetchLines = [];
-    fetchFailed = false;
-    if (overview) overview.pyodide.fetching = true;
-    renderPyodide();
-    const r = await run(() => api('/api/pyodide/fetch', { method: 'POST' }));
-    if (!r && overview) overview.pyodide.fetching = false;
-    refreshSoon();
-  },
   // 名单（第 4 步）作用于当前课（rosterQuery）；数据页的操作作用于数据页选中的课（lessonQuery）
   backup: async () => {
     await run(() => api(`/api/backups${lessonQuery()}`, { method: 'POST' }), (r) => LESSON_TEXT.backedUp(r.file));
@@ -628,7 +768,7 @@ document.addEventListener('click', (e) => {
   copyText(b.dataset.copy, b);
 });
 
-// ===== ④ 上课准备：密码、端口、AI 接口（一个表单，控件用 form 属性归入）；Python 运行时；名单 =====
+// ===== 平台 → 设置：密码、端口、AI 接口（一个表单，控件用 form 属性归入；G4 从第 4 步搬来，保存逻辑不变） =====
 let settings = null;
 let pwEditing = false;
 function showPasswordEdit(on) {
@@ -824,7 +964,7 @@ for (const b of $$('[data-ai-models]')) {
     }
   });
 }
-// "平台"页 Python 运行时下载源（高级）：只写 RUNTIME_ZIP_URL，下次下载时生效，不影响平台（不提示重启）
+// 平台 → 环境与版本 → 环境的下载源（高级）：只写 RUNTIME_ZIP_URL，下次下载时生效，不影响平台（不提示重启）
 $('#s-runtime-save').addEventListener('click', async () => {
   const msg = $('#s-runtime-msg');
   const err = $('[data-err="RUNTIME_ZIP_URL"]');
@@ -848,34 +988,23 @@ $('#clear-key-2').addEventListener('click', async () => {
   saveSettings({ AI_API_KEY_2: '' });
 });
 
-// Python 运行时（第 4 步，当前课需要才显示）：状态、进度条、失败详情
-function renderPyodide() {
+// ④ 上课准备：课前检查（课程检查一行；环境一行 #c-env 只读，envCheckRow，当前课不需要时不显示）
+function renderPrepChecks() {
   if (!overview) return;
-  const py = overview.pyodide;
-  $('#prep-python').hidden = !(py.needed || py.fetching);
-  const ps = pyodideStatus(py);
-  const prog = fetchProgress(fetchLines);
-  const showProg = py.fetching || (fetchLines.length > 0 && !fetchFailed && !py.ready);
-  const bar = $('#s-py-progress');
-  bar.hidden = !showProg;
-  bar.setAttribute('aria-valuenow', String(prog.percent));
-  bar.firstElementChild.style.width = `${prog.percent}%`;
-  setText('#s-py-label', py.fetching ? prog.label : '');
-  $('#s-py-fail').hidden = !fetchFailed || py.fetching;
-  const det = $('#s-py-detail');
-  det.hidden = !fetchFailed || py.fetching;
-  det.querySelector('pre').textContent = fetchLines.slice(-30).join('\n');
-  renderDiag($('#s-py-diag'), !py.fetching && py.result && !py.result.ok ? py.result.diagnosis : null);
-  // 状态文字，版本与文件数只放 title
-  setText('#s-py-state', ps.label);
-  $('#s-py-state').title = ps.title;
-  $('#s-py-dot').className = `dot ${ps.dot}`;
-  const btn = $('#s-py-btn');
-  btn.textContent = py.fetching ? '正在下载…' : py.ready ? '检查并补全' : fetchFailed ? '再试一次' : '开始下载';
-  btn.className = py.ready && !py.fetching ? '' : 'primary';
-  btn.title = ps.buttonTitle;
-  for (const b of $$('[data-action="fetch-pyodide"]')) b.disabled = Boolean(py.fetching);
+  const env = envCheckRow(overview);
+  $('#c-env').hidden = !env;
+  if (env) {
+    $('#c-env').dataset.tone = env.tone;
+    $('#c-env .c-mark').textContent = { good: '✓', bad: '!', warn: '!', off: '·' }[env.tone];
+    setText('#c-env-text', env.text);
+  }
+  const s = checkSummary(overview.check);
+  setText('#c-check-text', overview.check ? (checkNotice(overview.check) ? s.text : '课程检查没有发现问题') : '还没有检查课程');
+  $('#c-check').dataset.tone = overview.check ? s.tone : 'off';
+  $('#c-check .c-mark').textContent = { good: '✓', bad: '!', warn: '!', off: '·' }[$('#c-check').dataset.tone];
+  $('#c-check-open').hidden = !checkNotice(overview.check);
 }
+$('#c-check-run').addEventListener('click', (e) => checkCurrent(e.currentTarget));
 
 // ===== ⑤ 启动上课：未运行 = 四行提醒 + 启动平台；运行中 = 上课面板 =====
 function renderClass() {
@@ -899,7 +1028,7 @@ function renderClass() {
       const b = el('button', { type: 'button', className: 'linkish', textContent: r.action.label, title: r.action.title });
       b.addEventListener('click', () => {
         if (r.action.id === 'check-open') openCheckDialog(overview?.check);
-        else showPage('prepare', { focus: r.action.focus });
+        else showPage(r.action.id === 'settings' ? 'settings' : 'prepare', { focus: r.action.focus });
       });
       li.append(b);
     }
@@ -940,8 +1069,7 @@ function renderClassroom() {
   setLink($('#c-teacher'), o.urls.teacher, '打开教师端');
   $('#c-stale').hidden = !o.build?.stale;
   // 更多信息（折叠）：这里可以放技术信息
-  const ps = pyodideStatus(o.pyodide);
-  setText('#m-py', ps.label + (ps.title ? `（${ps.title}）` : ''));
+  setText('#m-py', envLine(o.env).text);
   setText('#m-db', o.data.custom ? LESSON_TEXT.dbCustom(fmtSize(o.data.dbSize)) : fmtSize(o.data.dbSize));
   setText('#m-roster', LESSON_TEXT.rosterCount(o.data.rosterCount));
   setText('#m-backup', o.data.lastBackup ? fmtDate(o.data.lastBackup.mtime) : '还没有备份');
@@ -1143,26 +1271,48 @@ async function restoreBackup(b, lesson) {
   refreshSoon();
 }
 
-// ===== 课程（① 新建课程 / 全部课程、② 上传教案、③ 用 AI 做课；发布包与课程管理规格 §4，G3 §2.3.1–§2.3.3） =====
+// ===== 课程（① 新建课程、管理（我的课程列表）、② 上传教案、③ 用 AI 做课；发布包与课程管理规格 §4，G3 §2.3.1–§2.3.3，G4 §1） =====
 // 课程目录 lessons/<名> → 接口 /api/lessons/lessons/<名>/…（两段都编码，目录名不含分隔符）
 const lessonUrl = (row, tail = '') => `/api/lessons/${row.dir.split('/').map(encodeURIComponent).join('/')}${tail}`;
 // 上传教案、复制开场话只对我的课（示例课、根目录开发课不行）
 const isMine = (row) => row?.kind === 'mine';
-let lessonRows = [];
+let lessonRows = null;
+let lessonRowsFor = '';
 
+// 课程列表（侧栏 + 全部课程页）：lessonRowsFor = 读的时候的当前课
 async function loadLessons() {
+  const asked = overview?.lesson?.path ?? '';
   const rows = await run(() => api('/api/lessons/overview'));
   if (!rows) return false;
   lessonRows = rows;
-  renderLessons();
+  lessonRowsFor = asked;
+  renderSideCourses();
+  if (currentPage === 'courses') renderLessons();
   return true;
+}
+
+// G5 侧栏的课：点了设为当前课程（平台运行中换课，重启后生效），再去这门课当前该做的那一步；读不出来的课去全部课程页
+async function pickCourse(item) {
+  const T = LESSON_TEXT;
+  const row = (lessonRows ?? []).find((x) => x.dir === item.dir);
+  if (!row || row.broken) {
+    showPage('courses');
+    return;
+  }
+  if (!row.current) {
+    const r = await run(() => api(lessonUrl(row, '/current'), { method: 'POST' }));
+    if (!r) return;
+    toast(T.current(lessonName(row), r.differsFromRunning));
+    await afterLessonChange(r);
+  }
+  showPage(nextPage());
 }
 
 function renderLessons() {
   const ul = $('#l-list');
   ul.textContent = '';
-  $('#l-empty').hidden = lessonRows.length > 0;
-  for (const row of lessonRows) ul.append(lessonCard(row));
+  $('#l-empty').hidden = (lessonRows ?? []).length > 0;
+  for (const row of lessonRows ?? []) ul.append(lessonCard(row));
 }
 
 // 小卡：课名、"当前"标记、一行状态、一行数据、按钮（不再带做课步骤与备课进度，都在第 3 步）
@@ -1191,7 +1341,7 @@ async function lessonAction(id, row) {
   const name = lessonName(row);
   const T = LESSON_TEXT;
   if (id === 'continue') {
-    showPage(steps().currentId);
+    showPage(nextPage());
   } else if (id === 'current') {
     const r = await run(() => api(lessonUrl(row, '/current'), { method: 'POST' }));
     if (!r) return;
@@ -1199,21 +1349,75 @@ async function lessonAction(id, row) {
     await afterLessonChange(r);
   } else if (id === 'open') {
     await run(() => api(lessonUrl(row, '/open'), { method: 'POST' }), T.opened);
+  } else if (id === 'rename') {
+    const r = await renameDialog(row);
+    if (!r) return;
+    toast(T.renamed(r.title));
+    await afterLessonChange(null); // 侧栏、全部课程页都换成新课名
   } else if (id === 'delete') {
-    const ok = await confirmDialog(T.deleteConfirm(name), T.deleteOk);
+    // G4：当前课也能删——确认框说清楚删后换到哪门（与服务端同一规则）或删后没有课程
+    const next = row.current ? nextCurrentAfterDelete(lessonRows ?? [], row.dir) : null;
+    const env = envCleansWith(overview?.env, row); // §3.3：唯一需要 Python 环境的课 → 确认框说会一起清理
+    const ok = await confirmDialog(T.deleteConfirm(name, row.current ? { current: true, next: next ? lessonName(next) : null, env } : { env }), T.deleteOk);
     if (!ok) return;
-    const r = await run(() => api(lessonUrl(row), { method: 'DELETE' }), T.deleted(name));
-    if (r) loadLessons();
+    const r = await run(() => api(lessonUrl(row), { method: 'DELETE' }));
+    if (!r) return;
+    const to = r.current ? (lessonRows ?? []).find((x) => x.path === r.current.to) ?? null : null;
+    toast(T.withCleaned(r.current ? T.deletedSwitched(name, to ? lessonName(to) : null) : T.deleted(name), r.cleaned));
+    await afterLessonChange(r); // 侧栏去掉这门课；删的是当前课时各页换到新的当前课
   }
 }
 
-// 课程换了（新建 / 设为当前 / 顶栏下拉）：顶栏下拉重新读取，侧栏与"有改动未生效"跟着刷新
+// G4 重命名对话框：预填原课名；回车或"改名"提交，课名不对时在框下说原因（服务端的一句话），不关对话框
+function renameDialog(row) {
+  const dlg = $('#rename-dlg');
+  const form = $('#rename-form');
+  const input = $('#rename-title');
+  input.value = row.title ?? '';
+  setText('#rename-err', '');
+  return new Promise((resolve) => {
+    let result = null;
+    const onSubmit = async (e) => {
+      e.preventDefault();
+      const title = input.value.trim();
+      if (!title) {
+        setText('#rename-err', LESSON_TEXT.needTitle);
+        return;
+      }
+      if (title === row.title) {
+        dlg.close();
+        return;
+      }
+      $('#rename-ok').disabled = true;
+      try {
+        result = await api('/api/lessons/rename', { method: 'POST', body: { dir: row.dir, title } });
+        dlg.close();
+      } catch (err) {
+        if (err.message !== '链接已失效') setText('#rename-err', err.message);
+      } finally {
+        $('#rename-ok').disabled = false;
+      }
+    };
+    const onCancel = () => dlg.close();
+    form.addEventListener('submit', onSubmit);
+    $('#rename-cancel').addEventListener('click', onCancel);
+    dlg.addEventListener('close', () => {
+      form.removeEventListener('submit', onSubmit);
+      $('#rename-cancel').removeEventListener('click', onCancel);
+      resolve(result);
+    }, { once: true });
+    dlg.showModal();
+    input.select();
+  });
+}
+$('#rename-title').addEventListener('input', () => setText('#rename-err', ''));
+
+// 课程换了（新建 / 设为当前 / 改名 / 删除）：课程列表重新读取，侧栏、全部课程页与"有改动未生效"跟着刷新
 async function afterLessonChange(r) {
-  lessonList = null;
   autoChecked.clear();
   if (r && 'pendingRestart' in r) renderPlatform({ ...platform, pendingRestart: r.pendingRestart });
   await refresh();
-  if (currentPage === 'course') await loadLessons();
+  await loadLessons();
   if (currentPage === 'prepare') loadRoster();
   if (currentPage === 'data') {
     dataLesson = '';
@@ -1236,7 +1440,7 @@ $('#l-new').addEventListener('submit', async (e) => {
     const r = await api('/api/lessons', { method: 'POST', body: { title } });
     $('#l-title').value = '';
     toast(LESSON_TEXT.created(r.lesson.title));
-    // 线性：新建成功 → 成为当前课，跳到第 2 步
+    // 新建成功 → 成为当前课，进"教案"页签（G5 §2.4）
     await afterLessonChange(r);
     showPage('draft');
   } catch (err) {
@@ -1246,7 +1450,7 @@ $('#l-new').addEventListener('submit', async (e) => {
   }
 });
 
-// ② 上传教案：上传 / 重新上传、已上传提示；"没有教案，跳过 → 去做课"，上传后变成"接着做第 3 步 →"
+// 页签"教案"：上传 / 重新上传、已上传提示；"没有教案，跳过 → 去做课"，上传后变成"接着去做课 →"
 function renderDraft() {
   const cl = currentLesson();
   if (!cl) return;
@@ -1292,7 +1496,7 @@ async function uploadDraft(row, file, label) {
     }
     if (!res.ok) throw new Error(data.error || LESSON_TEXT.uploadFailed);
     const note = draftNote(data.draft);
-    // 不自动跳：教师可能要再传；提示里说接着做第 3 步，按钮变成"接着做第 3 步 →"
+    // 不自动跳：教师可能要再传；提示里说接着去做课，按钮变成"接着去做课 →"
     toast(LESSON_TEXT.draftUploaded(note.text), note.bad);
     await refresh();
   } catch (err) {
@@ -1487,6 +1691,7 @@ function renderUpdate() {
     box.className = res.bad ? 'help warn' : 'help';
   }
   renderDiag($('#s-up-diag'), update?.running ? null : (update?.result ? update.result.diagnosis : update?.recovered?.diagnosis) ?? null);
+  renderSideFoot();
 }
 
 $('#p-update').addEventListener('click', () => showPage('platform'));
@@ -1559,6 +1764,9 @@ function afterUpdated() {
 // ===== 启动：先读一次总览（没有井号时要知道当前该做哪一步），再按井号显示页面 =====
 if (!TOKEN) showFatal('缺少访问凭据。请回到启动工作台时打开的那个窗口，按提示打开工作台链接。');
 $('#p-migrated-close').addEventListener('click', () => { $('#p-migrated').hidden = true; });
-refresh().finally(() => renderPage(location.hash));
+refresh().finally(() => {
+  renderPage(location.hash);
+  loadLessons();
+});
 run(() => api('/api/logs?lines=50')).then((r) => { if (r) logLines = r.lines; });
 connectEvents();

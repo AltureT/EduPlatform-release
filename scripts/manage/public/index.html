@@ -8,15 +8,25 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- G3（管理台线性路径重设计规格 §2.1）：顶栏 = 当前课程（全局唯一）+ 平台状态；横幅区；左侧五步线性路径 + 数据 / 平台；主区一次一页（井号即页面） -->
+  <!-- G5（工作台侧栏常规化与页签步骤条规格 §1）：侧栏、页签、菜单用的线性图标（一个内联 sprite，不引外部文件；描边色跟文字走 currentColor） -->
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+  </svg>
+
+  <!-- G5（§3）：顶栏 = 图标 + "班迹工作台"；右边平台状态 + 停止 / 重启（当前课程下拉与"新建"删除：课程列在左栏）
+       §5：窄屏（< 900 px）左上角多一个☰，点开左栏抽屉 -->
   <header class="topbar">
-    <div class="tb-course">
+    <div class="tb-left">
+      <button type="button" id="side-toggle" class="side-toggle" aria-controls="side" aria-expanded="false" aria-label="菜单" title="打开菜单"><svg aria-hidden="true"><use href="#i-menu"/></svg></button>
       <span class="tb-icon" aria-hidden="true"></span>
       <strong class="tb-brand">班迹工作台</strong>
-      <label for="t-course" class="tb-label">当前课程</label>
-      <select id="t-course" title="换一门课；平台运行中换课，重启后生效"></select>
-      <button id="t-none" class="linkish" type="button" hidden title="到第 1 步新建一门课">还没有课程 · 先新建一门</button>
-      <button id="t-new" type="button" class="small" title="到第 1 步新建一门课">新建</button>
     </div>
     <div class="tb-status" aria-label="平台状态">
       <span id="dot" class="dot" aria-hidden="true"></span>
@@ -26,6 +36,8 @@
         <span class="muted">学生地址</span>
         <a id="p-addr" class="url" href="#" target="_blank" rel="noopener" title="在新标签打开，看看学生看到的样子">—</a>
       </span>
+      <!-- G4 收尾：正在准备 Python 环境 N%；或平台启动时环境缺的那句提醒（envWarning）。只是文字，不是按钮 -->
+      <span id="p-env-top" class="tb-note" role="status" hidden></span>
       <span class="status-actions">
         <button data-action="stop" class="small" title="停止平台，学生端会断开；数据会保留">停止平台</button>
         <button data-action="restart" class="small" title="先停止再启动，让修改过的设置生效；学生进度会保留">重启平台</button>
@@ -35,72 +47,115 @@
 
   <div id="fatal" class="banner danger" hidden></div>
 
-  <!-- 横幅区：原状态带里的几条提示（id 不变），全宽 -->
-  <section id="banners" class="banners" aria-label="提示">
-    <!-- R4：有新版本（文字由 updateBandText 填）→ 去"平台"页 -->
-    <button id="p-update" class="pending pending-link" type="button" hidden title="到平台页的平台版本一节下载并更新"></button>
-
-    <!-- R4：上次更新覆盖到一半被打断，工作台启动时已按备份恢复（备份目录只放 title） -->
-    <div id="p-recovered" class="pending" role="status" hidden>
-      <span id="p-recovered-text"></span>
-    </div>
-
-    <!-- M6：旧课堂数据刚按课程整理过，提示一次 -->
-    <div id="p-migrated" class="pending" role="status" hidden>
-      <span id="p-migrated-text"></span>
-      <button type="button" id="p-migrated-close" class="small" title="收起这句提示">知道了</button>
-    </div>
-
-    <div id="pending" class="pending" hidden>
-      <span>设置有改动，重启平台后生效。</span>
-      <button data-action="restart" class="primary small" title="先停止再启动，学生进度会保留">立即重启平台</button>
-    </div>
-
-    <!-- V1：启动前的检查发现问题但照常启动了（只有课程加载不了才拦下） -->
-    <div id="p-check" class="pending" role="status" hidden>
-      <span id="p-check-msg"></span>
-      <button type="button" class="small" data-check-open="running" title="看看是哪几处，可以复制给 AI 让它照着改">查看详情</button>
-      <button type="button" class="small" id="p-check-copy" title="把整份检查结果复制下来，直接贴给帮你生成课程的 AI，让它照着改">复制给 AI</button>
-    </div>
-
-    <div id="p-error" class="error-box" role="alert" hidden>
-      <p id="p-error-msg" class="error-msg"></p>
-      <div id="p-error-actions" class="row"></div>
-      <!-- S12：有排障文件时一行两钮（模板 #diag-tpl，app.js renderDiag） -->
-      <div id="p-error-diag" hidden></div>
-      <!-- L1：课程有问题时"查看详情"逐条列出（文件:行 + 一句话 + 怎么改），其它失败仍是原始记录 -->
-      <details id="p-error-details"><summary>查看详情</summary><ul id="p-error-list" class="check-list" hidden></ul><pre id="p-error-detail"></pre></details>
-    </div>
-
-    <!-- S12：排障行模板（启动失败框、更新结果、下载结果共用） -->
-    <template id="diag-tpl">
-      <div class="row diag-row">
-        <span>排障文件已写好</span>
-        <button type="button" class="small" data-diag="copy" title="把排障文件整份复制下来，直接贴给 AI 工具，它会告诉你怎么办">复制给 AI</button>
-        <button type="button" class="small" data-diag="open" title="打开平台文件夹里的排障文件夹，可以把最新那份发给 AI 工具">打开所在文件夹</button>
-      </div>
-    </template>
-  </section>
-
   <div class="layout">
-    <!-- 左侧（≥ 900 固定 240 px；< 900 顶栏下一条横向步骤条）：五步都可点；状态与摘要由 app.js 按 pathSteps 填 -->
-    <nav class="side" aria-label="步骤">
-      <ol class="path">
-        <li data-step="course"><a href="#course" data-page="course"><span class="p-dot">1</span><span class="p-text"><span class="p-title">新建课程</span><span class="p-sum"></span></span></a></li>
-        <li data-step="draft"><a href="#draft" data-page="draft"><span class="p-dot">2</span><span class="p-text"><span class="p-title">上传教案<small class="p-opt">可跳过</small></span><span class="p-sum"></span></span></a></li>
-        <li data-step="build"><a href="#build" data-page="build"><span class="p-dot">3</span><span class="p-text"><span class="p-title">用 AI 做课</span><span class="p-sum"></span></span></a></li>
-        <li data-step="prepare"><a href="#prepare" data-page="prepare"><span class="p-dot">4</span><span class="p-text"><span class="p-title">上课准备</span><span class="p-sum"></span></span></a></li>
-        <li data-step="class"><a href="#class" data-page="class"><span class="p-dot">5</span><span class="p-text"><span class="p-title">启动上课</span><span class="p-sum"></span></span></a></li>
-      </ol>
-      <ul class="side-more">
-        <li><a href="#data" data-page="data" title="备份、恢复、重置这门课的课堂数据">数据</a></li>
-        <li><a href="#platform" data-page="platform" title="版本更新、重新构建页面、运行记录">平台</a></li>
+    <!-- G5（§1）：左栏只做菜单（常规后台样式：图标 + 文字）——课程（一门一条，最多 8 门，由 app.js 按 sideCourses 填 #side-courses）、
+         新建课程、全部课程（超过 8 门或没有课时右侧带总数）、数据；平台（设置、环境与版本）；底部固定排障文件（数字 = 排障文件数）与版本行 -->
+    <nav class="side" id="side" aria-label="菜单">
+      <p class="side-head">课程</p>
+      <ul class="side-list" id="side-courses" aria-label="我的课程"></ul>
+      <ul class="side-list">
+        <li><a class="nav nav-soft" href="#new" data-page="new" title="新建一门课，只填课名"><svg aria-hidden="true"><use href="#i-plus"/></svg><span>新建课程</span></a></li>
+        <li><a class="nav" href="#courses" data-page="courses" title="全部课程：设为当前、重命名、打开文件夹、删除"><svg aria-hidden="true"><use href="#i-grid"/></svg><span>全部课程</span><span class="cnt" id="side-count" hidden></span></a></li>
+        <li><a class="nav" href="#data" data-page="data" title="备份、恢复、重置这门课的课堂数据"><svg aria-hidden="true"><use href="#i-db"/></svg><span>数据</span></a></li>
       </ul>
+      <p class="side-head">平台</p>
+      <ul class="side-list">
+        <li><a class="nav" href="#settings" data-page="settings" title="教师密码、端口、AI 接口（所有课共用）"><svg aria-hidden="true"><use href="#i-gear"/></svg><span>设置</span></a></li>
+        <li><a class="nav" href="#platform" data-page="platform" title="课程要用的环境、平台版本更新、重新构建页面、运行记录"><svg aria-hidden="true"><use href="#i-box"/></svg><span>环境与版本</span></a></li>
+      </ul>
+      <div class="side-foot">
+        <button type="button" class="nav nav-foot" id="side-diag" title="打开平台文件夹里的排障文件夹，可以把最新那份发给 AI 工具"><svg aria-hidden="true"><use href="#i-help"/></svg><span>排障文件</span><span class="cnt" id="side-diag-n" hidden></span></button>
+        <a class="nav nav-ver" id="side-ver" href="#platform" title="平台版本；点开看环境与版本"></a>
+      </div>
     </nav>
+    <!-- 窄屏抽屉打开时的遮罩：点了收起 -->
+    <div id="side-mask" class="side-mask" hidden></div>
 
     <main>
-      <!-- ① 新建课程 / 全部课程（卡片按钮由 app.js 按 ui-logic.js lessonCardOps 生成） -->
-      <section id="page-course" class="page" hidden>
+      <!-- 横幅区：原状态带里的几条提示（id 不变）；G5：放在主区列顶部（左栏右边），不再整页宽，左栏底部始终可见 -->
+      <section id="banners" class="banners" aria-label="提示">
+        <!-- R4：有新版本（文字由 updateBandText 填）→ 去"平台"页 -->
+        <button id="p-update" class="pending pending-link" type="button" hidden title="到平台页的平台版本一节下载并更新"></button>
+
+        <!-- R4：上次更新覆盖到一半被打断，工作台启动时已按备份恢复（备份目录只放 title） -->
+        <div id="p-recovered" class="pending" role="status" hidden>
+          <span id="p-recovered-text"></span>
+        </div>
+
+        <!-- M6：旧课堂数据刚按课程整理过，提示一次 -->
+        <div id="p-migrated" class="pending" role="status" hidden>
+          <span id="p-migrated-text"></span>
+          <button type="button" id="p-migrated-close" class="small" title="收起这句提示">知道了</button>
+        </div>
+
+        <!-- G4 收尾（§3.1、§3.2）：Python 环境准备好（知道了）/ 运行中准备好了要重启（重启平台）/ 没准备好（重试 + 排障行）；文字由 envBanner 填 -->
+        <div id="p-env" class="pending" role="status" hidden>
+          <span id="p-env-text"></span>
+          <button type="button" id="p-env-ok" class="small" title="收起这句提示" hidden>知道了</button>
+          <button type="button" id="p-env-restart" data-action="restart" class="primary small" title="先停止再启动，写程序的段就能用了；学生进度会保留" hidden>重启平台</button>
+          <button type="button" id="p-env-retry" class="small" data-env-retry title="再试一次准备 Python 环境" hidden>重试</button>
+          <div id="p-env-diag" hidden></div>
+        </div>
+
+        <div id="pending" class="pending" hidden>
+          <span>设置有改动，重启平台后生效。</span>
+          <button data-action="restart" class="primary small" title="先停止再启动，学生进度会保留">立即重启平台</button>
+        </div>
+
+        <!-- V1：启动前的检查发现问题但照常启动了（只有课程加载不了才拦下） -->
+        <div id="p-check" class="pending" role="status" hidden>
+          <span id="p-check-msg"></span>
+          <button type="button" class="small" data-check-open="running" title="看看是哪几处，可以复制给 AI 让它照着改">查看详情</button>
+          <button type="button" class="small" id="p-check-copy" title="把整份检查结果复制下来，直接贴给帮你生成课程的 AI，让它照着改">复制给 AI</button>
+        </div>
+
+        <div id="p-error" class="error-box" role="alert" hidden>
+          <p id="p-error-msg" class="error-msg"></p>
+          <div id="p-error-actions" class="row"></div>
+          <!-- S12：有排障文件时一行两钮（模板 #diag-tpl，app.js renderDiag） -->
+          <div id="p-error-diag" hidden></div>
+          <!-- L1：课程有问题时"查看详情"逐条列出（文件:行 + 一句话 + 怎么改），其它失败仍是原始记录 -->
+          <details id="p-error-details"><summary>查看详情</summary><ul id="p-error-list" class="check-list" hidden></ul><pre id="p-error-detail"></pre></details>
+        </div>
+
+        <!-- S12：排障行模板（启动失败框、更新结果、下载结果共用） -->
+        <template id="diag-tpl">
+          <div class="row diag-row">
+            <span>排障文件已写好</span>
+            <button type="button" class="small" data-diag="copy" title="把排障文件整份复制下来，直接贴给 AI 工具，它会告诉你怎么办">复制给 AI</button>
+            <button type="button" class="small" data-diag="open" title="打开平台文件夹里的排障文件夹，可以把最新那份发给 AI 工具">打开所在文件夹</button>
+          </div>
+        </template>
+      </section>
+
+      <!-- G5（§2.1、§2.2）：课名标题行（h1 + "…"菜单：重命名 / 打开文件夹 / 删除这门课，菜单项由 app.js 按 lessonCardOps 填）、
+           一句状态（courseLead）、页签式步骤条（四页井号不变；圆标 ✓ / ! / 数字由 tabMarks 填）；只在四个页签页、有当前课时显示 -->
+      <div id="course-head" class="course-head" hidden>
+        <div class="ch-row">
+          <h1 id="ch-title" class="ch-title"></h1>
+          <div class="ch-more-wrap">
+            <button type="button" id="ch-more" class="ch-more" aria-haspopup="menu" aria-expanded="false" aria-controls="ch-menu" title="这门课的更多操作：重命名、打开文件夹、删除">…</button>
+            <div id="ch-menu" class="ch-menu" role="menu" hidden></div>
+          </div>
+        </div>
+        <p id="ch-lead" class="ch-lead"></p>
+        <nav class="tabs" aria-label="这门课的步骤">
+          <a href="#draft" data-page="draft" class="tab"><i class="tab-mark" aria-hidden="true"></i><span class="tab-title">教案</span></a>
+          <a href="#build" data-page="build" class="tab"><i class="tab-mark" aria-hidden="true"></i><span class="tab-title">做课</span></a>
+          <a href="#prepare" data-page="prepare" class="tab"><i class="tab-mark" aria-hidden="true"></i><span class="tab-title">上课准备</span></a>
+          <a href="#class" data-page="class" class="tab"><i class="tab-mark" aria-hidden="true"></i><span class="tab-title">启动上课</span></a>
+        </nav>
+      </div>
+
+      <!-- G5（§2.3）：没有当前课时（四个页签页与数据页）主区只有这一张卡；按钮去新建表单（#new） -->
+      <div id="no-course" class="card no-course" hidden>
+        <h2 class="no-course-title">新建第一门课</h2>
+        <p class="desc">只填课名；之后上传教案、用 AI 做课、上课，都在这里一步步走。</p>
+        <a class="button primary" href="#new" title="新建一门课，只填课名">新建课程</a>
+      </div>
+
+      <!-- 新建课程（G5 §2.4：#new，侧栏"新建课程"；新建成功 → 当前课切到它 → 进"教案"页签） -->
+      <section id="page-new" class="page" hidden>
         <div class="card l-top">
           <form id="l-new" class="l-new" novalidate>
             <h3>新建课程</h3>
@@ -113,24 +168,17 @@
             <small id="l-new-err" class="err" role="alert"></small>
           </form>
         </div>
-        <h3 class="l-list-title">我的课程</h3>
-        <ul id="l-list" class="l-list"></ul>
-        <p id="l-empty" class="empty-line" hidden>还没有课程，先在上面新建一门。</p>
       </section>
 
-      <!-- ② 上传教案（当前课） -->
+      <!-- 页签"教案"（#draft，当前课） -->
       <section id="page-draft" class="page" hidden>
-        <div class="empty" data-empty hidden>
-          <p>先新建一门课</p>
-          <a class="button primary" href="#course" title="到第 1 步新建一门课">去新建课程</a>
-        </div>
         <div data-need-course>
           <div class="card">
             <h3><span class="ln"></span>的教案</h3>
             <p class="desc">有现成的教案就传上来，AI 会先读它。</p>
             <div class="row">
               <label class="file primary-file" id="d-upload-label" title="选 Word、PDF、Markdown 或纯文本文件（20 MB 以内）；再次上传会替换，旧的自动留一份"><span id="d-upload-text">上传教案</span><input type="file" id="d-upload" accept=".md,.txt,.docx,.pdf"></label>
-              <a id="d-go" class="button" href="#build" title="到第 3 步，用 AI 做这门课">没有教案，跳过 → 去做课</a>
+              <a id="d-go" class="button" href="#build" title="到&quot;做课&quot;页签，用 AI 做这门课">没有教案，跳过 → 去做课</a>
             </div>
             <p id="d-note" class="l-draft" hidden></p>
             <details class="more-help"><summary>详细说明</summary><p>有现成的 Word / PDF / 文本就传上来，AI 会先读它；没有也没关系，AI 会和你聊着把课定下来。</p></details>
@@ -138,12 +186,8 @@
         </div>
       </section>
 
-      <!-- ③ 用 AI 做课（当前课）：三步 + 收起 / 展开说明；备课进度折叠（只读） -->
+      <!-- 页签"做课"（#build，当前课）：三步 + 收起 / 展开说明；备课进度折叠（只读） -->
       <section id="page-build" class="page" hidden>
-        <div class="empty" data-empty hidden>
-          <p>先新建一门课</p>
-          <a class="button primary" href="#course" title="到第 1 步新建一门课">去新建课程</a>
-        </div>
         <div data-need-course>
           <div class="card b-card">
             <div class="b-head">
@@ -152,7 +196,7 @@
             </div>
             <p id="b-lead" class="b-lead"></p>
             <ol id="b-steps" class="b-steps"></ol>
-            <p class="b-draft"><span id="b-draft-text"></span> <a id="b-draft-link" href="#draft" title="到第 2 步上传或换一份教案"></a></p>
+            <p class="b-draft"><span id="b-draft-text"></span> <a id="b-draft-link" href="#draft" title="到&quot;教案&quot;页签上传或换一份教案"></a></p>
           </div>
           <div class="card">
             <details id="b-progress" class="b-progress">
@@ -163,61 +207,10 @@
         </div>
       </section>
 
-      <!-- ④ 上课准备（当前课）：密码、端口、AI 接口在同一个表单（控件用 form 属性归入），Python 运行时与名单各自一节 -->
+      <!-- 页签"上课准备"（#prepare，当前课）：G4 只剩这门课的事——名单、课前检查（课程检查 + 环境状态，只读）、去平台 → 设置的链接
+           （教师密码、端口、AI 接口是全平台共用的，整体搬到平台区"设置"页） -->
       <section id="page-prepare" class="page" hidden>
-        <div class="empty" data-empty hidden>
-          <p>先新建一门课</p>
-          <a class="button primary" href="#course" title="到第 1 步新建一门课">去新建课程</a>
-        </div>
         <div data-need-course>
-          <form id="settings-form" novalidate></form>
-
-          <div class="card" id="prep-password">
-            <h3>教师密码</h3>
-            <p class="desc">登录教师端时用，6 位以上。</p>
-            <p id="pw-summary" class="ok-line" hidden>
-              <span class="ok-mark" aria-hidden="true">✓</span> 已设置 ·
-              <button id="pw-change" class="linkish" type="button" title="换一个新的教师密码">改密码</button>
-            </p>
-            <div id="pw-edit" class="field">
-              <div class="inline">
-                <input id="f-pw" type="password" name="TEACHER_PASSWORD" form="settings-form" autocomplete="new-password" maxlength="64" placeholder="至少 6 位" aria-label="教师密码">
-                <label class="check"><input type="checkbox" id="show-pw"> 显示</label>
-              </div>
-              <small class="err" data-err="TEACHER_PASSWORD"></small>
-            </div>
-          </div>
-
-          <div class="card" id="prep-port">
-            <h3>端口</h3>
-            <p class="desc">一般不用改；被占用时换 3001 或 8080。</p>
-            <div class="field">
-              <input id="f-port" type="number" name="PORT" form="settings-form" min="1" max="65535" placeholder="80" aria-label="端口">
-              <p class="help warn" id="port-hint" hidden>这个端口需要管理员权限，建议 3001 或 8080。</p>
-              <small class="err" data-err="PORT"></small>
-            </div>
-            <details class="more-help"><summary>详细说明</summary><p>端口：80 时学生地址不带端口号（例如 <code>http://192.168.1.100/</code>）。</p></details>
-          </div>
-
-          <!-- 当前课需要 Python 运行时才显示 -->
-          <div class="card" id="prep-python" hidden>
-            <h3>Python 运行时</h3>
-            <p class="desc">这门课要用 Python，需要联网下载一次（约 40 MB）。</p>
-            <p class="state-line"><span id="s-py-dot" class="dot" aria-hidden="true"></span> <strong id="s-py-state">—</strong></p>
-            <div id="s-py-progress" class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden><div class="bar"></div></div>
-            <p id="s-py-label" class="muted"></p>
-            <p id="s-py-fail" class="err-line" hidden>下载没完成，网络恢复后再点一次。</p>
-            <div id="s-py-diag" hidden></div>
-            <details id="s-py-detail" hidden><summary>查看详情</summary><pre class="log small"></pre></details>
-            <div class="row">
-              <button id="s-py-btn" type="button" class="primary" data-action="fetch-pyodide" title="需要联网；中途断网再点一次会接着下载">开始下载</button>
-            </div>
-            <details class="more-help"><summary>详细说明</summary>
-              <p>优先从国内镜像下载；下不动时可以在"平台"页换下载源。</p>
-              <p>也可以让同事把运行时压缩包（EduPlatform-runtime 开头的 zip）拷给你，放进平台文件夹里的 vendor 文件夹后再点一次。</p>
-            </details>
-          </div>
-
           <!-- 名单：只对当前课（接口 lesson 参数传当前课目录） -->
           <div class="card" id="prep-roster">
             <h3><span class="ln"></span>的名单</h3>
@@ -252,91 +245,138 @@
             </details>
           </div>
 
-          <div class="card" id="prep-ai">
-            <h3>AI 接口</h3>
-            <p class="desc">课程里用到 AI 时才需要；没有可留空。</p>
-            <div class="field">
-              <label for="f-ai-url">AI 接口地址</label>
-              <input id="f-ai-url" type="url" name="AI_BASE_URL" form="settings-form" placeholder="https://api.openai.com/v1">
-              <p class="help">OpenAI 兼容格式；局域网里的 Ollama 也行。</p>
-              <small class="err" data-err="AI_BASE_URL"></small>
-            </div>
-            <div class="field">
-              <label for="f-ai-key">AI 密钥</label>
-              <div class="inline">
-                <input id="f-ai-key" type="password" name="AI_API_KEY" form="settings-form" autocomplete="off" placeholder="sk-…（不修改请留空）">
-                <button type="button" id="clear-key" class="danger" title="删除保存的密钥">清空密钥</button>
-              </div>
-              <p class="help">只保存在本机，页面只显示末 4 位。</p>
-              <p class="muted" id="key-current"></p>
-              <small class="err" data-err="AI_API_KEY"></small>
-            </div>
-            <div class="field">
-              <label for="f-ai-model">AI 模型名</label>
-              <div class="inline">
-                <input id="f-ai-model" type="text" name="AI_MODEL" form="settings-form" placeholder="gpt-4o-mini" list="ai-models-1" autocomplete="off">
-                <button type="button" id="ai-models-btn-1" data-ai-models="1" title="用上面填的地址和密钥向服务商要一份可用的模型名单（密钥留空时用已保存的）；不保存设置，也不会替你选">获取模型</button>
-              </div>
-              <datalist id="ai-models-1"></datalist>
-              <p id="ai-models-1-msg" class="msg" role="status"></p>
-              <small class="err" data-err="AI_MODEL"></small>
-            </div>
-            <div class="row">
-              <button type="button" id="ai-test-1" data-ai-test="1" title="用上面填的地址、模型和密钥发一句最短的话试试通不通（密钥留空时用已保存的）；不保存设置，平台开着也能测">测一下</button>
-              <span id="ai-test-1-msg" class="msg" role="status"></span>
-            </div>
-
-            <details id="ai-backup" class="ai-backup">
-              <summary>备用 AI 接口（可选）</summary>
-              <p class="help">主接口出错时自动改用；填另一家最稳。</p>
-              <div class="field">
-                <label for="f-ai-url-2">备用接口地址</label>
-                <input id="f-ai-url-2" type="url" name="AI_BASE_URL_2" form="settings-form" placeholder="https://api.deepseek.com/v1">
-                <small class="err" data-err="AI_BASE_URL_2"></small>
-              </div>
-              <div class="field">
-                <label for="f-ai-key-2">备用接口密钥</label>
-                <div class="inline">
-                  <input id="f-ai-key-2" type="password" name="AI_API_KEY_2" form="settings-form" autocomplete="off" placeholder="sk-…（不修改请留空）">
-                  <button type="button" id="clear-key-2" class="danger" title="删除保存的备用接口密钥">清空密钥</button>
-                </div>
-                <p class="muted" id="key-current-2"></p>
-                <small class="err" data-err="AI_API_KEY_2"></small>
-              </div>
-              <div class="field">
-                <label for="f-ai-model-2">备用模型名</label>
-                <div class="inline">
-                  <input id="f-ai-model-2" type="text" name="AI_MODEL_2" form="settings-form" placeholder="deepseek-chat" list="ai-models-2" autocomplete="off">
-                  <button type="button" id="ai-models-btn-2" data-ai-models="2" title="用上面填的备用地址和密钥向服务商要一份可用的模型名单（密钥留空时用已保存的）；不保存设置，也不会替你选">获取模型</button>
-                </div>
-                <datalist id="ai-models-2"></datalist>
-                <p id="ai-models-2-msg" class="msg" role="status"></p>
-                <small class="err" data-err="AI_MODEL_2"></small>
-              </div>
-              <div class="row">
-                <button type="button" id="ai-test-2" data-ai-test="2" title="用上面填的备用地址、模型和密钥发一句最短的话试试通不通（密钥留空时用已保存的）；不保存设置，平台开着也能测">测一下</button>
-                <span id="ai-test-2-msg" class="msg" role="status"></span>
-              </div>
-            </details>
-
-            <details class="more-help"><summary>详细说明</summary>
-              <p>AI 接口地址：OpenAI 兼容接口，国内常见服务商也用这个格式。学生的程序、运行结果和提问会发到这个地址（不含姓名）。也可以填局域网里自己电脑上的模型服务，例如 http://192.168.1.20:11434/v1（Ollama），这时密钥留空。</p>
-            </details>
+          <!-- 课前检查：课程检查一行（查看 / 检查课程）+ 环境一行（#c-env，只读，app.js 按 overview.env 填；当前课不需要时隐藏） -->
+          <div class="card" id="prep-check">
+            <h3>课前检查</h3>
+            <p class="desc">只提醒，不拦着上课。</p>
+            <ul id="prep-checks" class="c-checks">
+              <li id="c-check" data-tone="off">
+                <span class="c-mark" aria-hidden="true">·</span><span class="c-text" id="c-check-text">还没有检查课程</span>
+                <button type="button" class="linkish" id="c-check-open" data-check-open="current" hidden title="看看是哪几处，可以复制给 AI 让它照着改">查看</button>
+                <button type="button" class="linkish" id="c-check-run" title="检查这门课有没有写错的地方（不用启动平台）">检查课程</button>
+              </li>
+              <li id="c-env" data-tone="off" hidden>
+                <span class="c-mark" aria-hidden="true">·</span><span class="c-text" id="c-env-text"></span>
+              </li>
+            </ul>
           </div>
 
-          <div class="row save-row">
-            <button type="submit" form="settings-form" class="primary" title="把密码、端口、AI 接口写入配置文件；平台运行中要重启后生效">保存设置</button>
-            <span id="settings-msg" class="msg" role="status"></span>
-          </div>
+          <p id="prep-link" class="prep-link">密码 / 端口 / AI 接口在 <a href="#settings" title="教师密码、端口、AI 接口是所有课共用的，在平台区设置">平台 → 设置</a></p>
         </div>
       </section>
 
-      <!-- ⑤ 启动上课：未运行 = 四行提醒（只提醒不拦）+ 启动平台；运行中 = 上课面板（技术信息只在"更多信息"折叠与 title 提示里） -->
-      <section id="page-class" class="page" hidden>
-        <div class="empty" data-empty hidden>
-          <p>先新建一门课</p>
-          <a class="button primary" href="#course" title="到第 1 步新建一门课">去新建课程</a>
+      <!-- 平台 → 设置（G4）：教师密码、端口、AI 接口（.env 里的平台级配置，所有课共用；从上课准备整体搬来，保存逻辑不变）
+           控件用 form="settings-form" 归入页首的空表单，页尾一个"保存设置" -->
+      <section id="page-settings" class="page" hidden>
+        <form id="settings-form" novalidate></form>
+
+        <div class="card" id="prep-password">
+          <h3>教师密码</h3>
+          <p class="desc">登录教师端时用，6 位以上。</p>
+          <p id="pw-summary" class="ok-line" hidden>
+            <span class="ok-mark" aria-hidden="true">✓</span> 已设置 ·
+            <button id="pw-change" class="linkish" type="button" title="换一个新的教师密码">改密码</button>
+          </p>
+          <div id="pw-edit" class="field">
+            <div class="inline">
+              <input id="f-pw" type="password" name="TEACHER_PASSWORD" form="settings-form" autocomplete="new-password" maxlength="64" placeholder="至少 6 位" aria-label="教师密码">
+              <label class="check"><input type="checkbox" id="show-pw"> 显示</label>
+            </div>
+            <small class="err" data-err="TEACHER_PASSWORD"></small>
+          </div>
         </div>
+
+        <div class="card" id="prep-port">
+          <h3>端口</h3>
+          <p class="desc">一般不用改；被占用时换 3001 或 8080。</p>
+          <div class="field">
+            <input id="f-port" type="number" name="PORT" form="settings-form" min="1" max="65535" placeholder="80" aria-label="端口">
+            <p class="help warn" id="port-hint" hidden>这个端口需要管理员权限，建议 3001 或 8080。</p>
+            <small class="err" data-err="PORT"></small>
+          </div>
+          <details class="more-help"><summary>详细说明</summary><p>端口：80 时学生地址不带端口号（例如 <code>http://192.168.1.100/</code>）。</p></details>
+        </div>
+
+        <div class="card" id="prep-ai">
+          <h3>AI 接口</h3>
+          <p class="desc">课程里用到 AI 时才需要；没有可留空。</p>
+          <div class="field">
+            <label for="f-ai-url">AI 接口地址</label>
+            <input id="f-ai-url" type="url" name="AI_BASE_URL" form="settings-form" placeholder="https://api.openai.com/v1">
+            <p class="help">OpenAI 兼容格式；局域网里的 Ollama 也行。</p>
+            <small class="err" data-err="AI_BASE_URL"></small>
+          </div>
+          <div class="field">
+            <label for="f-ai-key">AI 密钥</label>
+            <div class="inline">
+              <input id="f-ai-key" type="password" name="AI_API_KEY" form="settings-form" autocomplete="off" placeholder="sk-…（不修改请留空）">
+              <button type="button" id="clear-key" class="danger" title="删除保存的密钥">清空密钥</button>
+            </div>
+            <p class="help">只保存在本机，页面只显示末 4 位。</p>
+            <p class="muted" id="key-current"></p>
+            <small class="err" data-err="AI_API_KEY"></small>
+          </div>
+          <div class="field">
+            <label for="f-ai-model">AI 模型名</label>
+            <div class="inline">
+              <input id="f-ai-model" type="text" name="AI_MODEL" form="settings-form" placeholder="gpt-4o-mini" list="ai-models-1" autocomplete="off">
+              <button type="button" id="ai-models-btn-1" data-ai-models="1" title="用上面填的地址和密钥向服务商要一份可用的模型名单（密钥留空时用已保存的）；不保存设置，也不会替你选">获取模型</button>
+            </div>
+            <datalist id="ai-models-1"></datalist>
+            <p id="ai-models-1-msg" class="msg" role="status"></p>
+            <small class="err" data-err="AI_MODEL"></small>
+          </div>
+          <div class="row">
+            <button type="button" id="ai-test-1" data-ai-test="1" title="用上面填的地址、模型和密钥发一句最短的话试试通不通（密钥留空时用已保存的）；不保存设置，平台开着也能测">测一下</button>
+            <span id="ai-test-1-msg" class="msg" role="status"></span>
+          </div>
+
+          <details id="ai-backup" class="ai-backup">
+            <summary>备用 AI 接口（可选）</summary>
+            <p class="help">主接口出错时自动改用；填另一家最稳。</p>
+            <div class="field">
+              <label for="f-ai-url-2">备用接口地址</label>
+              <input id="f-ai-url-2" type="url" name="AI_BASE_URL_2" form="settings-form" placeholder="https://api.deepseek.com/v1">
+              <small class="err" data-err="AI_BASE_URL_2"></small>
+            </div>
+            <div class="field">
+              <label for="f-ai-key-2">备用接口密钥</label>
+              <div class="inline">
+                <input id="f-ai-key-2" type="password" name="AI_API_KEY_2" form="settings-form" autocomplete="off" placeholder="sk-…（不修改请留空）">
+                <button type="button" id="clear-key-2" class="danger" title="删除保存的备用接口密钥">清空密钥</button>
+              </div>
+              <p class="muted" id="key-current-2"></p>
+              <small class="err" data-err="AI_API_KEY_2"></small>
+            </div>
+            <div class="field">
+              <label for="f-ai-model-2">备用模型名</label>
+              <div class="inline">
+                <input id="f-ai-model-2" type="text" name="AI_MODEL_2" form="settings-form" placeholder="deepseek-chat" list="ai-models-2" autocomplete="off">
+                <button type="button" id="ai-models-btn-2" data-ai-models="2" title="用上面填的备用地址和密钥向服务商要一份可用的模型名单（密钥留空时用已保存的）；不保存设置，也不会替你选">获取模型</button>
+              </div>
+              <datalist id="ai-models-2"></datalist>
+              <p id="ai-models-2-msg" class="msg" role="status"></p>
+              <small class="err" data-err="AI_MODEL_2"></small>
+            </div>
+            <div class="row">
+              <button type="button" id="ai-test-2" data-ai-test="2" title="用上面填的备用地址、模型和密钥发一句最短的话试试通不通（密钥留空时用已保存的）；不保存设置，平台开着也能测">测一下</button>
+              <span id="ai-test-2-msg" class="msg" role="status"></span>
+            </div>
+          </details>
+
+          <details class="more-help"><summary>详细说明</summary>
+            <p>AI 接口地址：OpenAI 兼容接口，国内常见服务商也用这个格式。学生的程序、运行结果和提问会发到这个地址（不含姓名）。也可以填局域网里自己电脑上的模型服务，例如 http://192.168.1.20:11434/v1（Ollama），这时密钥留空。</p>
+          </details>
+        </div>
+
+        <div class="row save-row">
+          <button type="submit" form="settings-form" class="primary" title="把密码、端口、AI 接口写入配置文件；平台运行中要重启后生效">保存设置</button>
+          <span id="settings-msg" class="msg" role="status"></span>
+        </div>
+      </section>
+
+      <!-- 页签"启动上课"（#class）：未运行 = 四行提醒（只提醒不拦）+ 启动平台；运行中 = 上课面板（技术信息只在"更多信息"折叠与 title 提示里） -->
+      <section id="page-class" class="page" hidden>
         <div data-need-course>
           <article id="c-start" class="card c-start" aria-label="启动上课">
             <h3>上<span class="ln"></span></h3>
@@ -394,7 +434,7 @@
               <details class="more" id="c-more">
                 <summary>更多信息</summary>
                 <dl class="facts">
-                  <dt>Python 运行时</dt><dd id="m-py">—</dd>
+                  <dt>Python 环境</dt><dd id="m-py">—</dd>
                   <dt>数据库大小</dt><dd id="m-db">—</dd>
                   <dt>名单</dt><dd id="m-roster">—</dd>
                   <dt>最近备份</dt><dd id="m-backup">—</dd>
@@ -412,12 +452,19 @@
         </div>
       </section>
 
+      <!-- 全部课程（G5 §1：#courses，原 G4"管理"）：我的课程列表（卡片按钮由 app.js 按 ui-logic.js lessonCardOps 生成）；示例课不列 -->
+      <section id="page-courses" class="page" hidden>
+        <div class="page-head">
+          <h2 class="page-title">全部课程</h2>
+          <a class="button" href="#new" title="新建一门课">新建课程</a>
+        </div>
+        <p class="desc">设为当前、改名、打开文件夹或删除。</p>
+        <ul id="l-list" class="l-list"></ul>
+        <p id="l-empty" class="empty-line" hidden>还没有课程，先新建一门。</p>
+      </section>
+
       <!-- 数据（当前课）：右上"看别的课的数据"点了才出现选课框，只影响本页（M6 pageLesson / ?lesson=） -->
       <section id="page-data" class="page" hidden>
-        <div class="empty" data-empty hidden>
-          <p>先新建一门课</p>
-          <a class="button primary" href="#course" title="到第 1 步新建一门课">去新建课程</a>
-        </div>
         <div data-need-course>
           <div class="page-head">
             <h2 class="page-title"><span class="ln-data"></span>的数据</h2>
@@ -464,8 +511,35 @@
         </div>
       </section>
 
-      <!-- 平台：版本更新、重新构建页面、Python 运行时下载源（高级）、运行记录 -->
+      <!-- 平台 → 环境与版本（井号沿用 #platform）：环境（G4 §3.4）、版本更新、重新构建页面、运行记录 -->
       <section id="page-platform" class="page" hidden>
+        <!-- G4 §3.4 环境：一行状态（envLine：已就绪 / 正在准备 N% / 没准备好 + 重试 + 排障行 / 没有课程需要）、导入整包、下载源（高级）；
+             没有"开始下载"——课程需要时工作台自动准备 -->
+        <div class="card" id="env-section">
+          <h3>环境</h3>
+          <p class="state-line">Python 环境 · <span id="env-dot" class="dot" aria-hidden="true"></span> <span id="env-state">—</span>
+            <button type="button" id="env-retry" class="small" data-env-retry hidden title="再试一次准备 Python 环境">重试</button></p>
+          <div id="env-diag" hidden></div>
+          <div class="row">
+            <button type="button" id="env-import" data-env-retry title="先把同事拷来的运行时压缩包放进平台文件夹的 vendor 文件夹，再点这里">导入整包</button>
+          </div>
+          <p class="help">把同事拷来的运行时压缩包放进平台文件夹的 vendor 文件夹再点。</p>
+          <!-- R3：下载源（高级）写 .env 的 RUNTIME_ZIP_URL；下载时最先试它，再试国内镜像、GitHub、逐个文件下载 -->
+          <details id="s-py-source">
+            <summary>下载源（高级）</summary>
+            <div class="field">
+              <label for="f-runtime-url">运行时压缩包地址</label>
+              <input id="f-runtime-url" type="url" name="RUNTIME_ZIP_URL" placeholder="https://…/EduPlatform-runtime-v314.0.7.zip">
+              <p class="help">一般留空；局域网里有压缩包时填它的地址。</p>
+              <small class="err" data-err="RUNTIME_ZIP_URL"></small>
+            </div>
+            <div class="row">
+              <button type="button" id="s-runtime-save" title="把下载源写入配置文件；下次准备 Python 环境时生效，不用重启平台">保存下载源</button>
+              <span id="s-runtime-msg" class="msg" role="status"></span>
+            </div>
+          </details>
+        </div>
+
         <!-- K7：版本与平台文件是否被改过（改动清单只放 title）；R4：检查更新 / 下载并更新（两次点击确认） -->
         <div class="card">
           <h3>平台版本</h3>
@@ -487,25 +561,6 @@
           <h3>重新构建页面</h3>
           <p class="desc">课程改过、页面显示不对时用；先停止平台。</p>
           <button data-action="rebuild" title="重新准备学生和教师看到的页面，不会动课堂数据">重新构建页面</button>
-        </div>
-
-        <!-- R3：下载源（高级）写 .env 的 RUNTIME_ZIP_URL；下载时最先试它，再试国内镜像、GitHub、逐个文件下载 -->
-        <div class="card">
-          <h3>Python 运行时下载源</h3>
-          <p class="desc">下载慢或下不动时再换。</p>
-          <details id="s-py-source">
-            <summary>下载源（高级）</summary>
-            <div class="field">
-              <label for="f-runtime-url">运行时压缩包地址</label>
-              <input id="f-runtime-url" type="url" name="RUNTIME_ZIP_URL" placeholder="https://…/EduPlatform-runtime-v314.0.7.zip">
-              <p class="help">一般留空；局域网里有压缩包时填它的地址。</p>
-              <small class="err" data-err="RUNTIME_ZIP_URL"></small>
-            </div>
-            <div class="row">
-              <button type="button" id="s-runtime-save" title="把下载源写入配置文件；下次下载 Python 运行时生效，不用重启平台">保存下载源</button>
-              <span id="s-runtime-msg" class="msg" role="status"></span>
-            </div>
-          </details>
         </div>
 
         <div class="card">
@@ -531,6 +586,19 @@
       <div class="row end">
         <button value="cancel">取消</button>
         <button value="ok" id="confirm-ok" class="danger"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- G4：管理页卡片"重命名"：只改课名（lesson.config.js 的 title），内容和数据不动 -->
+  <dialog id="rename-dlg" class="rename-dlg" aria-labelledby="rename-dlg-title">
+    <form method="dialog" id="rename-form" novalidate>
+      <h3 id="rename-dlg-title">改课名</h3>
+      <input id="rename-title" type="text" maxlength="40" autocomplete="off" aria-label="新课名">
+      <small id="rename-err" class="err" role="alert"></small>
+      <div class="row end">
+        <button type="button" id="rename-cancel">取消</button>
+        <button value="ok" type="submit" id="rename-ok" class="primary">改名</button>
       </div>
     </form>
   </dialog>

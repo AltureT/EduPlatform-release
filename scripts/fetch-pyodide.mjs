@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 下载 Pyodide 运行时到 vendor/pyodide/（代码沙盒规格 §2.3；内核附带，组件无关）
-// 用法：npm run fetch:pyodide（或工作台第 4 步"上课准备"的"Python 运行时"一节的下载按钮）；可重复执行：已存在且 sha256 校验通过的文件跳过，失败的下次重下
+// 用法：npm run fetch:pyodide（G4 起有课需要时工作台自动跑它，没有下载按钮）；可重复执行：已存在且 sha256 校验通过的文件跳过，失败的下次重下
 //       --sources（或 --dry-run）只列出来源顺序；--help 用法
 // 多源回退（国内镜像与 Gitee 同步规格 §4，lib/runtime-zip.js）：已就绪且校验通过 → 直接完成；否则按序尝试，任一成功即完成：
 //   0. vendor/ 下拷来的 EduPlatform-runtime-v<ver>.zip（不联网；导入后不删原 zip）

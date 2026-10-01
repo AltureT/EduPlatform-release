@@ -4,7 +4,7 @@ import { checkLesson } from '../check-lesson.mjs';
 
 try {
   const { configPath, root, componentsRoot, testsBudgetMs, tests } = workerData;
-  const off = () => ({ available: false, reason: '这次检查没有验证代码题测试（工作台左边第 4 步"上课准备"可下载 Python 运行时）' });
+  const off = () => ({ available: false, reason: '这次检查没有验证代码题测试（Python 环境工作台会自动准备，没好时到 平台 → 环境与版本 看状态）' });
   const result = await checkLesson(configPath, {
     root, ...(componentsRoot ? { componentsRoot } : {}), testsBudgetMs, ...(tests === false ? { pyRunner: off } : {}),
   });

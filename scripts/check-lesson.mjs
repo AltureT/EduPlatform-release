@@ -85,7 +85,7 @@ export const AI_CODE_RULES = [
 export const AI_BEARER = { auth: /\bauthorization\b/i, bearer: /\bBearer\b/ };
 export const AI_IN_CLIENT = /\bc?ctx\s*(?:\??\.\s*ai\b|(?:\?\.)?\[\s*(['"`])ai\1\s*\])/;
 export const CLIENT_FETCH_HTTP = /\bfetch\s*\(\s*(['"`])https?:\/\//;
-const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在工作台第 4 步'上课准备'填，课程代码里不写";
+const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、模型、密钥只在工作台 平台 → 设置 填，课程代码里不写";
 // 13 课程组件：契约 §八的槽位名（与 kernel/client/stores/componentRegistry.js 的 SLOT_NAMES 一致，测试核对）
 export const CONTRACT_SLOTS = [
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
@@ -1011,7 +1011,7 @@ async function checkCodeTests({
         }
         if (!r.available) {
           const why = String(r.reason ?? '').replace(/（[^）]*）$/, '') || 'Python 运行时不可用';
-          w(cfgFile, testsLine, `${why}，${where}的测试没验证`, '在工作台左边第 4 步"上课准备"下载 Python 运行时后再跑一次 check:lesson', 'tests-unverified');
+          w(cfgFile, testsLine, `${why}，${where}的测试没验证`, '等工作台准备好 Python 环境（平台 → 环境与版本 看状态）再跑一次 check:lesson', 'tests-unverified');
           entry.solution = 'unverified';
           continue;
         }

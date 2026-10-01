@@ -115,7 +115,7 @@ const UPDATED_EXIT_CODE = 75;
 let srv;
 try {
   const { created } = ensureEnv(ROOT);
-  if (created) console.log('已生成配置文件 .env（请在工作台第 4 步"上课准备"里设置教师密码）');
+  if (created) console.log('已生成配置文件 .env（请在工作台 平台 → 设置 里设置教师密码）');
   srv = createManageServer({ root: ROOT, token, onUpdated: () => shutdown('平台已更新', UPDATED_EXIT_CODE) });
 } catch (err) {
   failStartup(`工作台无法启动：${err?.message ?? err}`, err);

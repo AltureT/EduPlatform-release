@@ -18,7 +18,7 @@ import {
 } from './lib/hidden-tests.js';
 
 export const PLATFORM_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DOWNLOAD = '先在工作台左边第 4 步"上课准备"的"Python 运行时"一节点"下载 Python 运行时"（约 40 MB，需要联网），再跑一次 npm run prep:tests';
+const DOWNLOAD = '工作台会自动准备 Python 环境，没好时到 平台 → 环境与版本 看状态；准备好后再跑一次 npm run prep:tests';
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const readText = (f) => {

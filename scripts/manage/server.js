@@ -37,13 +37,22 @@
 //   G3（管理台线性路径重设计规格 §2.4、§3）：/api/lessons、/api/lessons/overview 只列 lessons/（遗留的示例当前课例外）；
 //     overview.currentLesson（lesson-admin.js currentLessonRow）；LESSON_CONFIG 空值 = 还没有课程（overview.lesson { none: true }）；
 //     PUT /api/settings 的课程候选 = 我的课 + 根目录开发课 + 当前值；示例课不能设为当前课程（403）
+//   G4（工作台两区重构规格 §1）：POST /api/lessons/rename { dir, title } → { ok, title, lesson }（只改 title；示例课 403）；
+//     DELETE 当前课不再 409：删后当前课换成下一门 / 清空，响应带 current: { to } | null 与 pendingRestart
 //   K9（AI 备用线路规格 §5.1）：POST /api/ai/models { which: 1 | 2, baseUrl, apiKey? } → { ok: true, models } | { ok: false, reason, text }；
 //     参数不对 400 { error }；GET <baseUrl>/models 用注入的 fetch（ai-models.js）
 //   S12（排障文件与 AI 排障规格 §1.2、§3）：出错时写 排障/ 文件（diagnosis.js），状态带 diagnosis: { file, at } | null——
 //     平台启动失败（error.kind ∈ DIAG_KINDS）→ 环节"启动平台"、运行中意外退出 → "平台退出"：overview.platform / SSE platform 带 diagnosis
 //       （文件异步写好后再广播一次）；"下载并更新"失败 → update.result.diagnosis；启动时恢复了上次没完成的更新 → update.recovered.diagnosis；
-//       运行时下载失败 → pyodide.result.diagnosis（fetch 事件的 done 同带）。新一次启动 / 重新构建 / 更新 / 下载开始时清空。
+//       运行时下载失败 → env.pyodide.diagnosis（G4）。新一次启动 / 重新构建 / 更新 / 下载开始时清空。
 //     GET /api/diagnosis/:name → 正文（text/markdown；名字不对 400、不存在 404）；POST /api/diagnosis/open → openFolder(排障/)（没有就建；打不开 500）
+//   G4（工作台课程与平台两区重构规格 §3.1、§3.3）：环境自动准备（env-prepare.js），手动下载入口 POST /api/pyodide/fetch 删除。
+//     触发时刻：工作台启动（listen 成功）、GET /api/overview、设为当前课程（POST …/current、PUT /api/settings 改 LESSON_CONFIG）、
+//     新建 / 删除课程、POST /api/lesson/check 跑完；需要且缺 → 自动下载（fetchCommand 可注入），失败后 10 分钟内不自动重试（now 可注入）。
+//     overview.env = 环境状态（env-prepare.js status()）；SSE 事件 env（同一形状，开始 / 进度变化 / 结束时发）；
+//     POST /api/env/retry → { ok: true, started, env }（不受节流；正在下载时 started: false）；
+//     下载失败写排障文件（环节"下载运行时"），放在 env.<种类>.diagnosis；旧的 overview.pyodide 已删（G4 收尾，页面只看 env）；
+//     DELETE /api/lessons/:scope/:name 返回 cleaned（lesson-admin.js cleanupEnvironments：没有课再需要而清掉的环境种类，如 ['pyodide']）
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -54,7 +63,8 @@ import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, va
 import { migrateDb, takeMigratedNotice } from './migrate-db.js';
 import { lessonIdError, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
 import { listLessons, listLessonChoices, readLesson, lessonDir, DEV_LESSON } from './lessons.js';
-import { createPlatform, checkRequires, MANAGE_APP, withDiagHint } from './process.js';
+import { createPlatform, MANAGE_APP, withDiagHint } from './process.js';
+import { createEnvPreparer } from './env-prepare.js';
 import { lanAddresses, probePort } from './net.js';
 import { qrSvg } from './qr.js';
 import { pipeLines, sourceStale } from './build.js';
@@ -66,7 +76,7 @@ import { readUpload } from './upload.js';
 import { parseAITest, runAITest } from './ai-test.js';
 import { parseAIModels, fetchModels } from './ai-models.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
-import { writeDiagnosis, collectEnvironment, readDiagnosis, launcherSection, tailLines, DIAG_DIR } from './diagnosis.js';
+import { writeDiagnosis, collectEnvironment, readDiagnosis, launcherSection, tailLines, DIAG_DIR, listDiagnoses } from './diagnosis.js';
 import { checkReportText, updateResultText, updateRecoveredText } from './ui-logic.js';
 import {
   checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, fixupLaunchers, RELEASE_API, spaceShortage, downloadNeedBytes,
@@ -79,7 +89,7 @@ export const PLATFORM_LIST_MAX = 20;
 export const UPDATE_CACHE = 'data/update-check.json';
 export const UPDATE_CHECK_TTL = 24 * 3_600_000;
 export const UPDATE_EXIT_DELAY = 1000;
-// S12：这几类启动失败写排障文件（端口、密码、还没有课程、缺运行时、课程检查未通过页面上已有按钮直接解决，不写）
+// S12：这几类启动失败写排障文件（端口、密码、还没有课程、课程检查未通过页面上已有按钮直接解决，不写；G4 起缺运行时不再算启动失败）
 export const DIAG_KINDS = new Set(['build', 'crash', 'timeout', 'internal', 'lesson']);
 const DIAG_PHASE = { build: '构建', crash: '启动', timeout: '启动', internal: '内部错误', lesson: '读课程' };
 
@@ -135,6 +145,7 @@ export function createManageServer({
   updateSources = RELEASE_API,
   updateCommand,
   onUpdated = () => {},
+  now = Date.now,
 }) {
   if (!token) throw new Error('token required');
   platform ??= createPlatform({ root, serverCommand, buildCommand, log, checkLesson });
@@ -197,7 +208,6 @@ export function createManageServer({
     }
   })();
   const clients = new Set();
-  const fetchState = { running: false, child: null, lines: [], result: null };
   let exclusive = null; // 正在恢复 / 离线重置时，禁止启动平台
   // R4：更新子进程；waitingExit = 已更新成功、等工作台退出重启（期间同样禁止启动平台）
   const updateState = { running: false, child: null, lines: [], result: null, waitingExit: false };
@@ -238,7 +248,7 @@ export function createManageServer({
   //   否则平台状态（stopped / building / starting / running / stopping）
   const pingState = () => {
     if (updating()) return 'updating';
-    if (exclusive || fetchState.running) return 'busy';
+    if (exclusive || envPrep.busy()) return 'busy';
     return platform.status().state;
   };
   const pingInfo = () => ({
@@ -254,6 +264,22 @@ export function createManageServer({
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of clients) res.write(msg);
   }
+  // G4：环境自动准备（§3.1）；更新平台时不开始下载
+  const envPrep = createEnvPreparer({
+    root, fetchCommand, log, now,
+    blocked: () => (updating() ? '正在更新平台' : null),
+    diagnose: ({ reason, code, lines }) => diag({
+      stage: '下载运行时', message: `Python 环境没准备好：${reason}`, detail: [code === null ? '下载程序没能启动' : `下载程序退出码 ${code}`],
+      environment: diagEnv(),
+      sections: [{ title: '下载记录（最后 100 行）', lines: lines.slice(-100) }, launcherSection(root)],
+    }),
+  });
+  envPrep.on('change', (s) => broadcast('env', s));
+  // 触发一次（不抛错）；→ 环境状态
+  const triggerEnv = () => envPrep.trigger().catch((err) => {
+    log(`[manage] 准备环境时出错：${err?.message ?? err}`);
+    return envPrep.status();
+  });
   // S12：平台启动失败 / 运行中意外退出的排障文件（diagnosis: { file, at } | null）
   let platformDiag = null;
   let diagFor = null; // 已为哪个 error 对象写过（同一个失败的多次状态事件只写一次）
@@ -383,29 +409,6 @@ export function createManageServer({
     }
   }
 
-  async function pyodideInfo(rel) {
-    const info = { needed: false, ready: false, version: null, fileCount: 0, totalSize: 0, fetchedAt: null, fetching: fetchState.running, result: fetchState.result };
-    try {
-      info.needed = (await checkRequires(root, rel)).needed;
-    } catch {
-      // 课程读不出时按不需要显示；启动时会报具体原因
-    }
-    try {
-      const m = JSON.parse(fs.readFileSync(path.join(root, 'vendor', 'pyodide', 'manifest.json'), 'utf8'));
-      const files = Object.values(m.files ?? {});
-      Object.assign(info, {
-        ready: true,
-        version: m.version ?? null,
-        fileCount: files.length,
-        totalSize: files.reduce((n, f) => n + (Number(f?.size) || 0), 0),
-        fetchedAt: m.fetchedAt ?? null,
-      });
-    } catch {
-      // 未下载
-    }
-    return info;
-  }
-
   async function dataInfo() {
     const unsortedPaths = backups.lessonPaths(root, UNSORTED_ID);
     const custom = Boolean(customDbPath(root));
@@ -450,36 +453,6 @@ export function createManageServer({
     };
   }
 
-  // ===== Pyodide 下载 =====
-  function startFetch() {
-    if (fetchState.running) throw userError('已经在下载了，请稍候', 409);
-    if (updating()) throw userError('正在更新平台，请稍候', 409);
-    const cmd = fetchCommand ?? [process.execPath, path.join(root, 'scripts', 'fetch-pyodide.mjs')];
-    // .env 里的 RUNTIME_ZIP_URL / PYODIDE_MIRROR / PYPI_MIRROR / FONT_URL 传给下载脚本（国内镜像与 Gitee 同步规格 §4）
-    const child = spawn(cmd[0], cmd.slice(1), { cwd: root, env: downloadEnv(root), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    Object.assign(fetchState, { running: true, child, lines: [], result: null });
-    const onLine = (line) => {
-      fetchState.lines.push(line);
-      if (fetchState.lines.length > 200) fetchState.lines.shift();
-      broadcast('fetch', { line });
-    };
-    pipeLines(child.stdout, onLine);
-    pipeLines(child.stderr, onLine);
-    child.once('error', (err) => onLine(`下载程序无法启动：${err.message}`));
-    child.once('close', (code) => {
-      const result = { done: true, ok: code === 0, code, at: Date.now(), tail: fetchState.lines.slice(-20) };
-      if (!result.ok) {
-        result.diagnosis = diag({
-          stage: '下载运行时', message: '下载没有完成，可以再点一次继续', detail: [`下载程序退出码 ${code}`],
-          environment: diagEnv(),
-          sections: [{ title: '下载记录（最后 100 行）', lines: fetchState.lines.slice(-100) }, launcherSection(root)],
-        });
-      }
-      Object.assign(fetchState, { running: false, child: null, result });
-      broadcast('fetch', result);
-    });
-  }
-
   // ===== R4 平台更新 =====
   const cacheFile = path.join(root, ...UPDATE_CACHE.split('/'));
   function readUpdateCache() {
@@ -512,7 +485,7 @@ export function createManageServer({
     const { dev } = currentVersion(root);
     if (dev) throw userError('开发版不更新', 400);
     if (updating()) throw userError('已经在更新了，请稍候', 409);
-    if (fetchState.running) throw userError('正在下载 Python 运行时，请等它完成再更新', 409);
+    if (envPrep.busy()) throw userError('正在准备 Python 环境，请等它完成再更新', 409);
     if (exclusive) throw userError(exclusive, 409);
     const s = platform.status().state;
     if (s === 'running') throw userError('先停止平台再更新', 409);
@@ -583,6 +556,7 @@ export function createManageServer({
 
   api.get('/overview', async (_req, res) => {
     await migrationDone;
+    const envStatus = await triggerEnv();
     const env = effectiveEnv(root);
     const s = platformStatus();
     const p = s.state === 'running' ? s.port : Number(env.PORT);
@@ -599,7 +573,8 @@ export function createManageServer({
       currentLesson,
       // 向导（M3）：密码已设、课程可读（根目录配置"我的课程（自定义）"也算已选）
       setup: { passwordSet: Boolean(env.TEACHER_PASSWORD), lessonChosen: !lesson.error && !lesson.none },
-      pyodide: await pyodideInfo(env.LESSON_CONFIG),
+      // G4：课程需要的环境（§3.1）
+      env: envStatus,
       data: await dataInfo(),
       pendingRestart: platform.pendingRestart(),
       build: { stale: buildStale() },
@@ -610,6 +585,8 @@ export function createManageServer({
       platformDir: path.resolve(root),
       // M6 §2.2：旧课堂数据刚按课程整理过 → 首页提示一次（{ at, lessonId, unsorted }），之后 null
       migrated: takeMigratedNotice(root),
+      // G5（工作台侧栏常规化规格 §1）：侧栏底部"排障文件 N"——排障/ 里的排障文件数（老师写的 -反馈.md 不计）
+      diagnoses: { count: listDiagnoses(root).filter((d) => !/-反馈\.md$/.test(d.name)).length },
     });
   });
 
@@ -644,6 +621,7 @@ export function createManageServer({
     const r = await checkLesson(root, want);
     const out = { ...r, path: want, at: Date.now() };
     lastChecks.set(want, out);
+    await triggerEnv(); // G4：课程检查跑完（AI 做课加了写程序的段）
     res.json(out);
   });
 
@@ -676,6 +654,7 @@ export function createManageServer({
     } catch (err) {
       return res.status(400).json({ errors: { _: err.message } });
     }
+    if (Object.hasOwn(patch, 'LESSON_CONFIG')) await triggerEnv(); // G4：换了当前课程
     res.json({ ok: true, pendingRestart: platform.pendingRestart() });
   });
 
@@ -708,9 +687,10 @@ export function createManageServer({
   api.post('/lessons', async (req, res) => {
     const r = await serial(() => lessonAdmin.createLesson(root, { title: req.body?.title }));
     const lesson = await lessonAdmin.lessonRow(root, 'lessons', r.id, { current: currentConfig() });
+    await triggerEnv(); // G4：新建课程
     res.json({ ok: true, lesson, pendingRestart: platform.pendingRestart() });
   });
-  // 设为当前课程：与顶栏"当前课程"下拉一样写 .env 的 LESSON_CONFIG；平台运行中且与正在上的课不同 → differsFromRunning（重启后生效）
+  // 设为当前课程（G5：工作台左栏点课、全部课程页"设为当前课程"）：写 .env 的 LESSON_CONFIG；平台运行中且与正在上的课不同 → differsFromRunning（重启后生效）
   api.post('/lessons/:scope/:name/current', async (req, res) => {
     // G3：示例课不能设为当前课程（示例课只是给 AI 照抄的范本）
     const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name, { mineOnly: lessonAdmin.MESSAGES.exampleNoCurrent });
@@ -719,6 +699,7 @@ export function createManageServer({
     writeEnv(root, { LESSON_CONFIG: d.configRel });
     const s = platform.status();
     const differsFromRunning = s.state === 'running' && Boolean(s.lessonConfig) && !lessonAdmin.sameLessonPath(s.lessonConfig, d.configRel);
+    await triggerEnv(); // G4：设为当前课程
     res.json({ ok: true, pendingRestart: platform.pendingRestart(), differsFromRunning });
   });
   api.post('/lessons/:scope/:name/draft', async (req, res) => {
@@ -738,10 +719,19 @@ export function createManageServer({
     if (row.broken) throw userError(lessonAdmin.MESSAGES.broken, 400);
     res.type('text/plain; charset=utf-8').send(lessonAdmin.openingText({ title: row.title, rel: d.rel, draft: row.draft }));
   });
-  // 删除：只允许我的课、不是当前课程、平台已停止或正在上别的课（准备中一律拒绝）；移到 backups/deleted-lessons/
+  // G4（工作台两区重构规格 §1）：重命名——body { dir: 'lessons/<名>', title }，只改 lesson.config.js 的 title；示例课 403
+  api.post('/lessons/rename', async (req, res) => {
+    const m = /^(lessons|examples)\/([^/\\]+)$/.exec(typeof req.body?.dir === 'string' ? req.body.dir : '');
+    if (!m) throw userError(lessonAdmin.MESSAGES.badDir, 400);
+    const d = lessonAdmin.resolveLessonDir(root, m[1], m[2], { mineOnly: lessonAdmin.MESSAGES.exampleNoRename });
+    const r = await serial(() => lessonAdmin.renameLesson(root, d, { title: req.body?.title }));
+    const lesson = await lessonAdmin.lessonRow(root, d.scope, d.name, { current: currentConfig() });
+    res.json({ ok: true, title: r.title, lesson });
+  });
+  // 删除：只允许我的课、平台已停止或正在上别的课（准备中一律拒绝）；移到 backups/deleted-lessons/
+  //   G4：当前课也能删——删后当前课换成列表里下一门（没有别的课就清空），返回 current: { to } | null
   api.delete('/lessons/:scope/:name', async (req, res) => {
     const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name, { mineOnly: lessonAdmin.MESSAGES.exampleNoDelete });
-    if (lessonAdmin.sameLessonPath(currentConfig(), d.configRel)) throw userError(lessonAdmin.MESSAGES.deleteCurrent, 409);
     const s = platform.status();
     // 准备中 / 启动中 / 停止中：还不知道最终上哪门课，一律不删
     if (s.state !== 'stopped' && s.state !== 'running') throw userError(lessonAdmin.MESSAGES.deletePreparing, 409);
@@ -757,9 +747,11 @@ export function createManageServer({
     const r = await serial(async () => {
       // M6 审查：要移库时，平台停止状态下先确认没有别的窗口在跑（端口被占则 409）
       if (dataId && platform.status().state === 'stopped') await guardOffline();
-      return lessonAdmin.deleteLesson(root, d, { dataId });
+      // G4 收尾：没有课再需要的环境，先停掉正在跑的下载（等它退出）再删目录
+      return lessonAdmin.deleteLesson(root, d, { dataId, current: currentConfig(), beforeClean: (kind) => envPrep.stop(kind) });
     });
-    res.json({ ok: true, movedTo: r.movedTo });
+    await triggerEnv(); // G4：删除课程（清理在 deleteLesson 里，见 lesson-admin.js cleanupEnvironments）
+    res.json({ ok: true, movedTo: r.movedTo, current: r.current, pendingRestart: platform.pendingRestart(), cleaned: r.cleaned ?? [] });
   });
 
   const busy = (res, message) => res.status(409).json({ ok: false, error: message });
@@ -925,9 +917,10 @@ export function createManageServer({
     res.json({ ok: true, movedTo: r.movedTo });
   });
 
-  api.post('/pyodide/fetch', (_req, res) => {
-    startFetch();
-    res.json({ ok: true });
+  // G4：环境"重试"（不受 10 分钟节流）
+  api.post('/env/retry', async (_req, res) => {
+    const r = await envPrep.retry();
+    res.json({ ok: true, started: r.started, env: r.status });
   });
 
   // R4：检查更新（联网）/ 下载并更新
@@ -956,11 +949,7 @@ export function createManageServer({
     // 同步结束平台与下载子进程（工作台进程 'exit' 时用）
     killChildrenNow() {
       platform.killNow();
-      try {
-        fetchState.child?.kill();
-      } catch {
-        // ignore
-      }
+      envPrep.stop();
     },
     url: null,
     // R4：启动静默检查（listen 成功后由 index.js 调用；缓存不足 24 小时跳过；失败不写缓存、不提示）
@@ -999,6 +988,8 @@ export function createManageServer({
           self.url = `http://127.0.0.1:${httpServer.address().port}/?t=${encodeURIComponent(token)}`;
           manageInfo.port = httpServer.address().port;
           resolve(self.url);
+          // G4：工作台启动时算一遍课程需要的环境，缺就自动准备
+          migrationDone.then(triggerEnv);
         });
       });
     },
@@ -1008,7 +999,7 @@ export function createManageServer({
       platform.off('log', onLog);
       platform.off('build', onBuild);
       await platform.stop();
-      fetchState.child?.kill();
+      envPrep.stop();
       for (const res of clients) res.end();
       clients.clear();
       if (httpServer?.listening) {
