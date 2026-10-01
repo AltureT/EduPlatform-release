@@ -59,7 +59,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings, downloadEnv, customDbPath } from './env-file.js';
+import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings, downloadEnv, customDbPath, passwordState } from './env-file.js';
 import { migrateDb, takeMigratedNotice } from './migrate-db.js';
 import { lessonIdError, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
 import { listLessons, listLessonChoices, readLesson, lessonDir, DEV_LESSON } from './lessons.js';
@@ -572,7 +572,8 @@ export function createManageServer({
       runningLesson,
       currentLesson,
       // 向导（M3）：密码已设、课程可读（根目录配置"我的课程（自定义）"也算已选）
-      setup: { passwordSet: Boolean(env.TEACHER_PASSWORD), lessonChosen: !lesson.error && !lesson.none },
+      // S14：password = 'default'（为空或 123456）| 'set'；passwordSet 保留兼容（= 不为空）
+      setup: { passwordSet: Boolean(env.TEACHER_PASSWORD), password: passwordState(env.TEACHER_PASSWORD), lessonChosen: !lesson.error && !lesson.none },
       // G4：课程需要的环境（§3.1）
       env: envStatus,
       data: await dataInfo(),

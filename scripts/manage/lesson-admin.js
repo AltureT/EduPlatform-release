@@ -7,7 +7,7 @@
 //   findDraft(dir) / saveDraft(dir, { filename, data }) → 原稿固定存为 教学设计原稿.<ext>（ext 白名单 .md .txt .docx .pdf，
 //     文件名不取用户输入）；已有的原稿（任何扩展名，含 docx 抽出的 .txt）先改名 <原名>.bak；.docx 抽纯文本另存 .txt
 //     （docx-text.js：document.xml 解压后 > 30 MB 不抽；mammoth 在 worker 里跑，512 MB 内存上限、30 s 超时；失败 textError）
-//   openingText({ title, rel, draft })：复制给 AI 的开场话（规格 §4 句式）
+//   openingText({ title, rel, draft })：复制给 AI 的开场话（规格 §4 句式；S14 末尾自证"工作台已经打开"）
 //   lessonOverview(root, { current, checks }) → 课程列表（第 1 步）列表行（只列 lessons/；读不出来的课也列出，broken: true）
 //     G3（管理台线性路径重设计规格 §2.4）：示例课不列，只有当前课还指着 examples/<x>（旧安装）时多出那一行（kind: 'example'）
 //     每行 check（V1 代码题测试验证规格 §5）：checks（检查结果数组，{ path, at, ok, errors, warnings, tests }）里同一门课最新的一条的摘要
@@ -153,7 +153,8 @@ export function openingText({ title, rel, draft }) {
   const middle = draft
     ? `教学设计原稿在 ${dir}${draft.file}${draft.ext === '.docx' && draft.hasText ? '（有 .txt 版）' : ''}。`
     : '教学设计我口述给你。';
-  return `${head}${middle}请先读 skills/SKILL.md，按它做。`;
+  // S14：自证工作台已打开，弱模型也不再让教师双击工作台、装软件或设密码（不走 00）
+  return `${head}${middle}工作台已经打开、平台已装好，不用让我双击工作台、装软件或设密码。请先读 skills/SKILL.md，按它做。`;
 }
 
 // ===== 列表 =====

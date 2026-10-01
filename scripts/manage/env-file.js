@@ -1,13 +1,15 @@
 // .env 读写（管理台规格 §3）：工作台是 .env 的唯一编辑者；服务端仍用 dotenv 读取
 //   readEnv(root) → { values, exists }
 //   writeEnv(root, patch)：逐行读取；已知键原位替换值（重复出现的键每一处都替换），缺失的已知键追加到末尾，其余行原样保留；未知键忽略
-//   ensureEnv(root, platform?)：.env 缺失时从 .env.example 生成（PORT：darwin / win32 取 80，linux 等取 3001）；
+//   ensureEnv(root, platform?)：.env 缺失时从 .env.example 生成（PORT：darwin / win32 取 80，linux 等取 3001；S14：TEACHER_PASSWORD 空时写默认 123456）；
 //     G3（管理台线性路径重设计规格 §2.4）：LESSON_CONFIG 取 lessons/ 下第一门课（目录名排序），没有则留空（= 还没有课程）；
 //     示例课 examples/ 只是给 AI 照抄的范本，不再默认
 //   effectiveEnv：.env 里写了 LESSON_CONFIG=（空值）就是"还没有课程"，不回落到根目录配置；没有这一行仍按缺省
 //   maskSecret / settingsView / prepareSettingsPatch / validateSettings：上课准备页的读出与提交
 //   R3：RUNTIME_ZIP_URL（"平台"页"下载源（高级）"）；downloadEnv(root) = 下载子进程的环境（.env 里非空的 DOWNLOAD_KEYS 盖上去）；
 //     platformEnv(root) = 去掉 DOWNLOAD_KEYS 的有效配置（process.js 判断"有改动未生效"用）
+//   S14（默认教师密码规格 §1）：DEFAULT_PASSWORD = '123456'；fillDefaultPassword(root, log) → .env 存在且密码为空时补成默认并记一行日志（返回是否补了）；
+//     passwordState(pw) → 'default'（为空或等于默认）| 'set'（overview.setup.password）
 //   M6（名单与数据以课程为主体规格 §2.1）：DB_PATH 不再有缺省（每门课 data/lessons/<id>.sqlite）；.env 里 DB_PATH 等于旧缺省
 //     data/classroom.sqlite 视为没设置（effectiveEnv 不带它；writeEnv 顺手删掉那一行）；其它显式值仍尊重：customDbPath(root) → 那个值或 null
 import fs from 'node:fs';
@@ -33,6 +35,9 @@ export const DEFAULTS = {
   LESSON_CONFIG: './lesson.config.js',
 };
 export const MASK = '••••';
+export const DEFAULT_PASSWORD = '123456';
+
+export const passwordState = (pw) => (!pw || pw === DEFAULT_PASSWORD ? 'default' : 'set');
 
 const envFile = (root) => path.join(root, '.env');
 
@@ -132,11 +137,21 @@ export function ensureEnv(root, platform = process.platform) {
   const text = fs.existsSync(example) ? fs.readFileSync(example, 'utf8') : '';
   fs.writeFileSync(envFile(root), text);
   const patch = { PORT: platform === 'win32' || platform === 'darwin' ? '80' : '3001' };
+  if (!dotenv.parse(text).TEACHER_PASSWORD) patch.TEACHER_PASSWORD = DEFAULT_PASSWORD;
   // G3：新装默认课程 = lessons/ 下第一门；没有就留空（还没有课程）。不用示例课，也不用根目录的开发者配置
   const lesson = defaultLessonPath(root);
   patch.LESSON_CONFIG = lesson ?? '';
   writeEnv(root, patch);
   return { created: true, lesson: lesson || null };
+}
+
+// S14：已装过、.env 里密码为空 → 一次性补成默认 123456（工作台启动时在 ensureEnv 之后调用）
+export function fillDefaultPassword(root, log = console.log) {
+  const { values, exists } = readEnv(root);
+  if (!exists || values.TEACHER_PASSWORD) return false;
+  writeEnv(root, { TEACHER_PASSWORD: DEFAULT_PASSWORD });
+  log(`教师密码为空，已设为默认 ${DEFAULT_PASSWORD}`);
+  return true;
 }
 
 export function defaultLessonPath(root) {

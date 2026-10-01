@@ -105,7 +105,9 @@ export function parseProgress(text) {
   const ringLine = lines.map((l) => /^\s*[-*]?\s*当前环[：:]\s*(\d{1,2})/.exec(l)).find(Boolean);
   const nextLine = lines.map((l) => /^\s*下一步[：:]\s*(.+?)\s*$/.exec(l)).find(Boolean);
   if (!ringLine && !nextLine) return { kind: 'unknown' };
-  const ring = ringLine ? Number(ringLine[1]) : null;
+  // S15：进度文件不再写"当前环"，环号从"下一步：NN …"开头两位数字取（旧文件仍认"当前环"）
+  const nextRing = nextLine ? /^(\d{2})(?:\s|$)/.exec(nextLine[1]) : null;
+  const ring = ringLine ? Number(ringLine[1]) : nextRing ? Number(nextRing[1]) : null;
   // 阶段表：从"## 阶段表"到下一个"## "之间的表格行，跳过表头与分隔行
   let stagesDone = 0;
   let stagesTotal = 0;

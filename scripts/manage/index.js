@@ -17,7 +17,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureEnv } from './env-file.js';
+import { ensureEnv, fillDefaultPassword } from './env-file.js';
 import { createManageServer } from './server.js';
 import { openBrowser } from './net.js';
 import { acquireManageLock, LOCK_FILE, pingManage, decideTakeover, replaceOldManage, takeoverMessage } from './process.js';
@@ -115,7 +115,8 @@ const UPDATED_EXIT_CODE = 75;
 let srv;
 try {
   const { created } = ensureEnv(ROOT);
-  if (created) console.log('已生成配置文件 .env（请在工作台 平台 → 设置 里设置教师密码）');
+  if (created) console.log('已生成配置文件 .env（教师密码默认 123456，可在工作台 平台 → 设置 里改）');
+  else fillDefaultPassword(ROOT); // S14：已装过、密码为空 → 补成默认 123456 并记一行日志
   srv = createManageServer({ root: ROOT, token, onUpdated: () => shutdown('平台已更新', UPDATED_EXIT_CODE) });
 } catch (err) {
   failStartup(`工作台无法启动：${err?.message ?? err}`, err);

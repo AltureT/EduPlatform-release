@@ -113,8 +113,6 @@ const OTHER_PORT = { id: 'goto-settings', label: '换一个端口', field: 'PORT
 export function errorActions(err) {
   if (!err) return [];
   switch (err.kind) {
-    case 'password':
-      return [{ id: 'goto-settings', label: '去设置密码', field: 'TEACHER_PASSWORD', title: '到平台 → 设置并把光标放进教师密码框' }];
     // G5：去新建课程 → #new；换一门课程 → 全部课程（#courses）
     case 'no-lesson':
       return [{ id: 'new', label: '去新建课程', title: '新建一门课，新建后它就是当前课程' }];
@@ -846,9 +844,11 @@ export function buildSteps() {
 export function classChecklist(o) {
   const setup = o?.setup ?? {};
   const rows = [];
-  rows.push(setup.passwordSet
+  // S14：密码默认 123456 → 只提醒去改；旧 overview 没有 password 时按 passwordSet 推断
+  const pw = setup.password ?? (setup.passwordSet ? 'set' : 'default');
+  rows.push(pw === 'set'
     ? { id: 'password', tone: 'good', text: '教师密码已设' }
-    : { id: 'password', tone: 'bad', text: '还没设教师密码', action: { id: 'settings', label: '去设置', title: '到平台 → 设置填教师密码', focus: 'TEACHER_PASSWORD' } });
+    : { id: 'password', tone: 'warn', text: '教师密码是默认的 123456', action: { id: 'settings', label: '去改', title: '到平台 → 设置换一个教师密码', focus: 'TEACHER_PASSWORD' } });
   const notice = checkNotice(o?.check);
   if (notice) rows.push({ id: 'check', tone: notice.tone, text: notice.text, action: { id: 'check-open', label: '查看', title: '看看是哪几处，可以复制给 AI 让它照着改' } });
   else if (o?.check) rows.push({ id: 'check', tone: 'good', text: '课程检查没有发现问题' });

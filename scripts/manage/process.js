@@ -5,7 +5,7 @@
 //     serverCommand 缺省用 kernel/server/index.js 的绝对路径（Windows 上据此认出本项目的平台进程）
 //     portOwner(port) → { pid, name, ours } | null；stopOwn(port, pid) → { ok, message? }（缺省为 port-owner.js 的实现，测试可注入）
 //     状态 stopped | building | starting | running | stopping；事件 'state'（status 对象）、'log' / 'build'（一行文本）
-//   启动顺序：读 .env（密码为空即失败）→ requires 检查（只提醒，G4）→ 端口探测 → 需要时构建 → spawn 平台 → 轮询 GET /api/roster ≤ 15 s
+//   启动顺序：读 .env（S14：密码永远不拦启动；万一为空按默认 123456 传给平台并记日志）→ requires 检查（只提醒，G4）→ 端口探测 → 需要时构建 → spawn 平台 → 轮询 GET /api/roster ≤ 15 s
 //   日志：stdout / stderr 写 data/logs/server.log（> 5 MB 改名为 .1 保留一份）并进内存环形缓冲（500 行）
 //   explainFailure(lines, port) / describeExit(code, signal) / portBusyError(port, owner, suggestPort)：纯函数，给教师看的一句话原因
 //   failMessage(kind, { what, seconds })：M3 审查，端口以外各类失败的一句话（不含原始报错、退出码、"构建"；原始信息只进 detail）
@@ -28,7 +28,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadComponents, lessonComponentsRootOf } from '../../kernel/server/component-loader.js';
-import { effectiveEnv, platformEnv } from './env-file.js';
+import { effectiveEnv, platformEnv, DEFAULT_PASSWORD } from './env-file.js';
 import { readLesson } from './lessons.js';
 import { lessonDbPath } from '../../kernel/server/lesson-db-path.js';
 import { needsBuild, build, pipeLines } from './build.js';
@@ -45,7 +45,6 @@ export function explainFailure(lines, port) {
   const text = (lines || []).join('\n');
   if (/EADDRINUSE/.test(text)) return `端口 ${port} 已被别的程序占用，换一个端口或关掉那个程序`;
   if (/EACCES/.test(text)) return `端口 ${port} 需要管理员权限，请改用 3001 或 8080`;
-  if (/TEACHER_PASSWORD/.test(text)) return '请先在设置里填写教师密码';
   return null;
 }
 
@@ -76,7 +75,6 @@ export const ENV_WARNING = 'Python 环境还没准备好，写程序的段上课
 export function failMessage(kind, { what, seconds, count } = {}) {
   switch (kind) {
     case 'no-lesson': return '还没有课程，先新建一门';
-    case 'password': return '请先在设置里填写教师密码';
     case 'lesson': return '这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试，或换一门课';
     case 'check': return `课程文件加载不了，平台起不来：有 ${count} 处要改；点"查看详情"看是哪几处，可以"复制给 AI"让它照着改`;
     case 'build': return `页面没能准备好，${SEND_LOG}`;
@@ -226,9 +224,13 @@ export function createPlatform({
     };
     const fileEnv = effectiveEnv(root);
     const port = Number(fileEnv.PORT);
-    // G3（管理台线性路径重设计规格 §2.4）：还没有课程（LESSON_CONFIG 空值）→ 不启动；线性路径第一步是新建课程，先于密码检查
+    // G3（管理台线性路径重设计规格 §2.4）：还没有课程（LESSON_CONFIG 空值）→ 不启动；线性路径第一步是新建课程
     if (!fileEnv.LESSON_CONFIG) return fail({ kind: 'no-lesson', message: failMessage('no-lesson') });
-    if (!fileEnv.TEACHER_PASSWORD) return fail({ kind: 'password', message: failMessage('password') });
+    // S14：密码永远不拦启动；万一仍为空（工作台启动时已补过）按默认 123456 启动并记日志
+    if (!fileEnv.TEACHER_PASSWORD) {
+      fileEnv.TEACHER_PASSWORD = DEFAULT_PASSWORD;
+      log(`[manage] 教师密码为空，按默认 ${DEFAULT_PASSWORD} 启动`);
+    }
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       return fail({ kind: 'port', message: `端口 ${fileEnv.PORT} 不对，请在设置里改成 1 到 65535 之间的整数` });
     }

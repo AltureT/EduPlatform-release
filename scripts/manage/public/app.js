@@ -471,7 +471,7 @@ function renderPlatform(p) {
   $('#p-error').hidden = !err;
   if (err) {
     setText('#p-error-msg', err.message);
-    // 没有专门详情时，只有运行 / 构建类失败才拿最近日志当详情（端口、密码类失败显示旧日志会误导）
+    // 没有专门详情时，只有运行 / 构建类失败才拿最近日志当详情（端口、没有课程类失败显示旧日志会误导）
     const fromLog = ['crash', 'build', 'timeout', 'internal'].includes(err.kind) ? logLines.slice(-20) : [];
     const detail = err.detail && err.detail.length ? err.detail : fromLog;
     setText('#p-error-detail', detail.join('\n') || '（没有更多信息）');
@@ -776,10 +776,13 @@ function showPasswordEdit(on) {
   renderPasswordState();
 }
 // 密码已设：只显示"已设置 · 改密码"，点开才出输入框（原向导第 1 步的交互）
+// S14：还是默认 123456 时按"没改过"处理——输入框直接打开，下面一句小字提醒改
 function renderPasswordState() {
-  const set = Boolean(overview?.setup?.passwordSet);
+  const s = overview?.setup ?? {};
+  const set = (s.password ?? (s.passwordSet ? 'set' : 'default')) === 'set';
   $('#pw-summary').hidden = !set || pwEditing;
   $('#pw-edit').hidden = set && !pwEditing;
+  $('#pw-default').hidden = set;
 }
 $('#pw-change').addEventListener('click', () => {
   showPasswordEdit(true);
