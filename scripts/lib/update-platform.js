@@ -31,7 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readZip, entryData, safeName } from './zip.js';
 import { downloadZip } from './runtime-zip.js';
-import { checkPlatformFiles, readVersionInfo, VERSION_FILE } from './platform-files.js';
+import { checkPlatformFiles, readVersionInfo, VERSION_FILE, LAUNCHER_FILES } from './platform-files.js';
 
 export const releaseZipName = (v) => `EduPlatform-v${v}.zip`;
 // download(v)：该来源发布页上同名资源的固定地址（查到的那边在前，另一边拼出来作备用）
@@ -62,6 +62,50 @@ export const SKIP = ['lessons/', 'data/', 'backups/', 'vendor/', 'node_modules/'
 // S10 班迹改名规格 §2.2：改名前的双击入口。平台目录里有、新包里没有 → 先备份（进 manifest.files）再删，回滚时随备份恢复
 export const LEGACY_FILES = ['管理台.command', '管理台.bat'];
 const TAG_RE = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+// S10 热修（v0.6.1）：由旧版本的更新脚本升到 0.6.0 时，旧脚本不认识 LEGACY_FILES 与新入口名——升级后旧入口还在、新 .command 没有执行权限。
+//   工作台每次启动调一次 fixupLaunchers(root)：① 根目录下受保护的 .command 入口补 0o755（非 win32）；
+//   ② 新入口在时，把还留着的旧入口挪到 backups/updates/legacy-launchers-<时间>/（不直接删，回滚也用得上）。
+//   → { chmod: [rel], moved: [rel], movedTo?: rel }；每一步出错只记日志不抛（启动不能因它失败）
+export function fixupLaunchers(root, { log = () => {}, now = new Date(), platform = process.platform, launchers = LAUNCHER_FILES } = {}) {
+  const out = { chmod: [], moved: [], movedTo: null };
+  if (platform !== 'win32') {
+    for (const rel of launchers) {
+      if (!rel.endsWith('.command')) continue;
+      const f = abs(root, rel);
+      try {
+        if (!isFile(f)) continue;
+        if ((fs.statSync(f).mode & 0o111) === 0) {
+          fs.chmodSync(f, 0o755);
+          out.chmod.push(rel);
+          log(`[update] 补上了 ${rel} 的执行权限`);
+        }
+      } catch (err) {
+        log(`[update] 补 ${rel} 的执行权限失败：${err?.message ?? err}`);
+      }
+    }
+  }
+  const hasNew = launchers.some((rel) => isFile(abs(root, rel)));
+  if (!hasNew) return out;
+  for (const rel of LEGACY_FILES) {
+    const f = abs(root, rel);
+    if (!isFile(f)) continue;
+    try {
+      if (!out.movedTo) {
+        let dirRel = `${UPDATES_DIR}/legacy-launchers-${stamp(now)}`;
+        for (let i = 2; exists(abs(root, dirRel)); i += 1) dirRel = `${UPDATES_DIR}/legacy-launchers-${stamp(now)}-${i}`;
+        fs.mkdirSync(abs(root, dirRel), { recursive: true });
+        out.movedTo = dirRel;
+      }
+      fs.renameSync(f, abs(root, `${out.movedTo}/${rel}`));
+      out.moved.push(rel);
+      log(`[update] 旧入口 ${rel} 已挪到 ${out.movedTo}/`);
+    } catch (err) {
+      log(`[update] 挪走旧入口 ${rel} 失败：${err?.message ?? err}`);
+    }
+  }
+  return out;
+}
 
 // 大小写不敏感（Mac / Windows 默认文件系统）：Lessons/ 与 lessons/ 是同一个目录
 export function isSkipped(rel) {

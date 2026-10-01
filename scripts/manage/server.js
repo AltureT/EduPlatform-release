@@ -62,7 +62,7 @@ import { parseAITest, runAITest } from './ai-test.js';
 import { parseAIModels, fetchModels } from './ai-models.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
 import {
-  checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, RELEASE_API, spaceShortage, downloadNeedBytes,
+  checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, fixupLaunchers, RELEASE_API, spaceShortage, downloadNeedBytes,
 } from '../lib/update-platform.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -199,6 +199,12 @@ export function createManageServer({
     if (r && (r.action === 'rolled-back' || r.action === 'failed')) recovered = { ok: r.ok, from: r.from, to: r.to, backupDir: r.backupDir, at: Date.now() };
   } catch (err) {
     log(`[manage] 检查上次更新是否完成时出错：${err?.message ?? err}`);
+  }
+  // v0.6.1 热修：旧版本的更新脚本升上来时不认识新入口名——补 .command 执行权限、把旧入口挪进 backups/updates/
+  try {
+    fixupLaunchers(root, { log });
+  } catch (err) {
+    log(`[manage] 整理双击入口时出错：${err?.message ?? err}`);
   }
   const updating = () => updateState.running || updateState.waitingExit;
   const blockedBy = () => exclusive ?? (updating() ? '正在更新平台，请稍候' : null);
