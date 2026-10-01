@@ -7,11 +7,16 @@
 //     按序查，每个来源 timeoutMs（默认 10 s），一个成功就停；latest 带 source（Gitee / GitHub）与 urls（查到的下载地址）
 //   validatePackage(buf, version, { maxTotal?, maxEntries? }) → { top, files: Map<相对路径, Buffer>, info }：
 //     唯一顶层目录、剥掉后无越界路径、版本.json 的 version 相符、protected 每项都在且 sha256 相符；不符抛 code = 'BAD_PACKAGE'
-//   applyUpdate({ root, zipFile, version, log, now, io?, afterWrite? }) → { code, backupDir?, message }：校验 → 备份 → 覆盖 → 验证，失败回滚
-//   runUpdate({ root, version, urls, fetch?, log, now, beforeApply?, protocols? }) → 同上：先下载（只允许 https:，边下边卡 50 MB；
+//   applyUpdate({ root, zipFile, version, log, now, io?, afterWrite?, statfs? }) → { code, backupDir?, message }：校验 → 查空间 → 备份 → 覆盖 → 验证，失败回滚
+//   runUpdate({ root, version, urls, size?, fetch?, log, now, beforeApply?, protocols?, statfs? }) → 同上：先查空间、再下载（只允许 https:，边下边卡 50 MB；
 //     第一个地址失败换下一个）再 applyUpdate；beforeApply() 在开始校验 / 备份 / 覆盖之前调用（命令行壳在这里屏蔽 Ctrl+C / 关窗口信号）
+//   S9 磁盘空间预检（更新容灾补强规格 §1.1）：freeBytes(root, statfs) → 可用字节 | null（取不到 = 不拦）；
+//     needBytesFor(pkg) = 解压总大小 × 3 + 20 MB（写入前）；downloadNeedBytes(size) = 包大小（没有按 50 MB）+ 20 MB（下载前，管理台起子进程前也用它）；
+//     spaceShortage(root, need, statfs) → null | diskFullMessage(差额)；statfs 可注入（测试不碰真实磁盘）
 //   备份目录的 manifest.json 带 done：写备份时 false，更新成功或回滚成功后 true；
-//   recoverInterruptedUpdate(root, { log, isAlive? }) → null | { ok, action, from, to, backupDir, errors, pid? }：最新一个备份 done === false 时——
+//   recoverInterruptedUpdate(root, { log, isAlive?, now? }) → null | { ok, action, from, to, backupDir, errors, pid? }：
+//     先清掉没有清单（或清单读不出）且已超过 10 分钟的备份目录（备份阶段被强杀留下的，平台文件还没动；S9 §1.2），它们不参与下面的判断；
+//     有清单的备份里最新一个 done === false 时——
 //     manifest 记的更新子进程 pid 还活着 → action 'running'，不动（ok: false）；
 //     平台文件已完好（checkPlatformFiles 无改动 / 缺失，例如教师已重新解压覆盖）→ action 'intact'，只把 done 标 true；
 //     否则按 manifest 回滚 → action 'rolled-back'（done 标 true）或 'failed'（ok: false，保留 done:false 下次再试）。
@@ -47,6 +52,8 @@ export const MAX_ENTRIES = 5000;
 export const KEEP_BACKUPS = 3;
 export const KEEP_ZIPS = 2;
 export const UPDATES_DIR = 'backups/updates';
+export const SPACE_MARGIN = 20e6;
+export const STALE_BACKUP_MS = 10 * 60 * 1000;
 export const EXIT = { OK: 0, ERROR: 1, DOWNLOAD: 2, BAD_PACKAGE: 3, ROLLED_BACK: 4, ROLLBACK_FAILED: 5 };
 // 包里有也不写、本机有也不删（末尾 / = 目录）
 export const SKIP = ['lessons/', 'data/', 'backups/', 'vendor/', 'node_modules/', 'dist/', '.env', '.env.local', '.manage.lock', '.teacher-secret'];
@@ -195,6 +202,34 @@ export function validatePackage(buf, version, { maxTotal = MAX_UNPACKED, maxEntr
   return { top, files, info };
 }
 
+// ===== S9 §1.1 磁盘空间预检 =====
+// 可用空间（字节）：statfs(root).bavail × bsize；取不到（老 Node、不支持的文件系统）→ null，调用方不拦
+export function freeBytes(root, statfs = fs.statfsSync) {
+  try {
+    const st = statfs(root);
+    const n = Number(st?.bavail) * Number(st?.bsize);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+// 写入前：备份一份、写入一份、临时 .updating 一份，再留 20 MB
+export function needBytesFor(pkg) {
+  let total = 0;
+  for (const b of pkg.files.values()) total += b.length;
+  return total * 3 + SPACE_MARGIN;
+}
+// 下载前：包大小（发布页没给就按上限 50 MB）+ 20 MB
+export function downloadNeedBytes(size) {
+  return (Number.isFinite(size) && size > 0 ? size : MAX_DOWNLOAD) + SPACE_MARGIN;
+}
+export const diskFullMessage = (shortBytes) => `磁盘空间不够：还需要约 ${Math.max(1, Math.ceil(shortBytes / 1e6))} MB，清理后再更新`;
+export function spaceShortage(root, need, statfs = fs.statfsSync) {
+  const free = freeBytes(root, statfs);
+  if (free === null || free >= need) return null;
+  return diskFullMessage(need - free);
+}
+
 // ===== 小工具 =====
 const pad = (n) => String(n).padStart(2, '0');
 const stamp = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
@@ -231,11 +266,11 @@ function pruneEmptyDirs(root, rel) {
   }
 }
 
-// dir 下名字匹配 re 的项，按 key 从新到旧，只留 keep 个（keepFirst 永远留）
-function pruneOld(dir, re, key, keep, keepFirst = null) {
+// dir 下名字匹配 re 的项，按 key 从新到旧，只留 keep 个（keepFirst 永远留）；counts(n) 为假的项不计数也不删
+function pruneOld(dir, re, key, keep, keepFirst = null, counts = () => true) {
   let names;
   try {
-    names = fs.readdirSync(dir).filter((n) => re.test(n));
+    names = fs.readdirSync(dir).filter((n) => re.test(n) && counts(n));
   } catch {
     return;
   }
@@ -311,6 +346,58 @@ function writeManifest(backupAbs, manifest) {
 
 const BACKUP_RE = /^before-v/;
 const backupKey = (n) => /(\d{8}-\d{6}(?:-\d+)?)$/.exec(n)?.[1] ?? '';
+// 备份目录的清单：没有、读不出（写到一半断电）或不是对象 → null（S9 §1.2：都当"无清单"）
+function readManifest(backupAbs) {
+  const m = readJson(path.join(backupAbs, 'manifest.json'));
+  return m && typeof m === 'object' && !Array.isArray(m) ? m : null;
+}
+
+// S9 §1.2：备份阶段被强杀会留下没有清单的 before-v… 目录（清单在全部文件拷完后才写，平台文件还没动，里面没有要恢复的东西）。
+//   超过 10 分钟的整个删掉（10 分钟内的可能正在备份，不动）；返回有清单的目录名与清单
+//   "多久没动过"取目录本身与它一层子项里最新的 mtime（往子目录里拷文件不会更新目录自己的 mtime）
+function newestMtime(dir, own) {
+  let newest = own;
+  let kids = [];
+  try {
+    kids = fs.readdirSync(dir);
+  } catch {
+    // 读不出就只看目录自己
+  }
+  for (const k of kids) {
+    try {
+      newest = Math.max(newest, fs.statSync(path.join(dir, k)).mtimeMs);
+    } catch {
+      // 刚被删 / 读不出：跳过
+    }
+  }
+  return newest;
+}
+function sweepBackups(updates, names, { log, now }) {
+  const valid = [];
+  for (const n of names) {
+    const dir = path.join(updates, n);
+    let st;
+    try {
+      st = fs.statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory()) continue;
+    const manifest = readManifest(dir);
+    if (manifest) {
+      valid.push({ n, manifest });
+      continue;
+    }
+    if (now() - newestMtime(dir, st.mtimeMs) < STALE_BACKUP_MS) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      log(`[update] 清掉了上次没做完的备份目录 ${n}`);
+    } catch {
+      // 删不掉下次再试
+    }
+  }
+  return valid;
+}
 
 // 管理台启动时：最新的备份 done === false → 覆盖中途被打断（Ctrl+C、关窗口、断电），按 manifest 回滚一次
 // pid 是否还活着：signal 0 只检查不发信号（Windows 同样可用）；EPERM = 活着但不是我们的
@@ -324,7 +411,7 @@ export function pidAlive(pid) {
   }
 }
 
-export function recoverInterruptedUpdate(root, { log = () => {}, isAlive = pidAlive } = {}) {
+export function recoverInterruptedUpdate(root, { log = () => {}, isAlive = pidAlive, now = Date.now } = {}) {
   const updates = path.join(root, ...UPDATES_DIR.split('/'));
   let names;
   try {
@@ -332,16 +419,13 @@ export function recoverInterruptedUpdate(root, { log = () => {}, isAlive = pidAl
   } catch {
     return null;
   }
-  const latest = names.sort((a, b) => (backupKey(a) < backupKey(b) ? 1 : backupKey(a) > backupKey(b) ? -1 : 0))[0];
-  if (!latest) return null;
+  // 无清单 / 坏清单的目录不参与"最新一个"的判断（不挡住更早的 done:false 备份）
+  const valid = sweepBackups(updates, names, { log, now });
+  valid.sort((a, b) => (backupKey(a.n) < backupKey(b.n) ? 1 : backupKey(a.n) > backupKey(b.n) ? -1 : 0));
+  if (!valid.length) return null;
+  const { n: latest, manifest } = valid[0];
   const backupAbs = path.join(updates, latest);
-  let manifest;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(backupAbs, 'manifest.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-  if (manifest?.done !== false || !Array.isArray(manifest.files) || !Array.isArray(manifest.added)) return null;
+  if (manifest.done !== false || !Array.isArray(manifest.files) || !Array.isArray(manifest.added)) return null;
   const backupDir = `${UPDATES_DIR}/${latest}`;
   const base = { from: manifest.from, to: manifest.to, backupDir, errors: [] };
   if (isAlive(manifest.pid)) {
@@ -367,7 +451,7 @@ export function recoverInterruptedUpdate(root, { log = () => {}, isAlive = pidAl
 
 // ===== §3 第 3–7 步 =====
 export function applyUpdate({
-  root, zipFile, version, log = () => {}, now = new Date(), io = {}, afterWrite = null,
+  root, zipFile, version, log = () => {}, now = new Date(), io = {}, afterWrite = null, statfs = io.statfs ?? fs.statfsSync,
 }) {
   const writeFile = io.writeFile ?? ((f, d) => fs.writeFileSync(f, d));
   const rename = io.rename ?? ((a, b) => fs.renameSync(a, b));
@@ -399,6 +483,12 @@ export function applyUpdate({
       log(message);
       return { code: EXIT.ERROR, message };
     }
+  }
+  // S9：空间不够 → 不开始备份，平台文件没动
+  const short = spaceShortage(root, needBytesFor(pkg), statfs);
+  if (short) {
+    log(short);
+    return { code: EXIT.ERROR, message: short };
   }
 
   // 第 3 步：备份
@@ -437,7 +527,7 @@ export function applyUpdate({
     log(`${message}（备份时出错：${err?.message ?? err}；平台文件没有改动）`);
     return { code: EXIT.ROLLED_BACK, message };
   }
-  pruneOld(updates, BACKUP_RE, backupKey, KEEP_BACKUPS, path.basename(backupAbs));
+  pruneOld(updates, BACKUP_RE, backupKey, KEEP_BACKUPS, path.basename(backupAbs), (n) => readManifest(path.join(updates, n)) !== null);
   log(`备份目录：${backupRel}`);
 
   // 第 4、5 步：覆盖 + 验证（失败回滚）
@@ -511,8 +601,8 @@ export function applyUpdate({
 
 // ===== 全流程：下载（第 1 步）+ applyUpdate =====
 export async function runUpdate({
-  root, version, urls, fetch: fetchImpl = globalThis.fetch, log = () => {}, now = new Date(), io, afterWrite, downloadOptions = {},
-  beforeApply = () => {}, protocols = ['https:'],
+  root, version, urls, size = null, fetch: fetchImpl = globalThis.fetch, log = () => {}, now = new Date(), io, afterWrite, downloadOptions = {},
+  beforeApply = () => {}, protocols = ['https:'], statfs = io?.statfs ?? fs.statfsSync,
 }) {
   if (!parseVersion(version)) {
     log(`版本号不对：${version}`);
@@ -528,6 +618,11 @@ export async function runUpdate({
   if (bad.length || urls.length === 0) {
     log(`下载地址不对（只允许 https）：${bad.join(' ') || '没有地址'}`);
     return { code: EXIT.ERROR, message: '下载地址不对' };
+  }
+  const short = spaceShortage(root, downloadNeedBytes(size), statfs);
+  if (short) {
+    log(short);
+    return { code: EXIT.DOWNLOAD, message: short };
   }
   const updates = path.join(root, ...UPDATES_DIR.split('/'));
   fs.mkdirSync(updates, { recursive: true });
@@ -558,5 +653,5 @@ export async function runUpdate({
     return { code: EXIT.BAD_PACKAGE, message };
   }
   beforeApply();
-  return applyUpdate({ root, zipFile: dest, version, log, now, io, afterWrite });
+  return applyUpdate({ root, zipFile: dest, version, log, now, io, afterWrite, statfs });
 }

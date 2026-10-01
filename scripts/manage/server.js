@@ -19,6 +19,7 @@
 //   R4（管理台更新规格 §2–§4）：POST /api/update/check → { current, dev, latest, checkedAt, error? }（Gitee → GitHub，结果写 data/update-check.json）；
 //     overview / settings 带 update: { current, dev, latest, checkedAt, running, result }（读缓存，不联网）；
 //     POST /api/update/apply { version } → 起 scripts/update-platform.mjs 子进程，逐行经 SSE update 事件广播，结束时 update { done, ok, code, version, backupDir?, tail }；
+//       起子进程前查磁盘空间（statfs 注入；包大小或 50 MB + 20 MB），不够 400"磁盘空间不够：还需要约 N MB，清理后再更新"（S9 更新容灾补强规格 §1.1）；发布页带包大小时传 --size；
 //     成功 → 1 s 后调 onUpdated(version)（index.js 停平台、释放锁、以退出码 75 退出，入口脚本重启管理台）；
 //     scheduleUpdateCheck({ delayMs })：启动静默检查（缓存不足 24 小时跳过，失败不写缓存）；fetch / updateSources / updateCommand 可注入（测试用）；
 //     创建时先 recoverInterruptedUpdate（上次更新覆盖到一半被打断 → 按备份恢复），结果放 update.recovered（首页提示）；
@@ -60,7 +61,9 @@ import { readUpload } from './upload.js';
 import { parseAITest, runAITest } from './ai-test.js';
 import { parseAIModels, fetchModels } from './ai-models.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
-import { checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, RELEASE_API } from '../lib/update-platform.js';
+import {
+  checkUpdate, currentVersion, compareVersions, recoverInterruptedUpdate, RELEASE_API, spaceShortage, downloadNeedBytes,
+} from '../lib/update-platform.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(HERE, 'public');
@@ -416,9 +419,13 @@ export function createManageServer({
     if (s !== 'stopped') throw userError('平台正在启动或停止，请稍候再试', 409);
     const latest = updateInfo().latest;
     if (!latest || typeof version !== 'string' || latest.version !== version) throw userError('要更新的版本不对，请重新检查更新', 409);
+    // S9（更新容灾补强规格 §1.1）：起子进程前查磁盘空间（与子进程下载前同一算法：包大小或 50 MB，再加 20 MB）
+    const short = spaceShortage(root, downloadNeedBytes(latest.size), statfs);
+    if (short) throw userError(short, 400);
     const urls = (Array.isArray(latest.urls) && latest.urls.length ? latest.urls : [latest.url]).filter((u) => typeof u === 'string' && u);
     const cmd = updateCommand ?? [process.execPath, path.join(root, 'scripts', 'update-platform.mjs')];
-    const args = [...cmd.slice(1), '--version', version, ...urls.flatMap((u) => ['--url', u]), '--root', root];
+    const size = Number.isInteger(latest.size) && latest.size > 0 ? ['--size', String(latest.size)] : [];
+    const args = [...cmd.slice(1), '--version', version, ...urls.flatMap((u) => ['--url', u]), ...size, '--root', root];
     const child = spawn(cmd[0], args, { cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     Object.assign(updateState, { running: true, child, lines: [], result: null });
     let backupDir = null;

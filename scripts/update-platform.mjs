@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 平台更新子进程（管理台更新规格 §3）：管理台"下载并更新"起它，逐行输出经 SSE 转给页面；也可手动运行
-// 用法：node scripts/update-platform.mjs --version <x.y.z> --url <地址1> [--url <地址2>] [--root <平台目录>]
+// 用法：node scripts/update-platform.mjs --version <x.y.z> --url <地址1> [--url <地址2>] [--size <包字节数>] [--root <平台目录>]
+//   --size：发布页登记的包大小，下载前查磁盘空间用（没有按 50 MB 算；更新容灾补强规格 §1.1）
 //       node scripts/update-platform.mjs --recover [--root <平台目录>]：手动检查上次更新是否被打断、需要时恢复到更新前
 //         （管理台打不开时由技术同事运行；逻辑同管理台启动时：更新程序还在跑 → 不动，退出 1；文件已完好 → 只记完成；否则按备份恢复，失败退出 5）
 //   下载到 backups/updates/EduPlatform-v<x.y.z>.zip → 校验 → 备份 → 覆盖 → 验证；失败自动恢复
@@ -18,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { runUpdate, recoverInterruptedUpdate, EXIT } from './lib/update-platform.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const USAGE = '用法：node scripts/update-platform.mjs --version <x.y.z> --url <地址> [--url <备用地址>] [--root <平台目录>]\n'
+const USAGE = '用法：node scripts/update-platform.mjs --version <x.y.z> --url <地址> [--url <备用地址>] [--size <包字节数>] [--root <平台目录>]\n'
   + '      node scripts/update-platform.mjs --recover [--root <平台目录>]';
 
 // 管理台先退出时（关窗口）不让写 stdout 的错误打断正在进行的覆盖 / 回滚
@@ -26,13 +27,14 @@ process.stdout.on('error', () => {});
 process.stderr.on('error', () => {});
 
 function parse(argv) {
-  const out = { version: null, urls: [], root: path.resolve(HERE, '..'), recover: false };
+  const out = { version: null, urls: [], size: null, root: path.resolve(HERE, '..'), recover: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     const v = argv[i + 1];
     if (a === '--version' && v) { out.version = v; i += 1; }
     else if (a === '--url' && v) { out.urls.push(v); i += 1; }
     else if (a === '--root' && v) { out.root = path.resolve(v); i += 1; }
+    else if (a === '--size' && /^\d+$/.test(v ?? '')) { out.size = Number(v); i += 1; }
     else if (a === '--recover') out.recover = true;
     else throw new Error(`不认识的参数：${a}`);
   }
@@ -88,7 +90,7 @@ const holdSignals = () => {
 };
 
 const r = await runUpdate({
-  root: args.root, version: args.version, urls: args.urls, log: (m) => console.log(m), now: new Date(),
+  root: args.root, version: args.version, urls: args.urls, size: args.size, log: (m) => console.log(m), now: new Date(),
   beforeApply: holdSignals,
   protocols: process.env.EDU_UPDATE_TEST_ALLOW_FILE === '1' ? ['https:', 'file:'] : ['https:'],
   ...testHooks,
