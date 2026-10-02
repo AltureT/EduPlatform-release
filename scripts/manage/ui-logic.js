@@ -321,10 +321,14 @@ export function lessonCardMeta(row) {
   return Number.isInteger(n) && n > 0 ? `${n} 个环节` : '还没有环节';
 }
 
-// S17（教案 PDF 抽文本与粘贴规格 §3）：读出了文字 → 字数 + 开头 60 字；PDF 读不出（扫描件 / 抽失败）→ 请传 Word 或粘贴；docx 读不出照旧
+// S17（教案 PDF 抽文本与粘贴规格 §3）：读出了文字 → 字数 + 开头 60 字；PDF 读不出 → 请传 Word 或粘贴；docx 读不出照旧
+// S20 §2：抽失败（textError）和"没有文字层"（扫描件）分两句；docx 抽失败也说"把排障文件发给 AI"
+//   有文本版（AI 按 §4 自己读出来写了 .txt）就照"已读出"说，不再提抽失败
 export function draftNote(draft) {
   if (!draft) return null;
+  if (draft.ext === '.pdf' && !draft.hasText && draft.textError) return { text: LESSON_TEXT.draftFailed, bad: true };
   if (draft.ext === '.pdf' && !draft.hasText) return { text: LESSON_TEXT.draftScanned, bad: true };
+  if (draft.ext === '.docx' && !draft.hasText && draft.textError) return { text: LESSON_TEXT.draftDocxFailed, bad: true };
   if (draft.ext === '.docx' && !draft.hasText) return { text: '已保存原稿，AI 读不了 Word 时请上传 txt 或 pdf', bad: true };
   if (draft.hasText && draft.chars > 0) {
     const head = String(draft.head ?? '');
@@ -519,7 +523,9 @@ export const LESSON_TEXT = {
   cardContinueTitle: '去当前该做的那一步',
   draftUploaded: (note) => `${note}，接着去做课`,
   draftRead: (n) => `已读出 ${n} 字`,
-  draftScanned: '这份 PDF 读不出文字（多半是扫描件）。请上传 Word 或文本，或在下面粘贴。',
+  draftScanned: '这份 PDF 没有文字层（多半是扫描件）。请上传 Word 或文本，或在下面粘贴。',
+  draftFailed: '平台没能读出这份 PDF 的文字（不是扫描件的问题）。可以在下面粘贴文字，或把"排障文件"发给 AI。',
+  draftDocxFailed: '平台没能读出这份 Word 的文字。可以在下面粘贴，或把"排障文件"发给 AI。',
   pasteEmpty: '框里还没有文字，先把教案粘进来',
   pasteTooBig: '文字太长了，粘贴不能超过 200 KB；请改成上传文件',
   draftGoSkip: '没有教案，跳过 → 去做课',

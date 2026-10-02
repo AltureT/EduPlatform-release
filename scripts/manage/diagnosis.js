@@ -2,6 +2,7 @@
 //   文件名 <yyyy-MM-dd>-<HHmmss>-<环节>.md（diagnosisName；同一秒同环节已有则加 -2、-3…）；只留最近 KEEP 份（-反馈.md 不算、不删）
 //   collectEnvironment(root, { env, lesson, platform, statfs, realpath, versions, version, files, manage, portOwner, networkShare }) → §1.3"环境"的数据
 //     S19：networkShare（server.js 启动后异步算的 network-share.js 结果，缺省 null）非空 → 环境一节多一行"平台文件夹在网络共享里：<path>"
+//     S20 §1：draft（server.js 传当前课的 findDraft 结果，缺省 null）textError 为真 → 当前课程一行后面多一行"教案原稿：<文件> · 抽文本失败：<原因>"
 //     （全部可注入；缺省读 root/.env、os、fs.statfsSync、fs.realpathSync.native、process.version / npm_config_user_agent、
 //      currentVersion、checkPlatformFiles）；secrets = .env 里敏感键的非空值（只用于脱敏，不写进文件）
 //   renderDiagnosis({ stage, phase, message, detail, environment, sections, now }) → Markdown；sections = [{ title, lines }]，
@@ -19,7 +20,7 @@ import { currentVersion } from '../lib/update-platform.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
 
 export const DIAG_DIR = '排障';
-export const STAGES = ['启动入口', '安装依赖', '工作台启动', '启动平台', '平台退出', '更新', '下载运行时'];
+export const STAGES = ['启动入口', '安装依赖', '工作台启动', '启动平台', '平台退出', '更新', '下载运行时', '教案抽文本'];
 export const KEEP = 20;
 export const MAX_BYTES = 256 * 1024;
 export const NAME_RE = /^\d{4}-\d{2}-\d{2}-\d{6}-[^/\\]+\.md$/;
@@ -101,6 +102,7 @@ export function collectEnvironment(root, {
   manage,
   portOwner,
   networkShare = null,
+  draft = null,
 } = {}) {
   const abs = path.resolve(root);
   let values = env;
@@ -167,6 +169,7 @@ export function collectEnvironment(root, {
     networkShare: networkShare ?? null,
     diskFree,
     lesson: lessonText,
+    draftError: draft?.textError ? { file: draft.file, message: draft.textErrorMessage ?? null } : null,
     hasEnv,
     env: envLines(values),
     manage: manage?.port ? `端口 ${manage.port}${manage.startedAt ? `；启动于 ${fmtTime(manage.startedAt)}` : ''}` : '未知',
@@ -186,6 +189,7 @@ function environmentLines(e) {
     ...(e.networkShare?.path ? [`- 平台文件夹在网络共享里：${e.networkShare.path}`] : []),
     `- 磁盘可用：${e.diskFree}`,
     `- 当前课程：${e.lesson}`,
+    ...(e.draftError ? [`- 教案原稿：${e.draftError.file} · 抽文本失败：${e.draftError.message ?? '（没有记下原因）'}`] : []),
     e.env?.length ? `- .env：\n${e.env.map((l) => `  - ${l}`).join('\n')}` : `- .env：${e.hasEnv === false ? '（没有 .env）' : '（空）'}`,
     `- 工作台：${e.manage}；平台端口：${e.platformPort}`,
   ];

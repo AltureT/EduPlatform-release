@@ -8,9 +8,11 @@
 //     文件名不取用户输入）；已有的原稿（任何扩展名，含 docx 抽出的 .txt）先改名 <原名>.bak；.docx 抽纯文本另存 .txt
 //     （docx-text.js：document.xml 解压后 > 30 MB 不抽；mammoth 在 worker 里跑，512 MB 内存上限、30 s 超时；失败 textError）
 //     S17：.pdf 同样在 worker 里抽（pdf-text.js：≤ 300 页、60 s、512 MB；失败 textError）；平均每页 < 20 字 → 扫描件，不写 .txt；
-//     每次保存把 { ext, scanned, textError } 写进 <课程目录>/.draft.json
-//   findDraft(dir) → { file, ext, hasText, chars, scanned, head } | null：chars = 文本版（.txt / .md）非空白字数，head = 开头 60 字
-//     （空白并成一个空格）；scanned 读 .draft.json，没有（S17 以前传的 PDF）就按 .txt 在不在推
+//     每次保存把 { ext, scanned, textError, textErrorMessage, at } 写进 <课程目录>/.draft.json
+//     S20 §1：抽文本出错时 textErrorMessage = 错误第一行（≤ 200 字），返回值也带上（server.js 记日志，排障文件"环境"一节写原因）
+//   findDraft(dir) → { file, ext, hasText, chars, scanned, head, textError, textErrorMessage } | null：chars = 文本版（.txt / .md）
+//     非空白字数，head = 开头 60 字（空白并成一个空格）；scanned 读 .draft.json，没有（S17 以前传的 PDF）就按 .txt 在不在推；
+//     textError / textErrorMessage 读 .draft.json（没有、或记的不是这个扩展名 → false / null）
 //   saveDraftText(dir, { text })（S17 §2）：教案页粘贴的文字 → 去首尾空白存成 教学设计原稿.md（旧原稿同样改名 .bak）；
 //     空的 400 emptyText、UTF-8 超过 200 KB 400 pasteTooBig；返回值与 saveDraft 同形
 //   openingText({ title, rel, draft })：复制给 AI 的开场话（规格 §4 句式；S14 末尾自证"工作台已经打开"）
@@ -160,13 +162,14 @@ export function findDraft(dir) {
     if (!has(ext)) continue;
     const textExt = EXTRACTED.includes(ext) ? '.txt' : ext;
     const hasText = has(textExt);
+    const meta = readMeta(dir);
+    const same = meta?.ext === ext;
     let scanned = false;
-    if (ext === '.pdf') {
-      const meta = readMeta(dir);
-      scanned = meta?.ext === '.pdf' && typeof meta.scanned === 'boolean' ? meta.scanned : !hasText;
-    }
+    if (ext === '.pdf') scanned = same && typeof meta.scanned === 'boolean' ? meta.scanned : !hasText;
+    const textError = same && meta.textError === true;
+    const textErrorMessage = textError && typeof meta.textErrorMessage === 'string' && meta.textErrorMessage !== '' ? meta.textErrorMessage : null;
     const { chars, head } = hasText ? textStats(draftFile(dir, textExt)) : { chars: 0, head: '' };
-    return { file: DRAFT_BASE + ext, ext, hasText, chars, scanned, head };
+    return { file: DRAFT_BASE + ext, ext, hasText, chars, scanned, head, textError, textErrorMessage };
   }
   return null;
 }
@@ -191,14 +194,20 @@ export async function saveDraft(dir, { filename, data }, { extractText = docxToT
   backupDrafts(dir);
   fs.writeFileSync(draftFile(dir, ext), data);
   let textError = false;
+  let textErrorMessage = null;
   let scanned = false;
+  // S20 §1：抽失败留下原因（错误第一行），不再吞掉
+  const failed = (err) => {
+    textError = true;
+    textErrorMessage = errorLine(err);
+  };
   if (ext === '.docx') {
     try {
       const text = await extractText(data);
       if (text.trim() === '') throw new Error('empty');
       fs.writeFileSync(draftFile(dir, '.txt'), text);
-    } catch {
-      textError = true;
+    } catch (err) {
+      failed(err);
     }
   } else if (ext === '.pdf') {
     try {
@@ -206,12 +215,18 @@ export async function saveDraft(dir, { filename, data }, { extractText = docxToT
       scanned = Boolean(r.scanned);
       // 扫描件不写 .txt：几个零散的字只会误导 AI
       if (!scanned) fs.writeFileSync(draftFile(dir, '.txt'), r.text);
-    } catch {
-      textError = true;
+    } catch (err) {
+      failed(err);
     }
   }
-  writeMeta(dir, { ext, scanned, textError });
-  return { draft: findDraft(dir), textError };
+  writeMeta(dir, { ext, scanned, textError, textErrorMessage, at: new Date().toISOString() });
+  return { draft: findDraft(dir), textError, textErrorMessage };
+}
+
+export const TEXT_ERROR_MAX = 200;
+function errorLine(err) {
+  const line = String(err?.message ?? err).split('\n')[0];
+  return Array.from(line).slice(0, TEXT_ERROR_MAX).join('');
 }
 
 // 旧原稿（任何扩展名）改名 .bak：不留下和新原稿对不上的文本版
@@ -228,7 +243,7 @@ export function saveDraftText(dir, { text } = {}) {
   if (Buffer.byteLength(t, 'utf8') > MAX_PASTE_BYTES) throw userError(MESSAGES.pasteTooBig, 400);
   backupDrafts(dir);
   fs.writeFileSync(draftFile(dir, '.md'), `${t}\n`);
-  writeMeta(dir, { ext: '.md', scanned: false, textError: false });
+  writeMeta(dir, { ext: '.md', scanned: false, textError: false, textErrorMessage: null, at: new Date().toISOString() });
   return { draft: findDraft(dir), textError: false };
 }
 
@@ -483,12 +498,13 @@ export function folderCommand(dir, platform = process.platform) {
 }
 
 // explorer 成功时退出码也常是 1，所以以"启动成功"为准
+// S20 §4b：Windows 不带 windowsHide——explorer 会继承"隐藏"的初始窗口状态，资源管理器开了却看不见（它是 GUI 程序，没有控制台窗口要藏）
 export function openFolder(dir, { platform = process.platform, spawnFn = spawn } = {}) {
   const { cmd, args } = folderCommand(dir, platform);
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawnFn(cmd, args, { stdio: 'ignore', windowsHide: true, detached: platform !== 'win32' });
+      child = spawnFn(cmd, args, { stdio: 'ignore', windowsHide: platform !== 'win32', detached: platform !== 'win32' });
     } catch {
       resolve(false);
       return;

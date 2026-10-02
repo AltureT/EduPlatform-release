@@ -228,7 +228,16 @@ export function createManageServer({
   let recovered = null;
   // S12：排障文件的环境里写工作台端口与启动时间（listen 后填端口）
   const manageInfo = { port: null, startedAt: Date.now() };
-  const diagEnv = (extra = {}) => collectEnvironment(root, { manage: manageInfo, networkShare, ...extra });
+  // S20 §1：当前课教案原稿抽文本失败 → 排障文件"环境"一节带上原因（读不出就不写）
+  const currentDraft = (lesson) => {
+    try {
+      const rel = lesson?.path ?? effectiveEnv(root).LESSON_CONFIG;
+      return rel ? lessonAdmin.findDraft(path.dirname(path.resolve(root, rel))) : null;
+    } catch {
+      return null;
+    }
+  };
+  const diagEnv = (extra = {}) => collectEnvironment(root, { manage: manageInfo, networkShare, draft: currentDraft(extra.lesson), ...extra });
   const diag = (opts) => {
     const r = writeDiagnosis(root, { ...opts, log });
     return r ? { file: r.file, at: Date.now() } : null;
@@ -722,6 +731,22 @@ export function createManageServer({
     const d = lessonAdmin.resolveLessonDir(root, req.params.scope, req.params.name, { mineOnly: lessonAdmin.MESSAGES.exampleNoUpload });
     const file = await readUpload(req, { maxBytes: maxDraftBytes });
     const r = await serial(() => lessonAdmin.saveDraft(d.abs, file));
+    // S20 §1：抽文本失败留下原因（工作台日志）＋写一份排障文件（环节"教案抽文本"，带这门课自己的原稿记录；写失败只记日志）
+    if (r.textError) {
+      const name = path.basename(String(file?.filename ?? ''));
+      const reason = r.textErrorMessage ?? '';
+      log(`[manage] 教案抽文本失败（${name}）：${reason}`);
+      try {
+        diag({
+          stage: '教案抽文本', message: `教案 ${name} 没能读出文字：${reason}`,
+          detail: [name, path.extname(name).toLowerCase(), `${file?.data?.length ?? 0} 字节`, reason],
+          environment: diagEnv({ draft: r.draft }),
+          sections: [],
+        });
+      } catch (err) {
+        log(`[manage] 排障文件没能写：${err?.message ?? err}`);
+      }
+    }
     res.json({ ok: true, ...r });
   });
   // S17：教案页粘贴的文字 { text } → 教学设计原稿.md（≤ 200 KB；示例课 403）
