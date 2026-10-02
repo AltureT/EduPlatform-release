@@ -1514,12 +1514,12 @@ async function uploadDraft(row, file, label) {
   }
 }
 
-// S17：保存后的提示——读出了文字"已读出 N 字，接着去做课"；读不出（扫描件等）原样说哪里不行
+// S17：保存后的提示——读出了文字"已读出 N 字，接着去做课"；S21：其它格式原样说"已保存 …，AI 做课时会自己读它"
 function draftSavedToast(draft) {
   const note = draftNote(draft);
   if (!note) return;
   const ok = !note.bad && draft.hasText && draft.chars > 0;
-  toast(note.bad ? note.text : LESSON_TEXT.draftUploaded(ok ? LESSON_TEXT.draftRead(draft.chars) : note.text), note.bad);
+  toast(ok ? LESSON_TEXT.draftUploaded(LESSON_TEXT.draftRead(draft.chars)) : note.text, note.bad);
 }
 
 // S17：粘贴教案文字 → 存成原稿（≤ 200 KB；空的不发）

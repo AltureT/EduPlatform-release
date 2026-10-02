@@ -294,11 +294,10 @@ export function logTail(lines, n = 20) {
 // ===== M4 课程列表（第 1 步）（发布包与课程管理规格 §4）：列表卡片的文案与按钮 =====
 //   lessonCardStatus(row)：状态一句话（示例课 / 还没开始设计 / 做到第 N 环 · 下一步：… · 已做好 d / t 段）
 //   lessonCardMeta(row)：环节数；draftNote(draft)：原稿提示（统一显示存盘后的固定名）；lessonCardOps(row)：这张卡有哪些按钮
-//   uploadCheck(file)：上传前在页面里先查扩展名与大小（服务端还会再查）
+//   uploadCheck(file)：上传前在页面里先查大小（服务端还会再查；S21 起任何格式都收）
 //   G3：课程列表（第 1 步）小卡只剩"继续 →"（当前课）/"设为当前课程""打开文件夹""删除这门课"；做课步骤与备课进度都在"用 AI 做课"页；lessonNextLead 见下
 //   LESSON_TEXT / lessonName(row)：课程列表（第 1 步） app.js 里的提示语（toast、确认框、标签），集中在这里过禁词测试
 //   M6：LESSON_TEXT 也收名单一节 / 数据页的提示语；lessonDataLine / lessonPickOptions / parseTabHash / migratedText 见 LESSON_TEXT 之后
-export const DRAFT_EXTS = ['.md', '.txt', '.docx', '.pdf'];
 export const MAX_DRAFT_BYTES = 20 * 1024 * 1024;
 
 export function lessonCardStatus(row) {
@@ -321,21 +320,16 @@ export function lessonCardMeta(row) {
   return Number.isInteger(n) && n > 0 ? `${n} 个环节` : '还没有环节';
 }
 
-// S17（教案 PDF 抽文本与粘贴规格 §3）：读出了文字 → 字数 + 开头 60 字；PDF 读不出 → 请传 Word 或粘贴；docx 读不出照旧
-// S20 §2：抽失败（textError）和"没有文字层"（扫描件）分两句；docx 抽失败也说"把排障文件发给 AI"
-//   有文本版（AI 按 §4 自己读出来写了 .txt）就照"已读出"说，不再提抽失败
+// S21（教案原稿交给 AI 工具规格 §2）：平台不读教案——有文字（.md / .txt 本身，或 AI / 老师留下的 .txt）→ 字数 + 开头 60 字；
+//   其它任何格式一律"已保存，AI 做课时会自己读它"（不说格式名，也不当坏消息）
 export function draftNote(draft) {
   if (!draft) return null;
-  if (draft.ext === '.pdf' && !draft.hasText && draft.textError) return { text: LESSON_TEXT.draftFailed, bad: true };
-  if (draft.ext === '.pdf' && !draft.hasText) return { text: LESSON_TEXT.draftScanned, bad: true };
-  if (draft.ext === '.docx' && !draft.hasText && draft.textError) return { text: LESSON_TEXT.draftDocxFailed, bad: true };
-  if (draft.ext === '.docx' && !draft.hasText) return { text: '已保存原稿，AI 读不了 Word 时请上传 txt 或 pdf', bad: true };
   if (draft.hasText && draft.chars > 0) {
     const head = String(draft.head ?? '');
     const more = draft.chars > head.replace(/\s+/g, '').length ? '…' : '';
     return { text: `${LESSON_TEXT.draftRead(draft.chars)}，AI 会读它。开头：${head}${more}`, bad: false };
   }
-  return { text: `已上传：${draft.file}`, bad: false };
+  return { text: LESSON_TEXT.draftSaved(draft.file), bad: false };
 }
 
 // G3（管理台线性路径重设计规格 §2.3.1）：当前课 → "继续 →"（去当前该做的那一步）+ 打开文件夹；
@@ -381,10 +375,6 @@ export function lessonNextLead(row) {
 }
 
 export function uploadCheck(file) {
-  const name = String(file?.name ?? '');
-  const dot = name.lastIndexOf('.');
-  const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
-  if (!DRAFT_EXTS.includes(ext)) return '只能上传 Word（.docx）、PDF、Markdown（.md）或纯文本（.txt）文件';
   if (Number(file?.size) > MAX_DRAFT_BYTES) return '文件太大了，教案不能超过 20 MB';
   return null;
 }
@@ -505,7 +495,7 @@ export const LESSON_TEXT = {
   guideOpeningStep: '复制开场话，贴给 AI',
   guideOpeningDesc: "把开场话贴进开发工具的对话框发送，之后照它的问题回答就行，它会一段一段和你把课定下来。做到哪一步，下面'备课进度'会同步更新；想改哪里，直接告诉它。",
   guideUpload: (hasDraft) => (hasDraft ? '重新上传教案' : '上传教案'),
-  guideUploadTitle: '选 Word、PDF、Markdown 或纯文本文件（20 MB 以内）；再次上传会替换，旧的自动留一份',
+  guideUploadTitle: '选你的教案文件（20 MB 以内）；再次上传会替换，旧的自动留一份',
   guideOpening: '复制开场话',
   guideOpeningTitle: '复制一段话，贴给帮你做课的 AI，它就知道从哪门课开始',
   guidePathTitle: '平台文件夹在电脑上的位置',
@@ -523,9 +513,7 @@ export const LESSON_TEXT = {
   cardContinueTitle: '去当前该做的那一步',
   draftUploaded: (note) => `${note}，接着去做课`,
   draftRead: (n) => `已读出 ${n} 字`,
-  draftScanned: '这份 PDF 没有文字层（多半是扫描件）。请上传 Word 或文本，或在下面粘贴。',
-  draftFailed: '平台没能读出这份 PDF 的文字（不是扫描件的问题）。可以在下面粘贴文字，或把"排障文件"发给 AI。',
-  draftDocxFailed: '平台没能读出这份 Word 的文字。可以在下面粘贴，或把"排障文件"发给 AI。',
+  draftSaved: (file) => `已保存 ${file}，AI 做课时会自己读它。AI 读不了时，把文字粘进下面的框。`,
   pasteEmpty: '框里还没有文字，先把教案粘进来',
   pasteTooBig: '文字太长了，粘贴不能超过 200 KB；请改成上传文件',
   draftGoSkip: '没有教案，跳过 → 去做课',
