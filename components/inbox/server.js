@@ -1,4 +1,4 @@
-// inbox 收件箱（规格 §3.3）：教师任一阶段开一道开放题，学生作答，只有教师能关
+// inbox 随堂一句话（规格 §3.3）：教师任一阶段开一道开放题，学生作答，只有教师能关
 // perClass = { open, question: { id, title, fields } | null, openedAt }
 // perStudent[name] = { [questionId]: { answers, at } }
 import { shape } from '#kernel/server/schema.js';
@@ -45,7 +45,7 @@ export function register(cctx) {
     shape({ questionId: 'string', answers: 'object' }),
     (socket, payload, actor) => {
       const cls = cctx.data.getClass() ?? {};
-      if (!cls.open || !cls.question) return cctx.reject(socket, '收件箱未开启');
+      if (!cls.open || !cls.question) return cctx.reject(socket, '随堂一句话未开启');
       const { question } = cls;
       if (payload.questionId !== question.id) return cctx.reject(socket, '题目已变更');
 

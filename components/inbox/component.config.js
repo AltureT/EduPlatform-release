@@ -1,1 +1,1 @@
-export default { id: 'inbox', label: '收件箱' };
+export default { id: 'inbox', label: '随堂一句话' };

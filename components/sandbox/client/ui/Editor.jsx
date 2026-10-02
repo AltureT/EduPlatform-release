@@ -6,7 +6,7 @@
 // - 补全：唯一候选就是当前词时不弹（否则打完 pass 停顿后回车会被补全吃掉）；文档内标识符与 extraCompletions 按名去重
 // - 输入法组字（isComposing / keyCode 229）期间不处理任何快捷键
 // - 受控：value 变化且与文档不同时以最小区间替换（不进撤销栈、不回调 onChange）；用户修改回调 onChange(新文本)
-// - ref 暴露 { indentMore, indentLess, focus }（平板工具栏 [→缩进] [←] 用）
+// - ref 暴露 { indentMore, indentLess, focus }（平板工具栏 [→缩进] [←] 用，触屏才有）
 // - 高度不由本组件决定：根元素 flex: 1 撑满父级（PyRunner 里是 <Split> 的一格）
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { Annotation, Compartment, EditorState, Prec, Transaction } from '@codemirror/state';

@@ -120,6 +120,25 @@ body {
   50%      { transform: scale(1.05); }
 }
 
+/* S22：窄屏抽屉从下滑入；学生端停靠面板列宽过渡（拖柄拖动时不过渡）；减少动态效果时都不动 */
+@keyframes slideUpIn {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.overlay-drawer-in {
+  animation: slideUpIn 200ms ease-out;
+}
+[data-student-body] {
+  transition: grid-template-columns 200ms ease-out;
+}
+[data-student-body][data-dock-dragging] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-drawer-in { animation: none; }
+  [data-student-body] { transition: none; }
+}
+
 /* 教师端投影字号：只在 .teacher-app 作用域内，不污染学生端 */
 .teacher-app {
   --base: clamp(20px, 2.4vw, 30px);

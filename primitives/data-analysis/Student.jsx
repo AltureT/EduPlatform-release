@@ -2,12 +2,14 @@
 //   "题目" Tile（按内容高完整显示）：题目正文 + "画的图会显示在输出区"（expectImage 时）+ 任务清单（_shared/TaskList，P6 与 code 共用：本地勾选，不采集；带 hint 的任务可展开"提示 ▾"只读代码块）；
 //   紧凑数据卡"数据 · 共 N 行 · M 列"：列名与前 3 行 +"查看全部数据"——打开 Overlay（dialog、fill），里面是全宽 DataPreview（筛选、三态排序、≤ 500 行渲染）；
 //          数据从服务端下发的 stage.sandbox.files[dataset.path] 解析，options.dataset 只有 { path, rows, columns }（数据内容在仅服务端选项 $server 里，不下发）；
-//   T9b（教师视图与学生页重排规格 §2.4）：宽屏"上交最终稿"放代码框下方工具栏最右（FinalSubmit compact 经 PyRunner 的 toolbarEnd），Side 底部不再放；
-//   窄屏：放 Page.Actions（折叠题目不会收掉）。只读（回看 / 镜像）时只留状态行（宽屏同样在 toolbarEnd）。
+//   T9b（教师视图与学生页重排规格 §2.4）：宽屏"上交最终稿"放代码框下方工具栏最右（经 PyRunner 的 toolbarEnd），Side 底部不再放；
+//   窄屏：放 Page.Actions（折叠题目不会收掉）。只读（回看 / 镜像）时不放按钮。
+//   S22（上课细节收口规格 §4）：状态只在操作条一枚 Chip（data-testid="final-status"，HH:MM）：没有记录"运行后自动保存"；
+//   有记录"已自动保存 HH:MM · 有图 / 无图"；已上交"已上交 HH:MM"（之后又运行过：" · 之后又运行过"，warn）；按钮三态见 FinalSubmit（dirty 同 code）。
 //   确认后发 student:data-final，载荷 = 当前代码 + 最近一次运行结果（代码在那次运行后改过则带 stale）。
 // Main 放 sandbox 的 <PyRunner>。每次运行结束自动用 buildRecord 发 student:data-submit（图 ≤ 1 张），以最后一次为准（自动记录）。
 // P5 回看（代码段布局与回看规格 §6）：原语缺省 reviewInteractive，回看段能滚动、勾选、看提示与全部数据、编辑、运行，但不发记录、不能上交；
-// 操作条第一个 Chip 为"回看 · 运行不记录"（镜像只读时不显示），已有记录时"已记录 …"仍在后面。
+// 操作条第一个 Chip 为"回看 · 运行不记录"（镜像只读时不显示），已有记录时状态 Chip 仍在后面。
 // P6（代码段教学功能规格 §2.3）：教师公布参考答案后（perClass.solution），Side 在题目 Tile 之后加"参考答案"面板（_shared/SolutionPanel，可放大）；撤回即消失。
 // 数据文件、starter、包来自 stage.sandbox（PyRunner 自己读）；只读态（镜像）由 PyRunner 处理。窄屏时 Side 在上、可折叠，Tile 不再重复"题目"标题。
 // P7（教师现场演示规格 §5）：班级记录有老师下发的代码（perClass.pushedCode）且本段是当前段、这次下发还没采用 → 操作条
@@ -22,7 +24,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, useNarrow, useDraft, Btn, Chip, Fill, Overlay, Page, Row, Stack, Tile } from '#kernel/client/index.js';
 import { PyRunner, buildRecord, usePython } from '@components/sandbox/index.js';
-import FinalSubmit, { finalRecord } from '../_shared/FinalSubmit.jsx';
+import FinalSubmit, { finalRecord, fmtHM } from '../_shared/FinalSubmit.jsx';
 import SolutionPanel from '../_shared/SolutionPanel.jsx';
 import TaskList from '../_shared/TaskList.jsx';
 import { PushedCodeOffer, usePushedCode } from '../_shared/PushedCode.jsx';
@@ -30,7 +32,6 @@ import DataPreview from './DataPreview.jsx';
 import { parseCsv } from './csv.js';
 import DemoRunner from '../_shared/DemoTools.jsx';
 
-const fmtTime = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
 const paragraphs = (text) => String(text ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
 // 编辑器补全里追加的 pandas / matplotlib 常用名
 const EXTRA_COMPLETIONS = [
@@ -73,6 +74,7 @@ export default function Student({ stageId } = {}) {
   const checked = useMemo(() => new Set(Array.isArray(checkedRaw) ? checkedRaw.filter((i) => Number.isInteger(i)) : []), [checkedRaw]);
   const runsBase = useRef(null);
   const lastRun = useRef(null);                   // 本页最近一次运行 { code, result }
+  const lastFinalCode = useRef(null);             // S22a：本页最近一次上交 { id, code }（推回来的 final 可能是摘要；外壳换段不换实例，只认本段 id）
   const [showAll, setShowAll] = useState(false);
   const recordCode = typeof myData?.final?.code === 'string' ? myData.final.code : (typeof myData?.code === 'string' ? myData.code : null);
   const code = draft ?? (typeof serverCode === 'string' ? serverCode : recordCode) ?? sandbox?.starter ?? '';
@@ -118,9 +120,16 @@ export default function Student({ stageId } = {}) {
   };
   const submitFinal = (payload) => {
     if (!isLive || !payload) return;
+    lastFinalCode.current = typeof payload.code === 'string' ? { id, code: payload.code } : null;
     send('student:data-final', payload);
   };
-  const finalProps = { finalAt: myData?.finalAt ?? null, prepare: prepareFinal, onConfirm: submitFinal, hideButton: !isLive || readOnly };
+  const finalAt = myData?.finalAt ?? null;
+  // 上交后推回来的 final 是摘要（K10，没有 code）：用本页记住的上交代码比；刷新后两者都没有时按没改过（Chip"之后又运行过"兜底）
+  const localFinal = lastFinalCode.current && lastFinalCode.current.id === id ? lastFinalCode.current.code : null;
+  const finalCode = localFinal ?? (typeof myData?.final?.code === 'string' ? myData.final.code : null);
+  const dirty = finalAt != null && finalCode != null && finalCode !== code;
+  const hideFinal = !isLive || readOnly;
+  const finalProps = { finalAt, dirty, prepare: prepareFinal, onConfirm: submitFinal, hideButton: hideFinal };
   const toggle = (i) => setCheckedList((prev) => {
     const list = Array.isArray(prev) ? prev : [];
     return list.includes(i) ? list.filter((x) => x !== i) : [...list, i].sort((a, b) => a - b);
@@ -134,6 +143,12 @@ export default function Student({ stageId } = {}) {
   const reviewing = !isLive && !readOnly;
   const tasks = options.tasks ?? [];
   const hasImg = Array.isArray(myData?.images) && myData.images.length > 0;
+  const ranAfter = finalAt != null && myData?.submittedAt != null && myData.submittedAt > finalAt;
+  const status = finalAt != null
+    ? <Chip tone={ranAfter ? 'warn' : 'good'} data-testid="final-status">{`已上交 ${fmtHM(finalAt)}${ranAfter ? ' · 之后又运行过' : ''}`}</Chip>
+    : myData?.submittedAt != null
+      ? <Chip tone={hasImg ? 'good' : 'warn'} data-testid="final-status">{`已自动保存 ${fmtHM(myData.submittedAt)} · ${hasImg ? '有图' : '无图'}`}</Chip>
+      : (reviewing ? null : <Chip tone="neutral" data-testid="final-status">运行后自动保存</Chip>);
   const total = table ? table.rows.length : Number(options.dataset?.rows) || 0;
   const dataTitle = `数据 · 共 ${total} 行 · ${table ? table.columns.length : 0} 列`;
 
@@ -197,7 +212,7 @@ export default function Student({ stageId } = {}) {
       <Page.Main>
         {sandbox && id ? (
           <PyRunner stageId={id} code={code} onChange={onCodeChange} onResult={onResult} onRestore={onRestore} extraCompletions={EXTRA_COMPLETIONS}
-            toolbarEnd={narrow ? undefined : <FinalSubmit {...finalProps} compact />}
+            toolbarEnd={narrow || hideFinal ? undefined : <FinalSubmit {...finalProps} />}
           />
         ) : (
           <div style={{ color: 'var(--ink-dim)' }}>正在准备运行环境…</div>
@@ -205,11 +220,9 @@ export default function Student({ stageId } = {}) {
       </Page.Main>
       <Page.Actions>
         {reviewing && <Chip>回看 · 运行不记录</Chip>}
-        {myData?.submittedAt != null
-          ? <Chip tone={hasImg ? 'good' : 'warn'}>已记录 {fmtTime(myData.submittedAt)} · {hasImg ? '有图' : '无图'}</Chip>
-          : (reviewing ? null : <Chip tone="neutral">运行后自动记录</Chip>)}
+        {status}
         <PushedCodeOffer offer={pushedCode.offer} running={running} onAdopt={adoptPushed} />
-        {narrow && <FinalSubmit {...finalProps} inline />}
+        {narrow && <FinalSubmit {...finalProps} />}
       </Page.Actions>
     </Page>
   );

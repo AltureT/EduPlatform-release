@@ -20,8 +20,12 @@
 // - T9b（教师视图与学生页重排规格 §2.4）：prop toolbarEnd（ReactNode）渲染在 data-sandbox-toolbar 那一行最右
 //   （<span data-sandbox-toolbar-end>，margin-left: auto；同时给了 extraButtons 时由 extraButtons 靠右、toolbarEnd 紧跟其后）；
 //   只读态（镜像）没有按钮，但给了 toolbarEnd 时 Split 下方照样有这一行、只放它（回看 / 镜像时的上交状态行用）
+// - S22（上课细节收口规格 §3）：[→缩进] [←] 只在触屏（pointer: coarse）时渲染；电脑上用 Tab / Shift+Tab
+// - S22 §6：prop stacked（缺省 false）——为真时代码在上、输出在下（按 3:2 分高），不随容器宽度变左右，比例键 sandbox:runner-stacked
+//   （SiteRunner 左块用）；只读态同样
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, registerKernelHook, Btn, Chip, Fill, Split, Row } from '#kernel/client/index.js';
+import { useMediaQuery } from '#kernel/client/layout/useNarrow.js';
 import { usePython } from '../usePython.js';
 import { getPythonClient } from '../pythonClient.js';
 import { useSandboxConfig } from '../stageConfig.js';
@@ -105,14 +109,20 @@ function chipOf(snap, elapsed) {
 // 左 / 上编辑器，右 / 下输出（<Fill scroll> 内部滚动）；工具栏 <Row> 在下方。只读态同样撑满，没有工具栏
 // P3：captions 时两块各在上方加一行小标题（--fs-sm、--ink-dim）
 const captionStyle = { flexShrink: 0, fontSize: 'var(--fs-sm)', color: 'var(--ink-dim)', fontWeight: 600, lineHeight: 1.4, paddingBottom: 'var(--sp-1)' };
-function Caption({ children }) {
+export function Caption({ children }) {
   return <div data-sandbox-caption="" style={captionStyle}>{children}</div>;
 }
 
-function Frame({ editor, output, controls, captions = true, outputCaption = '输出' }) {
+// S22 §6 stacked：stackAt 取一个任何屏幕都到不了的宽度，Split 就一直上下排（按 3:2 分高）
+const ALWAYS_STACK_AT = 100000;
+
+function Frame({ editor, output, controls, captions = true, outputCaption = '输出', stacked = false }) {
+  const splitProps = stacked
+    ? { stackAt: ALWAYS_STACK_AT, storageKey: 'sandbox:runner-stacked' }
+    : { storageKey: 'sandbox:runner' };
   return (
     <Fill data-sandbox-runner="">
-      <Split ratio="3:2" stack="ratio" stackBy="container" resizable storageKey="sandbox:runner">
+      <Split ratio="3:2" stack="ratio" stackBy="container" resizable {...splitProps}>
         {captions ? <Fill><Caption>代码</Caption>{editor}</Fill> : editor}
         {captions
           ? <Fill><Caption>{outputCaption}</Caption><Fill scroll>{output}</Fill></Fill>
@@ -135,13 +145,14 @@ function ToolbarEnd({ children, auto = true }) {
 
 // ---------- 只读 ----------
 
-function ReadOnlyRunner({ myData, captions, toolbarEnd }) {
+function ReadOnlyRunner({ myData, captions, toolbarEnd, stacked }) {
   const useDraft = !!(myData?.draft && myData.draft.at > (myData.submittedAt ?? 0));
   const rec = useDraft ? myData.draft : myData;
   const label = rec ? (useDraft ? '草稿' : '已提交') : undefined;
   return (
     <Frame
       captions={captions}
+      stacked={stacked}
       outputCaption={rec?.tests ? '测试结果' : '输出'}
       editor={<Editor value={rec?.code ?? ''} readOnly />}
       controls={toolbarEnd == null || toolbarEnd === false ? null : (
@@ -198,7 +209,7 @@ function InputLine({ prompt, onSend }) {
 
 // ---------- 可编辑 ----------
 
-function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, toolbarEnd, extraCompletions, captions = true }) {
+function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, starter: starterProp, onChange, draftEvent, onResult, onTest, onRestore, extraButtons, toolbarEnd, extraCompletions, captions = true, stacked = false }) {
   const c = useComponent('sandbox');
   const py = usePython();
   const client = getPythonClient();
@@ -492,16 +503,17 @@ function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, start
   const ready = py.status === 'ready';
   const showInput = owner && py.status === 'waiting-input';
 
-  // 缩进按钮按下时不抢焦点：焦点留在编辑器（平板软键盘不收起）
+  // 缩进按钮按下时不抢焦点：焦点留在编辑器（平板软键盘不收起）；S22 §3 只给触屏
   const keepFocus = (e) => e.preventDefault();
+  const touch = useMediaQuery('(pointer: coarse)');
   const controls = (
     <div data-sandbox-toolbar="" style={toolbarStyle}>
       <Row gap={2}>
         <Btn variant="primary" disabled={!ready} onClick={onRun}>▶ 运行</Btn>
         <Btn variant="ghost" disabled={!busy} onClick={() => client.stop()}>■ 停止</Btn>
         {hasTests && <Btn variant="soft" disabled={!ready} onClick={onTestClick}>🧪 测试</Btn>}
-        <Btn variant="soft" aria-label="增加缩进" onMouseDown={keepFocus} onClick={() => editorRef.current?.indentMore()}>→缩进</Btn>
-        <Btn variant="soft" aria-label="减少缩进" onMouseDown={keepFocus} onClick={() => editorRef.current?.indentLess()}>←</Btn>
+        {touch && <Btn variant="soft" aria-label="增加缩进" onMouseDown={keepFocus} onClick={() => editorRef.current?.indentMore()}>→缩进</Btn>}
+        {touch && <Btn variant="soft" aria-label="减少缩进" onMouseDown={keepFocus} onClick={() => editorRef.current?.indentLess()}>←</Btn>}
         <Chip tone={chipTone}>{chipText}</Chip>
         {py.status === 'failed' && (
           <>
@@ -529,6 +541,7 @@ function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, start
   return (
     <Frame
       captions={captions}
+      stacked={stacked}
       outputCaption={test ? '测试结果' : '输出'}
       editor={<Editor ref={editorRef} value={code} onChange={setCode} onRun={runFromKey} extraCompletions={extraCompletions} size={size} />}
       controls={controls}
@@ -543,6 +556,6 @@ function LiveRunner({ st, stageId, role = 'student', size, code: codeProp, start
 
 export default function PyRunner({ stageId, ...rest }) {
   const st = useStudentStage(stageId);
-  if (st.readOnly && rest.role !== 'teacher') return <ReadOnlyRunner myData={st.myData} captions={rest.captions !== false} toolbarEnd={rest.toolbarEnd} />;
+  if (st.readOnly && rest.role !== 'teacher') return <ReadOnlyRunner myData={st.myData} captions={rest.captions !== false} toolbarEnd={rest.toolbarEnd} stacked={!!rest.stacked} />;
   return <LiveRunner st={st} stageId={stageId} {...rest} />;
 }

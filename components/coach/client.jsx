@@ -1,7 +1,11 @@
 // coach 组件客户端（coach 组件规格 §3、§6、§12）
-// 学生端：studentBanner 一行"卡住了？… [问一下]"（本段 coach 为真、组件已配置、没在回看、老师没暂停时）；studentOverlay 是点"问一下"后的 drawer
-//   （说明、四个求助类型 Chip 单选、输入框 ≤ 500 字、发送、本段历史问答、还能问 N 次）。回答经组件数据到达（data.my.asks 最后一项），不另发事件。
-//   §12.1：缺省 think；本段没有 ok 回答时不显示 follow；follow 要写 ≥ 4 字才能发。§12.6：暂停时抽屉一行"老师暂停了 AI 助手"并禁用发送。
+// 学生端（S22 上课细节收口规格 §1、§2）：没有横幅。入口是 dockTab——本段 coach 为真、组件已配置、没在回看、老师没暂停时返回"问 AI"，
+//   由学生外壳画成内容区右边缘的小按钮，点它 openDock('coach')；宽屏开右侧停靠面板（studentDock），窄屏外壳不开面板，
+//   studentOverlay 在 coreStudentStore.dock === 'coach' 时弹 drawer（收起 / 点遮罩 = closeDock）。
+//   面板 / 抽屉同一个 CoachPanel，聊天式三块：顶行（说明 intro + "还能问 N 次"，抽屉另有"收起 ✕"）、消息流（按时间正序，每次提问
+//   一个学生气泡靠右 + 一个 AI 气泡靠左；没写问题时学生气泡显示求助类型；在途时末尾"AI 在想…"气泡；条数变化 / 进入在途时滚到底）、
+//   输入区（四个求助类型 Chip 单选一行；输入框 ≤ 500 字 + 发送一行；有提示时下面一行）。回答经组件数据到达（data.my.asks 最后一项），不另发事件。
+//   §12.1：缺省 think；本段没有 ok 回答时不显示 follow；follow 要写 ≥ 4 字才能发。§12.6：暂停时面板一行"老师暂停了 AI 助手"并禁用发送。
 //   draft：sandbox 编辑器草稿（localStorage，键由 draftKey 得到）；sandbox 没开或读不到就不带。
 // 教师端（T9a，教师视图与学生页重排规格 §2.1：状态不当按钮摆在操作条）：teacherToolbar 渲染 null；
 //   teacherPrelogin（课前页一行）：服务端判定未配置（perClass.enabled === false）时一句"AI 助手没配置，学生不会看到求助入口；…"，其它情况不渲染；
@@ -16,18 +20,19 @@
 //   教师侧栏："求助"上方一节"AI 看一遍"（本段有要求清单且 AI 已配置）：idle 两次确认发 coach:t-review start；
 //     running "已看 k/N" + 停止；done / stopped 每条要求一行计数，点开是"没做到 / 没法确认"名单，失败的单独一行，"再看一遍"。
 //     状态来自服务端只发教师的 coach:review-state（教师切片 reviews[stageId]），挂载时发 coach:t-review-get 取回；学生端不显示任何 review
-// T9b（教师视图与学生页重排规格 §2.5）：宽屏"问一下"→ useDock().openDock('coach')，内容在内核右侧停靠面板（slots.studentDock，
-//   dockTitle "AI 助手"；标题与 ✕ 由外壳画，面板里不再有"收起"）——原抽屉的内容（CoachPanel）原样搬进去；
-//   窄屏（useNarrow）照旧 setLocal({ open: true }) 开 studentOverlay 的 drawer。面板换段保持打开、内容按当前段；
+// T9b（教师视图与学生页重排规格 §2.5）：宽屏内容在内核右侧停靠面板（slots.studentDock，
+//   dockTitle "AI 助手"；标题与 ✕ 由外壳画，面板里不再有"收起"）；面板换段保持打开、内容按当前段；
 //   回看 / 本段没开 / 未配置时面板里一行提示（data-coach-dock-note），老师暂停时照旧是面板里的"老师暂停了 AI 助手"、发送禁用；
 //   镜像与教师端 studentDock 返回 null（内核也不渲染面板）
-import { useEffect, useState } from 'react';
-import { useComponent, useTeacherStage, useDraft, useDock, useNarrow, Btn, Chip, CodeView, ConfirmAdvanceBtn, GroupTag, Overlay, Row, Stack } from '#kernel/client/index.js';
+import { useEffect, useRef, useState } from 'react';
+import { useComponent, useTeacherStage, useDraft, useNarrow, Btn, Chip, CodeView, ConfirmAdvanceBtn, GroupTag, Overlay, Row } from '#kernel/client/index.js';
 import { draftKey, readDraft } from '#components/sandbox/client/ui/draftStorage.js';
 import { useCoachStage } from './stageConfig.js';
 import { codeSegments } from './codeLine.js';
 // C6 审查 2：教师端"已入会"信号（断线时 false，teacher:join-ok 后 true），重连后重取核对状态；公开入口没有这个信号
 import { coreTeacherStore } from '#kernel/client/stores/coreTeacherStore.js';
+// S22：窄屏抽屉的开关 = 外壳右边缘按钮写进的 coreStudentStore.dock（useDock().open 在窄屏恒为 null，公开入口拿不到）
+import { coreStudentStore } from '#kernel/client/stores/coreStudentStore.js';
 import { parseVerdicts, codeOf, reviewNames as reviewEntries } from './verdicts.js';
 
 const ID = 'coach';
@@ -62,7 +67,7 @@ export const REVIEW_POLL_MS = 15000;
 
 export const TEXT = Object.freeze({
   intro: '卡住了？可以问 AI 要个提示（只给提示，不给答案）',
-  ask: '问一下',
+  ask: '问 AI',
   hint: '说说你卡在哪（不说也行）',
   followHint: '上一条回答哪里没懂？至少写 4 个字',
   send: '发送',
@@ -84,7 +89,7 @@ export const TEXT = Object.freeze({
   pause: '暂停',
   resume: '恢复',
   pausedNote: '已暂停',
-  pauseHelp: '随堂测验时可暂停 AI 助手：暂停期间学生看不到"问一下"，恢复后照常',
+  pauseHelp: '随堂测验时可暂停 AI 助手：暂停期间学生看不到"问 AI"，恢复后照常',
   routeBackup: '备用线路',
   routeError: '接口异常',
   flag: '多次求助未通过',
@@ -253,20 +258,6 @@ export function askMeta(a) {
 
 // ---------- 学生端 ----------
 
-const bannerRow = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 'var(--sp-3)',
-  maxHeight: 'var(--control-h)',
-  padding: '0 var(--sp-4)',
-  background: 'var(--brand-soft)',
-  color: 'var(--ink)',
-  fontSize: 'var(--fs-sm)',
-  minWidth: 0,
-  overflow: 'hidden',
-};
-const ellipsis = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
-
 // 学生端可用：组件已配置、本段 coach 为真、没在回看（K5：useComponent().viewedStage.isLive）
 function useStudentCoach() {
   const c = useComponent(ID);
@@ -277,21 +268,11 @@ function useStudentCoach() {
   return { c, stageId, coach, ready, reviewing };
 }
 
-function StudentBanner() {
-  const { c, coach, ready } = useStudentCoach();
-  const narrow = useNarrow();
-  const dock = useDock();
+// S22：右边缘按钮里的文字（外壳画按钮、点它 openDock）；条件与原横幅一致，不满足返回 null（外壳不画）
+function DockTab() {
+  const { c, ready } = useStudentCoach();
   if (!ready || c.data.perClass?.paused === true) return null;
-  const text = coach.intro ?? TEXT.intro;
-  // T9b：宽屏开右侧面板，窄屏开 drawer
-  const onAsk = () => (narrow ? c.setLocal({ open: true }) : dock.openDock(ID));
-  const aria = narrow ? { 'aria-haspopup': 'dialog' } : { 'aria-expanded': dock.open === ID };
-  return (
-    <div data-coach-banner="" style={bannerRow}>
-      <span title={text} style={{ ...ellipsis, flex: '1 1 auto' }}>{text}</span>
-      <Btn size="sm" variant="primary" {...aria} onClick={onAsk}>{TEXT.ask}</Btn>
-    </div>
-  );
+  return TEXT.ask;
 }
 
 // 回答正文：有代码行时分段（文字段 pre-wrap，代码段 <CodeView>），外层是纵向 flex 的块；没有代码行时原样一个 <span>
@@ -310,7 +291,7 @@ export function AnswerText({ text, style }) {
 // C6：check 回答按条渲染（rows / rest 来自 parseVerdicts；调用方在解析不出任何一条时按普通回答显示）
 function VerdictList({ rows, rest, requirements }) {
   return (
-    <div data-coach-verdicts="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)', background: 'var(--surface-alt)', borderRadius: 'var(--radius-sm)', padding: 'var(--sp-2) var(--sp-3)' }}>
+    <div data-coach-verdicts="" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
       <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>{TEXT.checkNote}</span>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
         {rows.map((r) => (
@@ -328,22 +309,40 @@ function VerdictList({ rows, rest, requirements }) {
   );
 }
 
+// S22 §2：聊天气泡。学生靠右（--brand-soft，右下角小圆角），AI 靠左（--surface-alt，左下角小圆角），都不超过 85%
+const bubble = {
+  maxWidth: '85%',
+  padding: 'var(--sp-2) var(--sp-3)',
+  fontSize: 'var(--fs-md)',
+  lineHeight: 1.6,
+  color: 'var(--ink)',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  minWidth: 0,
+};
+const meBubble = { ...bubble, alignSelf: 'flex-end', background: 'var(--brand-soft)', borderRadius: 'var(--radius) var(--radius) var(--radius-sm) var(--radius)' };
+const aiBubble = { ...bubble, alignSelf: 'flex-start', background: 'var(--surface-alt)', borderRadius: 'var(--radius) var(--radius) var(--radius) var(--radius-sm)' };
+const dimText = { color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' };
+
 function AskItem({ a, requirements = [] }) {
   const failed = a.status !== 'ok';
   const parsed = !failed && a.kind === 'check' ? parseVerdicts(a.a, requirements.length) : null;
+  const question = a.q || KIND_LABEL[a.kind] || KIND_LABEL[DEFAULT_KIND];
   return (
-    <li data-coach-ask={a.status} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)', paddingBottom: 'var(--sp-2)', borderBottom: '1px solid var(--border)' }}>
-      <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{a.q || '（没写问题）'}</span>
-      {a.status === 'refused' ? (
-        <span style={{ color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{a.a}</span>
-      ) : failed ? (
-        <span style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)' }}>{a.status === 'limited' ? TEXT.limited : TEXT.failed}</span>
-      ) : parsed && parsed.rows.length > 0 ? (
-        <VerdictList rows={parsed.rows} rest={parsed.rest} requirements={requirements} />
-      ) : (
-        <AnswerText text={a.a} style={{ background: 'var(--surface-alt)', borderRadius: 'var(--radius-sm)', padding: 'var(--sp-2) var(--sp-3)', color: 'var(--ink)', fontSize: 'var(--fs-md)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} />
-      )}
-    </li>
+    <div data-coach-ask={a.status} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+      <div data-coach-q="" style={meBubble}>{question}</div>
+      <div data-coach-a="" style={aiBubble}>
+        {a.status === 'refused' ? (
+          <span style={{ color: 'var(--ink-soft)' }}>{a.a}</span>
+        ) : failed ? (
+          <span style={dimText}>{a.status === 'limited' ? TEXT.limited : TEXT.failed}</span>
+        ) : parsed && parsed.rows.length > 0 ? (
+          <VerdictList rows={parsed.rows} rest={parsed.rest} requirements={requirements} />
+        ) : (
+          <AnswerText text={a.a} />
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -373,8 +372,22 @@ function KindPicker({ kinds, value, onChange }) {
   );
 }
 
-// 抽屉 / 右侧面板共用的内容（T9b：原 Drawer 的内容原样搬出）；onClose 给了才显示自己的"收起"（面板的 ✕ 由外壳画）
-function CoachPanel({ c, stageId, coach, onClose }) {
+// 抽屉 / 右侧面板共用的内容（S22 §2 聊天式三块）；onClose 给了才显示自己的"收起"（面板的 ✕ 由外壳画）；
+// drawer：抽屉里没有撑满的高度，消息流按内容高、最多 40dvh
+const textareaStyle = {
+  flex: '1 1 auto',
+  minWidth: 0,
+  boxSizing: 'border-box',
+  padding: 'var(--sp-2)',
+  border: '1px solid var(--border-strong)',
+  borderRadius: 'var(--radius-sm)',
+  background: 'var(--surface)',
+  color: 'var(--ink)',
+  font: 'inherit',
+  fontSize: 'var(--fs-md)',
+  resize: 'none',
+};
+function CoachPanel({ c, stageId, coach, onClose, drawer = false }) {
   const rec = c.data.my;
   const limits = limitsOf(c.options);
   const paused = c.data.perClass?.paused === true;
@@ -414,6 +427,13 @@ function CoachPanel({ c, stageId, coach, onClose }) {
     return () => clearInterval(t);
   }, [wait > 0]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 条数变化或进入在途时滚到底
+  const threadRef = useRef(null);
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [asks.length, waiting]);
+
   const notice = paused ? studentNotice({ rec, stageId, limits, paused }) : waiting ? null : studentNotice({ rec, stageId, limits, now });
   const followShort = kind === 'follow' && Array.from(question.trim()).length < FOLLOW_MIN;
   const canSend = !paused && !waiting && left > 0 && wait <= 0 && !followShort;
@@ -428,56 +448,54 @@ function CoachPanel({ c, stageId, coach, onClose }) {
     clearQuestion();
   };
 
+  const placeholder = kind === 'check' ? TEXT.checkHint : kind === 'follow' ? TEXT.followHint : TEXT.hint;
+  const threadStyle = drawer
+    ? { flex: '0 1 auto', maxHeight: '40dvh' }   // check-ui-ignore-line 规格 S22 §2：抽屉里消息流最多 40dvh
+    : { flex: '1 1 0' };
   return (
-    <div data-coach-panel="" style={{ width: '100%', maxWidth: 720, marginLeft: 'auto', marginRight: 'auto', textAlign: 'left', color: 'var(--ink)' }}>
-      <Stack gap={3}>
-        <Row gap={2} wrap={false}>
-          <span data-coach-hint="" style={{ flex: 1, minWidth: 0, color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)' }}>{kind === 'follow' ? TEXT.followHint : kind === 'check' ? TEXT.checkHint : TEXT.hint}</span>
-          <Chip tone={left > 0 ? 'brand' : 'warn'}><span data-coach-left="">{TEXT.remaining(left)}</span></Chip>
-          {onClose && <Btn variant="ghost" aria-label="收起" onClick={onClose}>✕</Btn>}
-        </Row>
+    <div data-coach-panel="" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 'var(--sp-3)', color: 'var(--ink)' }}>
+      <div data-coach-top="" style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', flexShrink: 0 }}>
+        <span data-coach-intro="" style={{ flex: '1 1 auto', minWidth: 0, color: 'var(--ink-soft)', fontSize: 'var(--fs-sm)', lineHeight: 1.5 }}>{coach?.intro ?? TEXT.intro}</span>
+        <Chip tone={left > 0 ? 'brand' : 'warn'}><span data-coach-left="">{TEXT.remaining(left)}</span></Chip>
+        {onClose && <Btn variant="ghost" aria-label="收起" onClick={onClose}>✕</Btn>}
+      </div>
+      <div
+        ref={threadRef}
+        data-coach-thread=""
+        style={{ ...threadStyle, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}
+      >
+        {asks.map((a, i) => <AskItem key={a.id ?? i} a={a} requirements={requirements} />)}
+        {waiting && <div data-coach-pending="" style={{ ...aiBubble, color: 'var(--ink-soft)' }}>{TEXT.thinking}</div>}
+      </div>
+      <div data-coach-input="" style={{ flexShrink: 0, borderTop: '1px solid var(--border)', paddingTop: 'var(--sp-2)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
         <KindPicker kinds={kinds} value={kind} onChange={setPicked} />
-        <textarea
-          value={question}
-          maxLength={QUESTION_MAX}
-          rows={3}
-          aria-label="你的问题"
-          placeholder={kind === 'check' ? TEXT.checkHint : undefined}
-          onChange={(e) => setQuestion(e.target.value)}
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            padding: 'var(--sp-2)',
-            border: '1px solid var(--border-strong)',
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--surface)',
-            color: 'var(--ink)',
-            font: 'inherit',
-            fontSize: 'var(--fs-md)',
-            resize: 'vertical',
-          }}
-        />
-        <Row gap={2} wrap={false}>
-          <span data-coach-notice="" style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-sm)', color: notice?.tone === 'bad' ? 'var(--bad)' : notice?.tone === 'warn' ? 'var(--warn)' : 'var(--ink-soft)' }}>
-            {notice?.text ?? ''}
-          </span>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 'var(--sp-2)' }}>
+          <textarea
+            value={question}
+            maxLength={QUESTION_MAX}
+            rows={2}
+            aria-label="你的问题"
+            placeholder={placeholder}
+            onChange={(e) => setQuestion(e.target.value)}
+            style={textareaStyle}
+          />
           <Btn variant="primary" disabled={!canSend} onClick={send}>{waiting ? TEXT.thinking : TEXT.send}</Btn>
-        </Row>
-        {asks.length > 0 && (
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-            {[...asks].reverse().map((a, i) => <AskItem key={a.id ?? i} a={a} requirements={requirements} />)}
-          </ul>
+        </div>
+        {notice?.text && (
+          <span data-coach-notice="" style={{ fontSize: 'var(--fs-sm)', color: notice.tone === 'bad' ? 'var(--bad)' : notice.tone === 'warn' ? 'var(--warn)' : 'var(--ink-soft)' }}>
+            {notice.text}
+          </span>
         )}
-      </Stack>
+      </div>
     </div>
   );
 }
 
 function Drawer({ c, stageId, coach }) {
-  const close = () => c.setLocal({ open: false });
+  const close = () => coreStudentStore.getState().closeDock();
   return (
     <Overlay variant="drawer" label="问 AI 要个提示" testId="coach-drawer" onDismiss={close}>
-      <CoachPanel c={c} stageId={stageId} coach={coach} onClose={close} />
+      <CoachPanel c={c} stageId={stageId} coach={coach} onClose={close} drawer />
     </Overlay>
   );
 }
@@ -497,14 +515,16 @@ function StudentDock() {
   return note ? <div data-coach-dock-note="" style={dockNote}>{note}</div> : null;
 }
 
+// S22：窄屏抽屉——外壳右边缘按钮 openDock('coach') 后（窄屏不开面板）弹出；宽屏不弹（面板在外壳里）
 function StudentOverlay() {
   const { c, stageId, coach, ready, reviewing } = useStudentCoach();
-  const open = Boolean(c.slice?.open);
-  const { setLocal } = c;
+  const narrow = useNarrow();
+  const dockId = coreStudentStore((st) => st.dock);
+  const open = c.role === 'student' && narrow && dockId === ID;
   // 回看时关掉抽屉（回到当前段不自动再开）
   useEffect(() => {
-    if (reviewing && open) setLocal({ open: false });
-  }, [reviewing, open, setLocal]);
+    if (reviewing && open) coreStudentStore.getState().closeDock();
+  }, [reviewing, open]);
   if (!ready || !open) return null;
   return <Drawer c={c} stageId={stageId} coach={coach} />;
 }
@@ -800,16 +820,16 @@ function TeacherSidebar({ stageId }) {
 
 export default {
   slots: {
-    studentBanner: StudentBanner,
     studentOverlay: StudentOverlay,
     studentDock: StudentDock,
+    dockTab: DockTab,
     dockTitle: TEXT.label,
     teacherToolbar: TeacherToolbar,
     teacherSidebar: TeacherSidebar,
     teacherPrelogin: TeacherPrelogin,
   },
   store: {
-    student: { initial: { open: false, pending: null }, on: {} },
+    student: { initial: { pending: null }, on: {} },
     // C6：coach:review-state（服务端只发教师）→ reviews[stageId]；classroom:reset 回 initial
     teacher: {
       initial: { reviews: {} },

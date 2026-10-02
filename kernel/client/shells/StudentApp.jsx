@@ -10,6 +10,12 @@
 //   两列之间一条拖柄（role="separator"，data-dock-gutter）。面板宽 --dock-w 缺省 360 px，拖动 / ← → 调 280–520，
 //   按课记 localStorage['dock-w:<lessonId>']，双击恢复缺省。打开状态 = coreStudentStore.dock（useDock()）；窄屏不渲染面板。
 //   没有任何提供者时不包这一层（未开组件时外壳 DOM 不变）；有提供者时开关面板只改列模板，左列不重新挂载
+// S22（上课细节收口规格 §1）：网格恒为三列 minmax(0, 1fr) auto <0px | var(--dock-w)>，第三列宽度过渡 200 ms（global.css 的
+//   [data-student-body]；prefers-reduced-motion 下、拖柄拖动时 data-dock-dragging 下没有过渡），面板 <aside> overflow: hidden；
+//   关闭后等过渡结束（transitionend，没有事件时 200 ms 兜底）再卸载面板。面板关着时，每个有 dockTab 内容的提供者在
+//   内容区（position: relative）右边缘垂直居中画一个 <button data-dock-tab={id}>（纵向排），点它 openDock(id)。
+//   窄屏同样画（S22a 偏差：规格只写了宽屏，窄屏去掉横幅后没有别的入口）——窄屏不渲染面板，组件看 dock 自己开 drawer；
+//   store 里 dock 指向某个提供者时（宽屏 = 面板开着，窄屏 = 该组件的抽屉开着）不画
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { coreStudentStore } from '../stores/coreStudentStore.js';
 import { assembleStages } from '../stores/stageStores.js';
@@ -22,7 +28,7 @@ import Brand from './Brand.jsx';
 import StudentLogin from './StudentLogin.jsx';
 import Curtain from './Curtain.jsx';
 import { useLessonChrome } from './useLessonChrome.js';
-import { ComponentSlot, DockSlot, useStudentBanner, useStudentDockProviders } from './ComponentSlots.jsx';
+import { ComponentSlot, DockSlot, DockTabButton, useStudentBanner, useStudentDockProviders } from './ComponentSlots.jsx';
 import Btn from '../ui/Btn.jsx';
 import { KernelRoleContext } from '../hooks/roleContext.js';
 
@@ -98,7 +104,7 @@ function useDockWidth(lessonId) {
 }
 
 // 面板左边的拖柄：往左拖加宽（面板在右）；← 加宽、→ 变窄；双击恢复缺省
-function DockGutter({ w, onDrag, onCommit, onReset }) {
+function DockGutter({ w, onDrag, onCommit, onReset, onDragging }) {
   const drag = useRef(null);   // { x, w, last, moved }
   const [hot, setHot] = useState(false);
   const onPointerDown = (e) => {
@@ -111,6 +117,7 @@ function DockGutter({ w, onDrag, onCommit, onReset }) {
     }
     drag.current = { x: e.clientX, w, last: w, moved: false };
     setHot(true);
+    onDragging?.(true);
   };
   const onPointerMove = (e) => {
     const d = drag.current;
@@ -126,6 +133,7 @@ function DockGutter({ w, onDrag, onCommit, onReset }) {
     if (!d) return;
     drag.current = null;
     setHot(false);
+    onDragging?.(false);
     if (d.moved) onCommit(d.last);
   };
   const onKeyDown = (e) => {
@@ -183,18 +191,50 @@ const dockHeadStyle = {
   color: 'var(--ink)',
 };
 
+// S22：面板打开立即挂载；关闭后等网格列过渡结束（transitionend grid-template-columns）或 200 ms 兜底再卸载；关闭途中又打开则不卸载
+const DOCK_ANIM_MS = 200;
+function useDelayedDock(openId) {
+  const [shown, setShown] = useState(openId);
+  const timer = useRef(null);
+  const clear = () => {
+    if (timer.current != null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+  useEffect(() => {
+    if (openId != null) {
+      clear();
+      setShown(openId);
+      return undefined;
+    }
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setShown(null);
+    }, DOCK_ANIM_MS);
+    return clear;
+  }, [openId]);
+  const onTransitionEnd = (e) => {
+    if (openId != null || e.target !== e.currentTarget) return;
+    if (e.propertyName && e.propertyName !== 'grid-template-columns') return;
+    clear();
+    setShown(null);
+  };
+  return [openId ?? shown, onTransitionEnd];
+}
+
 function DockPanel({ provider, onClose }) {
   return (
     <aside
       data-student-dock={provider.id}
       aria-label={provider.title}
-      style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}
+      style={{ minWidth: 0, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}
     >
       <div data-dock-head="" style={dockHeadStyle}>
         <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{provider.title}</span>
         <Btn variant="ghost" size="sm" aria-label="关闭" onClick={onClose}>✕</Btn>
       </div>
-      <div data-dock-body="" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto', padding: 'var(--sp-3)' }}>
+      <div data-dock-body="" style={{ flex: '1 1 0%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 'var(--sp-3)' }}>
         <DockSlot provider={provider} />
       </div>
     </aside>
@@ -227,8 +267,12 @@ function StudentShell() {
   const closeDock = coreStudentStore((s) => s.closeDock);
   const narrow = useNarrow();
   const componentBanner = useStudentBanner();
+  const openDock = coreStudentStore((s) => s.openDock);
   const dockProviders = useStudentDockProviders();
   const dockW = useDockWidth(lesson.id ?? null);
+  const activeDock = !narrow && dock ? dockProviders.find((p) => p.id === dock) ?? null : null;
+  const [shownDockId, onBodyTransitionEnd] = useDelayedDock(activeDock?.id ?? null);
+  const [dockDragging, setDockDragging] = useState(false);
   const [liveSink] = useState(createActionSink);
   const [reviewSink] = useState(createActionSink);
 
@@ -344,17 +388,23 @@ function StudentShell() {
     </>
   );
 
-  // T9b：有 studentDock 提供者才包两列网格；窄屏不渲染面板
-  const activeDock = !narrow && dock ? dockProviders.find((p) => p.id === dock) ?? null : null;
+  // T9b：有 studentDock 提供者才包网格；窄屏不渲染面板。S22：关闭后 shownDock 留到过渡结束再卸载
+  const shownDock = !narrow && shownDockId ? dockProviders.find((p) => p.id === shownDockId) ?? null : null;
+  // 面板还在显示（含关闭过渡的 200 ms）或窄屏抽屉开着时不画按钮
+  const tabBlocker = shownDockId ?? dock;
+  const tabProviders = dockProviders.some((p) => p.id === tabBlocker) ? [] : dockProviders.filter((p) => p.Tab);
   const content = dockProviders.length === 0 ? panes : (
     <div
       data-student-body=""
+      data-dock-dragging={dockDragging ? '' : undefined}
+      onTransitionEnd={onBodyTransitionEnd}
       style={{
+        position: 'relative',
         flex: '1 1 0%',
         minHeight: 0,
         minWidth: 0,
         display: 'grid',
-        gridTemplateColumns: activeDock ? 'minmax(0, 1fr) auto var(--dock-w)' : 'minmax(0, 1fr)',
+        gridTemplateColumns: activeDock ? 'minmax(0, 1fr) auto var(--dock-w)' : 'minmax(0, 1fr) auto 0px',
         gridTemplateRows: 'minmax(0, 1fr)',
         '--dock-w': `${dockW.w}px`,
       }}
@@ -362,8 +412,16 @@ function StudentShell() {
       <div data-student-stage="" style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {panes}
       </div>
-      {activeDock && <DockGutter w={dockW.w} onDrag={dockW.setW} onCommit={dockW.commit} onReset={dockW.reset} />}
-      {activeDock && <DockPanel key={activeDock.id} provider={activeDock} onClose={closeDock} />}
+      {shownDock && <DockGutter w={dockW.w} onDrag={dockW.setW} onCommit={dockW.commit} onReset={dockW.reset} onDragging={setDockDragging} />}
+      {shownDock && <DockPanel key={shownDock.id} provider={shownDock} onClose={closeDock} />}
+      {tabProviders.length > 0 && (
+        <div
+          data-dock-tabs=""
+          style={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', zIndex: 5, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--sp-2)' }}
+        >
+          {tabProviders.map((p) => <DockTabButton key={p.id} provider={p} onOpen={openDock} />)}
+        </div>
+      )}
     </div>
   );
 

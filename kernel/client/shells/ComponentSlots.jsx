@@ -90,15 +90,49 @@ export function TeacherPreloginRows() {
   });
 }
 
-// T9b（教师视图与学生页重排规格 §2.5）：studentDock 提供者 → [{ id, title, Dock }]（title = slots.dockTitle，缺省组件 label、再缺省 id）。
-// 学生外壳据此决定内容区是否用两列网格（有提供者才包，未开组件时 DOM 不变）、渲染哪个面板
+// T9b（教师视图与学生页重排规格 §2.5）：studentDock 提供者 → [{ id, title, Dock, Tab }]（title = slots.dockTitle，缺省组件 label、再缺省 id；
+// S22：Tab = slots.dockTab，没有时 null）。学生外壳据此决定内容区是否用网格（有提供者才包，未开组件时 DOM 不变）、渲染哪个面板与右边缘按钮
 export function useStudentDockProviders() {
   const components = useOpenComponents('student');
   return useMemo(() => slotProviders(components, 'studentDock').map((c) => ({
     id: c.id,
     title: typeof c.slots.dockTitle === 'string' && c.slots.dockTitle ? c.slots.dockTitle : (c.label || c.id),
     Dock: c.slots.studentDock,
+    Tab: typeof c.slots.dockTab === 'function' ? c.slots.dockTab : null,
   })), [components]);
+}
+
+// S22（上课细节收口规格 §1）：右边缘按钮。dockTab 返回按钮里的内容，返回 null（或 false / ''）则不画按钮。
+// 要先知道返回值才能决定画不画，所以这里把 dockTab 当作本组件的一段渲染逻辑直接调用（它的 hooks 归本组件，调用顺序不变）
+const tabStyle = {
+  border: 'none',
+  borderRadius: 'var(--radius) 0 0 var(--radius)',
+  background: 'var(--brand)',
+  color: '#fff',
+  boxShadow: 'var(--shadow)',
+  padding: 'var(--sp-2) var(--sp-3)',
+  fontSize: 'var(--fs-sm)',
+  fontWeight: 500,
+  fontFamily: 'inherit',
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
+};
+function DockTabInner({ provider, onOpen }) {
+  const content = provider.Tab();
+  if (content == null || content === false || content === '') return null;
+  return (
+    <button type="button" data-dock-tab={provider.id} aria-expanded="false" style={tabStyle} onClick={() => onOpen(provider.id)}>
+      {content}
+    </button>
+  );
+}
+export function DockTabButton({ provider, onOpen }) {
+  if (!provider.Tab) return null;
+  return (
+    <SlotBoundary id={provider.id} slot="dockTab">
+      <DockTabInner provider={provider} onOpen={onOpen} />
+    </SlotBoundary>
+  );
 }
 
 // 面板内容：包一层错误边界（抛错只记日志、面板内容为空）

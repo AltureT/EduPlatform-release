@@ -3,7 +3,7 @@
 // variant：
 //   dialog（缺省）居中、最大宽 520、文字居中（登录确认、释放绑定等）
 //   panel  居中、最大宽 1100（详情弹窗）
-//   drawer 贴底的抽屉（教师统计侧栏在 narrow 时）
+//   drawer 贴底的抽屉（教师统计侧栏在 narrow 时）；S22：盒子带 overlay-drawer-in 类，打开时 slideUpIn 200 ms（global.css，减少动态效果时不动）
 //   menu   贴顶的下拉（narrow 时的阶段导航 / 步骤条）
 // U4（契约 v0.7.2 §十）：
 // - portal 挂到 document.body（隐藏态 open={false} 同样），不受祖先 display: none / overflow 影响；
@@ -105,6 +105,7 @@ export default function Overlay({ children, onDismiss, testId, variant = 'dialog
       <div
         ref={boxRef}
         data-overlay-box=""
+        className={variant === 'drawer' ? 'overlay-drawer-in' : undefined}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         style={{

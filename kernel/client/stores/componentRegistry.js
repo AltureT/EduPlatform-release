@@ -12,11 +12,12 @@ const FILE_RE = /([^/\\]+)[/\\]client\.jsx$/;
 const EMPTY_SLOTS = Object.freeze({});
 
 // 槽位清单（可选组件规格 §2.3；v0.7.1 加 studentBanner；C5 加 studentAside，由 <Page> 在学生视图里渲染；
-// T9b 加 studentDock，学生外壳内容区右侧停靠面板，useDock().openDock(id) 打开；T9a 加 teacherPrelogin，教师课前页里每个组件一行状态）。
+// T9b 加 studentDock，学生外壳内容区右侧停靠面板，useDock().openDock(id) 打开；T9a 加 teacherPrelogin，教师课前页里每个组件一行状态；
+// S22 加 dockTab：studentDock 面板关着时内容区右边缘按钮里的内容，返回 null 不画按钮）。
 // 外壳按名字渲染，不在清单里的名字不会被渲染：discoverComponents 在开发模式下对清单外的 slots 键 console.warn（多半是拼错）
 export const SLOT_NAMES = Object.freeze([
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
-  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside', 'studentDock', 'teacherPrelogin',
+  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside', 'studentDock', 'dockTab', 'teacherPrelogin',
 ]);
 // slots 里的元数据键（不是组件，不渲染）：T9b dockTitle（studentDock 面板标题，缺省用组件 label）；
 // T9a teacherToolbarOrder（数字，teacherToolbar 在操作条里的先后，小的在前，缺省 0）

@@ -1,4 +1,4 @@
-// inbox 收件箱客户端（规格 §3.3）：教师工具栏按钮 + 抽屉；学生作答弹窗（无关闭按钮，只有教师能关）
+// inbox 随堂一句话客户端（规格 §3.3）：教师工具栏按钮 + 抽屉；学生作答弹窗（无关闭按钮，只有教师能关）
 // 覆盖层（界面整理规格 §2.3）：教师抽屉走内核 Overlay 的 drawer 形态，学生作答框走 dialog 形态（不传 onDismiss，点遮罩不关）
 import { useState } from 'react';
 import { useComponent, useTeacherStage, useNarrow, useDraft, Btn, Chip, Overlay, Row, Stack } from '#kernel/client/index.js';
@@ -98,11 +98,11 @@ function Drawer({ c, roster, items, onHide }) {
   };
 
   return (
-    <Overlay variant="drawer" label="收件箱" testId="inbox-drawer" onDismiss={onHide}>
+    <Overlay variant="drawer" label="随堂一句话" testId="inbox-drawer" onDismiss={onHide}>
       <div style={{ width: '100%', maxWidth: 960, marginLeft: 'auto', marginRight: 'auto', color: 'var(--ink)', textAlign: 'left' }}>
         <Stack gap={3}>
           <Row gap={2} wrap={false}>
-            <strong style={{ flex: 1, fontSize: 'var(--fs-md)' }}>📥 收件箱</strong>
+            <strong style={{ flex: 1, fontSize: 'var(--fs-md)' }}>📥 随堂一句话</strong>
             <Btn variant="ghost" aria-label="收起" onClick={onHide}>
               ✕
             </Btn>
@@ -180,7 +180,7 @@ function TeacherToolbar({ stageId }) {
       {/* aria-haspopup / aria-expanded：narrow 时本按钮在外壳"更多 ▾"菜单里，带这两个属性的按钮点击后菜单不关，
           抽屉（渲染在菜单子树里）才不会随菜单隐藏（契约 v0.7.1 更多菜单关闭行为） */}
       <Btn variant="soft" size={chipSize} aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={() => c.setLocal({ open: !drawerOpen })}>
-        📥 收件箱 {items.length}
+        📥 随堂一句话 {items.length}
       </Btn>
       {drawerOpen && <Drawer c={c} roster={roster} items={items} onHide={() => c.setLocal({ open: false })} />}
     </>

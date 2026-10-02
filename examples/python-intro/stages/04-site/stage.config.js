@@ -1,5 +1,5 @@
 // 段 4 · 小网站：改最小 Flask 应用，在模拟浏览器里访问
-export const TASK = '改一改这个留言板网站，在下方模拟浏览器里访问、提交表单看效果';
+export const TASK = '改一改这个留言板网站，在模拟浏览器里访问、提交表单看效果';
 
 // 最小 Flask 应用：首页 + 表单 POST 后 redirect 回首页。不调用 app.run()：模拟浏览器直接把请求交给 app
 const STARTER = [

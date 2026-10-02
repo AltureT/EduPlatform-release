@@ -9,10 +9,10 @@ const toneMap = {
   outline: { bg: 'transparent', fg: 'var(--ink-soft)', bd: 'var(--border-strong)' },
 };
 
-export default function Chip({ children, tone = 'default', style }) {
+export default function Chip({ children, tone = 'default', style, ...rest }) {
   const t = toneMap[tone] || toneMap.default;
   return (
-    <span style={{
+    <span {...rest} style={{
       display: 'inline-flex',
       alignItems: 'center',
       gap: 6,

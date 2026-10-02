@@ -7,7 +7,7 @@ export default {
   stagesDir: './stages',          // 相对本配置文件所在目录
   stages: ['01-vote', '02-freeform'],   // 目录名，顺序即课堂顺序；prelogin 与 curtain 由内核自动加在首尾
   curtain: { label: '总结', override: null },   // override: stagesDir 下的目录名（不列入 stages，只含 Student.jsx / TeacherStats.jsx，无 stage.config.js）
-  // 可选组件（组件规格 §4）：镜像 / 分享 / 收件箱 / 个人报告；缺省在全部阶段显示入口
+  // 可选组件（组件规格 §4）：镜像 / 分享 / 随堂一句话 / 个人报告；缺省在全部阶段显示入口
   components: [
     'mirror',
     'share',

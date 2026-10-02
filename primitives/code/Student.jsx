@@ -1,11 +1,15 @@
 // code 学生视图：split 模板（Main : Side = 3 : 1；P5：宽屏题目在左、三栏（题目 | 代码 | 输出）可拖宽）。Side 放标题为"题目"的 Tile：题目正文（空行分段）+ 要求清单（本地勾选，自检用，不采集；
 // P6：_shared/TaskList，与 data-analysis 的任务清单共用，{ text, hint } 条目下可展开"提示 ▾"）
 // "上交最终稿"（_shared/FinalSubmit：确认后发 student:code-final，载荷 = 当前代码 + 最近一次运行结果，代码在那次运行后改过则带 stale）：
-// T9b（教师视图与学生页重排规格 §2.4）宽屏放代码框下方工具栏最右（FinalSubmit compact 经 PyRunner 的 toolbarEnd），Side 底部不再放；
-// 窄屏时"上交最终稿"与状态放 Page.Actions（折叠题目不会把它收掉）；只读（回看 / 镜像）时只留状态行（宽屏同样在 toolbarEnd）；
+// T9b（教师视图与学生页重排规格 §2.4）宽屏放代码框下方工具栏最右（经 PyRunner 的 toolbarEnd），Side 底部不再放；
+// 窄屏时"上交最终稿"放 Page.Actions（折叠题目不会把它收掉）；只读（回看 / 镜像）时不放按钮；
 // 还在"选一个起点"页（没有 PyRunner）时宽窄屏都不显示上交；
+// S22（上课细节收口规格 §4）：状态只在操作条一枚 Chip（data-testid="final-status"，时间 HH:MM）：没有记录"运行或测试后自动保存"；
+// 有记录"已自动保存 HH:MM · 测试 p / t | · 有报错"；已上交"已上交 HH:MM"（上交后又运行过：" · 之后又运行过"，warn）。
+// 按钮三态由 FinalSubmit 画，dirty = 已上交且"上交时的代码"与当前代码不同：上交时的代码取本页 ref（submitFinal 时记下；推回来的
+// final 是摘要、没有 code），没有再取 final.code；两者都没有（刷新后 final 是摘要）按没改过，由 Chip"之后又运行过"兜底。
 // P5 回看（代码段布局与回看规格 §6）：原语缺省 reviewInteractive，回看段能滚动、勾选、编辑、运行、测试，但不发记录、不能上交；
-// 操作条第一个 Chip 为"回看 · 运行不记录"（镜像只读时不显示），已有记录时"已记录 …"仍在后面。
+// 操作条第一个 Chip 为"回看 · 运行不记录"（镜像只读时不显示），已有记录时状态 Chip 仍在后面。
 // Main 放 sandbox 的 <PyRunner>（运行 / 停止 / 测试；代码 / 输出小标题）。每次运行或测试结束自动用 buildRecord 发 student:code-submit，
 // 以最后一次为准（自动记录）。测试结果只对测试时的代码有效：改了代码再运行，记录里的 tests 为 null。
 // sandbox 配置（starter / tests / files / packages）来自服务端下发的 stage.sandbox；PyRunner 自己读它，只读态（镜像）也由它处理。
@@ -33,7 +37,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStudentStage, useComponent, useNarrow, useDraft, Btn, Chip, Overlay, Page, Stack, Tile } from '#kernel/client/index.js';
 import { STARTER_PENDING, clearDraft, draftKey, readDraft, readStarter, starterKey, writeStarter } from '#components/sandbox/client/ui/draftStorage.js';
 import { PyRunner, buildRecord, usePython } from '@components/sandbox/index.js';
-import FinalSubmit, { finalRecord } from '../_shared/FinalSubmit.jsx';
+import FinalSubmit, { finalRecord, fmtHM } from '../_shared/FinalSubmit.jsx';
 import SolutionPanel from '../_shared/SolutionPanel.jsx';
 import TaskList from '../_shared/TaskList.jsx';
 import StarterPicker from './StarterPicker.jsx';
@@ -41,7 +45,6 @@ import { PushedCodeOffer, usePushedCode } from '../_shared/PushedCode.jsx';
 import { PUSHED_LABEL } from '../_shared/pushCode.js';
 import DemoRunner from '../_shared/DemoTools.jsx';
 
-const fmtTime = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
 const paragraphs = (text) => String(text ?? '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
 const CODE_DRAFT_MAX = 20000;   // 服务端代码草稿上限（字）
 const passedAll = (t) => !!t && t.total > 0 && t.failed + t.errors === 0;
@@ -60,6 +63,7 @@ export default function Student({ stageId } = {}) {
   const [checkedRaw, setCheckedList] = useDraft('checked', [], { stageId: id });
   const checked = useMemo(() => new Set(Array.isArray(checkedRaw) ? checkedRaw.filter((i) => Number.isInteger(i)) : []), [checkedRaw]);
   const lastRun = useRef(null);                   // { code, result }
+  const lastFinalCode = useRef(null);             // S22a：本页最近一次上交 { id, code }（推回来的 final 可能是摘要；外壳换段不换实例，只认本段 id）
   const lastTest = useRef(null);                  // { code, t }
   const runsBase = useRef(null);                  // 本页第一次发记录前已有的 runs（刷新后接着加）
 
@@ -146,9 +150,16 @@ export default function Student({ stageId } = {}) {
   }));
   const submitFinal = (payload) => {
     if (!isLive || !payload) return;
+    lastFinalCode.current = typeof payload.code === 'string' ? { id, code: payload.code } : null;
     send('student:code-final', payload);
   };
-  const finalProps = { finalAt: myData?.finalAt ?? null, prepare: prepareFinal, onConfirm: submitFinal, hideButton: !isLive || readOnly };
+  const finalAt = myData?.finalAt ?? null;
+  // 上交后推回来的 final 是摘要（K10，没有 code）：用本页记住的上交代码比；刷新后两者都没有时按没改过（Chip"之后又运行过"兜底）
+  const localFinal = lastFinalCode.current && lastFinalCode.current.id === id ? lastFinalCode.current.code : null;
+  const finalCode = localFinal ?? (typeof myData?.final?.code === 'string' ? myData.final.code : null);
+  const dirty = finalAt != null && finalCode != null && finalCode !== code;
+  const hideFinal = !isLive || readOnly;
+  const finalProps = { finalAt, dirty, prepare: prepareFinal, onConfirm: submitFinal, hideButton: hideFinal };
   const toggle = (i) => setCheckedList((prev) => {
     const list = Array.isArray(prev) ? prev : [];
     return list.includes(i) ? list.filter((x) => x !== i) : [...list, i].sort((a, b) => a - b);
@@ -207,11 +218,14 @@ export default function Student({ stageId } = {}) {
   const requirements = options.requirements ?? [];
   const t = myData?.tests;
   let status = null;
-  if (myData?.submittedAt != null) {
+  if (finalAt != null) {
+    const ranAfter = myData?.submittedAt != null && myData.submittedAt > finalAt;
+    status = <Chip tone={ranAfter ? 'warn' : 'good'} data-testid="final-status">{`已上交 ${fmtHM(finalAt)}${ranAfter ? ' · 之后又运行过' : ''}`}</Chip>;
+  } else if (myData?.submittedAt != null) {
     const tone = t ? (passedAll(t) ? 'good' : 'warn') : (myData.error ? 'warn' : 'good');
     status = (
-      <Chip tone={tone}>
-        已记录 {fmtTime(myData.submittedAt)}{t ? ` · 测试 ${t.passed} / ${t.total}` : ''}{!t && myData.error ? ' · 有报错' : ''}
+      <Chip tone={tone} data-testid="final-status">
+        {`已自动保存 ${fmtHM(myData.submittedAt)}${t ? ` · 测试 ${t.passed} / ${t.total}` : ''}${!t && myData.error ? ' · 有报错' : ''}`}
       </Chip>
     );
   }
@@ -273,7 +287,7 @@ export default function Student({ stageId } = {}) {
             onResult={onResult}
             onTest={onTest}
             onRestore={onRestore}
-            toolbarEnd={narrow ? undefined : <FinalSubmit {...finalProps} compact />}
+            toolbarEnd={narrow || hideFinal ? undefined : <FinalSubmit {...finalProps} />}
           />
         ) : (
           <div style={{ color: 'var(--ink-dim)' }}>正在准备运行环境…</div>
@@ -281,12 +295,12 @@ export default function Student({ stageId } = {}) {
       </Page.Main>
       <Page.Actions>
         {reviewing && <Chip>回看 · 运行不记录</Chip>}
-        {status ?? (reviewing ? null : <Chip tone="neutral">运行或测试后自动记录</Chip>)}
+        {status ?? (reviewing ? null : <Chip tone="neutral" data-testid="final-status">运行或测试后自动保存</Chip>)}
         {!picking && <PushedCodeOffer offer={pushedCode.offer} running={running} onAdopt={adoptPushed} />}
         {starters && !picking && isLive && !readOnly && (
           <Btn variant="soft" size="sm" onClick={() => setConfirmSwitch(true)}>换起点</Btn>
         )}
-        {narrow && !picking && <FinalSubmit {...finalProps} inline />}
+        {narrow && !picking && <FinalSubmit {...finalProps} />}
         {confirmSwitch && (
           <Overlay variant="dialog" testId="starter-switch-confirm" label="换起点" onDismiss={() => setConfirmSwitch(false)}>
             <Stack gap={4}>

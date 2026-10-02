@@ -90,6 +90,7 @@ function Chrome({ addr, setAddr, invalid, onSubmit, canBack, canFwd, onBack, onF
       <Btn variant="ghost" aria-label="刷新" disabled={disabled} onClick={onReload}>↻</Btn>
       <input
         aria-label="地址"
+        placeholder="/ 路径"
         aria-invalid={invalid ? 'true' : 'false'}
         value={addr}
         disabled={disabled}

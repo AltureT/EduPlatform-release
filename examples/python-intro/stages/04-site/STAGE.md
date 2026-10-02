@@ -4,7 +4,7 @@
 
 **A 展示**
 - 大屏投什么：本段不设演示视图，教师端只显统计视图（首页状态码、运行次数、报错、提交时间）；需要时镜像某学生
-- 学生屏幕看什么：题目"改一改这个留言板网站，在下方模拟浏览器里访问、提交表单看效果"；上半屏为编辑器（starter 为最小 Flask 应用：首页 + 表单 POST 到 `/add` 后 `redirect('/')`）与输出区 + 运行按钮行；下半屏为模拟浏览器 `[◀] [▶] [↻] [地址] [前往]` + 状态码芯片；`[提交]` 与提交后的"已提交 HH:MM:SS · 首页 200"芯片在底部操作条
+- 学生屏幕看什么：题目"改一改这个留言板网站，在模拟浏览器里访问、提交表单看效果"；左列编辑器在上（starter 为最小 Flask 应用：首页 + 表单 POST 到 `/add` 后 `redirect('/')`）、输出区在下 + 运行按钮行；右列小标题"模拟浏览器 · 网站只在这里能打开，别的标签页打不开"+ 模拟浏览器 `[◀] [▶] [↻] [地址] [前往]` + 状态码芯片（容器窄于 900 时上下排）；`[提交]` 与提交后的"已提交 HH:MM:SS · 首页 200"芯片在底部操作条
 - 教师按什么按钮、在什么时点按：提交率够了按"下一段"（见 E）
 - 教师是否需要看某个学生的实时画面 / 挑人上来讲：可镜像（镜像里模拟浏览器只显示禁用的地址栏，代码与输出照常）
 
@@ -37,13 +37,13 @@
 
 | 栏 | 文件 |
 |---|---|
-| A | `Student.jsx`：`<Page template="split" title={TASK}>`（`layout: 'split'`）；`Page.Main` 里两个 `<Fill>` 上下各半，分别放 `<PyRunner stageId="site" onResult>` 与 `<WebSim stageId="site" home="/" onResponse>`（都不传 `height`），`Page.Actions` 放"已提交"芯片与 `[提交]`；无 `TeacherDemo.jsx` |
+| A | `Student.jsx`：`<Page template="split" title={TASK}>`（`layout: 'split'`）；`Page.Main` 里放 `<SiteRunner stageId="site" onResult home="/" onResponse>`（代码在左、上面代码下面输出，模拟浏览器在右；容器窄于 900 时上下排；不传 `height`），`Page.Actions` 放"已提交"芯片与 `[提交]`；无 `TeacherDemo.jsx` |
 | B | `server.js`：`student:submit`，schema 为 `recordShapeWith({ homeStatus: 'optional:integer:100-599' })` → `data.set(name, { ...p, homeStatus: p.homeStatus ?? null, submittedAt })` |
 | C | `stage.config.js`：`sandbox.flask: true`、`sandbox.starter`、`collect` |
 | D | `TeacherStats.jsx`（`DataTable` + `DetailModal` 内 `<PyOutput record>`）；`alerts` 的 `idle` / `home-error`；`summarize` |
 | E | `gate`，`soft: true` |
 
-`homeStatus` 由 `Student.jsx` 从 `<WebSim onResponse>` 记录：每次运行结束先置 null；最后一次运行 `ok` 时，接受之后 `method` 为 GET 且 `finalPath` 为 `/` 的导航结果（含运行后的自动刷新）；提交时不再自己发请求。
+`homeStatus` 由 `Student.jsx` 从 `<SiteRunner onResponse>`（转给模拟浏览器）记录：每次运行结束先置 null；最后一次运行 `ok` 时，接受之后 `method` 为 GET 且 `finalPath` 为 `/` 的导航结果（含运行后的自动刷新）；提交时不再自己发请求。
 
 刷新页面后提交按钮保持禁用，直到再运行一次：本段提交要求 app 在跑，而刷新后运行环境是新的、还没有 app（模拟浏览器显示"502 · 还没有定义 app，请先运行"），所以本段不接 `onRestore`；编辑器里的代码与最近一次输出照常恢复。`runs` 为 `PyRunner` 本实例运行次数（`onResult` 的第二参数）。
 

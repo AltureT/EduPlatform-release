@@ -4,7 +4,9 @@
 // 教师预览某生报告走内核 Overlay 的 panel 形态（预览里自己包一层 <Tiles>）
 // U6：条目 format === 'code'（值为字符串）时独立一行标签 + <CodeView size="sm" wrap>（左对齐、等宽、保留换行缩进、高亮；
 //   折行而不横向滚动——手机扫码看报告、打印时不裁掉），其它条目照旧
-import { useState } from 'react';
+// S22（上课细节收口规格 §7）：教师"生成并推送报告"三态——没推过（perClass.builtAt 为空）→ 原按钮；
+//   确认后到 builtAt 变化之前 → 禁用的"生成中…"（15 s 兜底解除）；builtAt 有值 → soft 的"✓ 已推送 HH:MM"，再点两下重新生成
+import { useEffect, useRef, useState } from 'react';
 import {
   useComponent,
   useTeacherStage,
@@ -29,6 +31,11 @@ const fmtValue = (v) => {
 };
 
 const pad = (n) => String(n).padStart(2, '0');
+const hhmm = (ts) => {
+  const d = new Date(ts);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const BUILD_FALLBACK_MS = 15000;
 const ymd = (d = new Date()) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 
 function CompareBar({ value, median }) {
@@ -98,6 +105,24 @@ function TeacherCurtain() {
 
   const perStudent = data.perStudent ?? {};
   const built = roster.filter((s) => perStudent[s.name]?.builtAt != null).length;
+  const builtAt = data.perClass?.builtAt ?? null;
+
+  // building：点了确认之后、builtAt 变化之前（记下点击时的 builtAt，变了就解除；15 s 兜底）
+  const [building, setBuilding] = useState(null);   // null | { from }
+  const fallback = useRef(null);
+  useEffect(() => () => clearTimeout(fallback.current), []);
+  useEffect(() => {
+    if (building && builtAt !== building.from) {
+      clearTimeout(fallback.current);
+      setBuilding(null);
+    }
+  }, [builtAt, building]);
+  const build = () => {
+    send('report:t-build', {});
+    setBuilding({ from: builtAt });
+    clearTimeout(fallback.current);
+    fallback.current = setTimeout(() => setBuilding(null), BUILD_FALLBACK_MS);
+  };
 
   const exportCsv = async () => {
     setExportError(null);
@@ -123,9 +148,17 @@ function TeacherCurtain() {
       <Tile title="个人报告">
         <Stack gap={3}>
           <Row gap={2}>
-            <ConfirmAdvanceBtn onAdvance={() => send('report:t-build', {})} confirmLabel="确认生成">
-              生成并推送报告
-            </ConfirmAdvanceBtn>
+            {building && <Btn disabled>生成中…</Btn>}
+            {!building && builtAt == null && (
+              <ConfirmAdvanceBtn onAdvance={build} confirmLabel="确认生成">
+                生成并推送报告
+              </ConfirmAdvanceBtn>
+            )}
+            {!building && builtAt != null && (
+              <ConfirmAdvanceBtn variant="soft" onAdvance={build} confirmLabel="确认重新生成">
+                {`✓ 已推送 ${hhmm(builtAt)}`}
+              </ConfirmAdvanceBtn>
+            )}
             <Chip tone="neutral">{`已生成 ${built} / ${roster.length}`}</Chip>
             <Btn variant="ghost" onClick={exportCsv}>导出 CSV</Btn>
             {exportError && <Chip tone="bad">{exportError}</Chip>}

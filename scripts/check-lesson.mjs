@@ -89,7 +89,7 @@ const AI_FIX = "服务端用 ctx.ai.chat（契约 §三\"调 AI\"），地址、
 // 13 课程组件：契约 §八的槽位名（与 kernel/client/stores/componentRegistry.js 的 SLOT_NAMES 一致，测试核对）
 export const CONTRACT_SLOTS = [
   'teacherToolbar', 'teacherMain', 'teacherSidebar', 'teacherOverlay', 'teacherCurtain',
-  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside', 'studentDock', 'teacherPrelogin',
+  'studentOverlay', 'studentCurtain', 'studentBanner', 'studentAside', 'studentDock', 'dockTab', 'teacherPrelogin',
 ];
 // slots 里的元数据键（不是槽位、不渲染；与 componentRegistry.js 的 SLOT_META 一致）：T9b dockTitle（studentDock 面板标题）、
 // T9a teacherToolbarOrder（teacherToolbar 先后）

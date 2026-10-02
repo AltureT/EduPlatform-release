@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { useStudentStage, Btn, Chip, Page, Fill } from '#kernel/client/index.js';
-import { PyRunner, WebSim, buildRecord } from '@components/sandbox/index.js';
+import { useStudentStage, Btn, Chip, Page } from '#kernel/client/index.js';
+import { SiteRunner, buildRecord } from '@components/sandbox/index.js';
 import { TASK, homeOk } from './stage.config.js';
 
 const STAGE = 'site';
@@ -41,19 +41,16 @@ export default function Student() {
 
   return (
     <Page template="split" title={TASK}>
-      {/* 上下各半：Page.Main 本身是纵向 flex（带区域间距），两个 <Fill> 平分高度 */}
+      {/* 网站段版式：左列代码在上、输出在下，右列模拟浏览器；容器窄于 900 时上下排 */}
       <Page.Main>
-        <Fill>
-          <PyRunner
-            stageId={STAGE}
-            code={code}
-            onChange={setCode}
-            onResult={onResult}
-          />
-        </Fill>
-        <Fill>
-          <WebSim stageId={STAGE} home="/" onResponse={onResponse} />
-        </Fill>
+        <SiteRunner
+          stageId={STAGE}
+          code={code}
+          onChange={setCode}
+          onResult={onResult}
+          home="/"
+          onResponse={onResponse}
+        />
       </Page.Main>
       <Page.Actions>
         {submitted && (
