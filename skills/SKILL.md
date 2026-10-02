@@ -31,7 +31,7 @@ description: 把教师口述或现成教案里的一节课变成能在教室局�
 ## 路径与命令的约定
 
 - 所有命令都在**平台目录**里执行。判断方法：当前目录里同时有 `package.json` 和 `班迹工作台.command` 两个文件 = 在平台目录。教师拿到的发布包解压出来的那个文件夹（例如 `班迹/`）就是平台目录；在平台的开发仓库里，平台目录是 `template/`——当前目录是开发仓库根（里面有 `template/`）就先 `cd template`。
-- 有的工具每条命令都在一个新窗口里执行（上一条的 `cd` 不保留）：那就每条都写成 `cd "<平台目录的完整位置>" && npm run …`（位置用 `node -e "console.log(process.cwd())"` 在平台目录里打印一次记下）。报"找不到 package.json / Could not read package.json"就是不在平台目录。
+- 有的工具每条命令都在一个新窗口里执行（上一条的 `cd` 不保留）：那就每条都写成——Mac / Linux / Windows 命令提示符 `cd "<平台目录的完整位置>" && npm run …`；Windows PowerShell `cd "<平台目录的完整位置>"; npm run …`（PowerShell 报 `&&` 不是有效语句分隔符，就是这个原因）（位置用 `node -e "console.log(process.cwd())"` 在平台目录里打印一次记下）。报"找不到 package.json / Could not read package.json"就是不在平台目录。
 - `node -v` 报找不到（或第一个数字 < 22）但 `vendor/node/` 在：每条 `node` / `npm` 命令前加前缀——Mac / Linux `PATH="$PWD/vendor/node/bin:$PATH" npm run …`（`node -e …` 同样写成 `PATH="$PWD/vendor/node/bin:$PATH" node -e …`）；Windows 命令提示符 `set "PATH=%CD%\vendor\node;%PATH%" && npm run …`；Windows PowerShell `$env:PATH="$PWD\vendor\node;$env:PATH"; npm run …`。
 - 本 skill 里的路径都相对平台目录；`docs/`、`skills/` 都在平台目录里。
 - `<id>` 是课程 id，`<段id>` 是阶段 id，`NN-<段id>` 是阶段目录名（例 `01-guess`，NN 是两位段号）。一门课的所有文件都在 `lessons/<id>/` 里。

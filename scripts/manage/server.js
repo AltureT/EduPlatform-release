@@ -53,6 +53,8 @@
 //     POST /api/env/retry → { ok: true, started, env }（不受节流；正在下载时 started: false）；
 //     下载失败写排障文件（环节"下载运行时"），放在 env.<种类>.diagnosis；旧的 overview.pyodide 已删（G4 收尾，页面只看 env）；
 //     DELETE /api/lessons/:scope/:name 返回 cleaned（lesson-admin.js cleanupEnvironments：没有课再需要而清掉的环境种类，如 ['pyodide']）
+//   S19（Windows 兼容收尾规格 §4）：创建时异步算一次平台文件夹是否在网络共享里（../lib/network-share.js，detectShare 可注入），
+//     overview.networkShare = { kind, path } | null（算完前 null）；排障文件的环境一节同时带上
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -76,6 +78,7 @@ import { readUpload } from './upload.js';
 import { parseAITest, runAITest } from './ai-test.js';
 import { parseAIModels, fetchModels } from './ai-models.js';
 import { checkPlatformFiles } from '../lib/platform-files.js';
+import { detectNetworkShare } from '../lib/network-share.js';
 import { writeDiagnosis, collectEnvironment, readDiagnosis, launcherSection, tailLines, DIAG_DIR, listDiagnoses } from './diagnosis.js';
 import { checkReportText, updateResultText, updateRecoveredText } from './ui-logic.js';
 import {
@@ -146,9 +149,19 @@ export function createManageServer({
   updateCommand,
   onUpdated = () => {},
   now = Date.now,
+  detectShare = () => detectNetworkShare({ root: path.resolve(root) }),
 }) {
   if (!token) throw new Error('token required');
   platform ??= createPlatform({ root, serverCommand, buildCommand, log, checkLesson });
+  // S19 §4：平台文件夹在网络共享里？创建时异步算一次（不阻塞监听），算完前 null；出错也是 null
+  let networkShare = null;
+  (async () => {
+    try {
+      networkShare = (await detectShare()) ?? null;
+    } catch {
+      networkShare = null;
+    }
+  })();
   const lastChecks = new Map(); // L1：每门课最近一次 POST /api/lesson/check 的结果（课程路径 → 结果）
   // V1：每张卡带该课最近一次检查的摘要（"检查课程"按钮或启动前的检查）
   const allChecks = () => [...lastChecks.values(), platform.status().check];
@@ -215,7 +228,7 @@ export function createManageServer({
   let recovered = null;
   // S12：排障文件的环境里写工作台端口与启动时间（listen 后填端口）
   const manageInfo = { port: null, startedAt: Date.now() };
-  const diagEnv = (extra = {}) => collectEnvironment(root, { manage: manageInfo, ...extra });
+  const diagEnv = (extra = {}) => collectEnvironment(root, { manage: manageInfo, networkShare, ...extra });
   const diag = (opts) => {
     const r = writeDiagnosis(root, { ...opts, log });
     return r ? { file: r.file, at: Date.now() } : null;
@@ -588,6 +601,8 @@ export function createManageServer({
       migrated: takeMigratedNotice(root),
       // G5（工作台侧栏常规化规格 §1）：侧栏底部"排障文件 N"——排障/ 里的排障文件数（老师写的 -反馈.md 不计）
       diagnoses: { count: listDiagnoses(root).filter((d) => !/-反馈\.md$/.test(d.name)).length },
+      // S19 §4：平台文件夹在网络共享里 → { kind, path }（横幅 #p-share），否则 / 还没算完 null
+      networkShare,
     });
   });
 

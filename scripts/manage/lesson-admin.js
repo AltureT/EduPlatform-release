@@ -24,6 +24,7 @@
 //   deleteLesson(root, resolved, { now, dataId, current }) → 移到 backups/deleted-lessons/<目录名>-<YYYYMMDD_HHMMSS>/（不直接删）；
 //     M6：dataId（这门课的 id，且没有别的课共用、没有自定义 DB_PATH 时由调用方给）→ 它的库与备份一并移到该目录的 data/
 //     G4：current（.env 的 LESSON_CONFIG）指的就是这门课 → 删后当前课换成列表里下一门 / 清空，返回 current: { to }（见函数前注释）
+//     S19：挪目录遇 EPERM / EBUSY / ENOTEMPTY / EACCES 隔 200 ms 再试，共 5 次；rename / sleep 可注入（测试用）
 //   renameLesson(root, resolved, { title })（G4）→ 只改 lesson.config.js 的 title 字面量；示例课 403，写法特殊 400
 //     G4：async；移走后调 cleanupEnvironments，返回值多 cleaned（清掉的环境种类，如 ['pyodide']）
 //   cleanupEnvironments(root, { beforeClean? }) → 清掉的种类数组（G4 工作台课程与平台两区重构规格 §3.3）：重算剩下的课需要哪些环境（env-prepare.js），
@@ -382,7 +383,26 @@ function nextLessonConfig(root, name) {
   return `./lessons/${after}/lesson.config.js`;
 }
 
-export async function deleteLesson(root, resolved, { now = new Date(), dataId = null, current = null, beforeClean = null } = {}) {
+// S19 §3：Windows 上课程目录被短暂占用（杀毒、资源管理器、刚停的进程）时 rename 会报这几种错——隔 200 ms 再试，共试 5 次
+const BUSY_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES']);
+const RENAME_TRIES = 5;
+const RENAME_WAIT_MS = 200;
+const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function renameWithRetry(from, to, { rename = fs.renameSync, sleep = realSleep } = {}) {
+  for (let i = 1; ; i += 1) {
+    try {
+      return rename(from, to);
+    } catch (e) {
+      if (i >= RENAME_TRIES || !BUSY_CODES.has(e?.code)) throw e;
+      await sleep(RENAME_WAIT_MS);
+    }
+  }
+}
+
+export async function deleteLesson(root, resolved, {
+  now = new Date(), dataId = null, current = null, beforeClean = null, rename, sleep,
+} = {}) {
   if (resolved.kind !== 'mine') throw userError(MESSAGES.exampleNoDelete, 403);
   const isCurrent = sameLessonPath(current, resolved.configRel);
   const next = isCurrent ? nextLessonConfig(root, resolved.name) : null;
@@ -392,7 +412,7 @@ export async function deleteLesson(root, resolved, { now = new Date(), dataId = 
   let name = baseName;
   for (let i = 2; fs.existsSync(path.join(parent, name)); i += 1) name = `${baseName}_${i}`;
   try {
-    fs.renameSync(resolved.abs, path.join(parent, name));
+    await renameWithRetry(resolved.abs, path.join(parent, name), { rename, sleep });
   } catch {
     throw userError(MESSAGES.deleteFailed, 409);
   }
@@ -446,7 +466,7 @@ export async function cleanupEnvironments(root, { beforeClean = null } = {}) {
       if (beforeClean) await beforeClean(kind);
       const dir = path.join(root, ...ENV_KINDS[kind].dir.split('/'));
       if (!fs.existsSync(dir)) continue;
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); // S19：Windows 上占用时 Node 自带重试
       cleaned.push(kind);
     }
   } catch {

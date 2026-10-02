@@ -1,6 +1,7 @@
 // 排障文件（S12 排障文件与 AI 排障规格 §1）：出错时在平台文件夹顶层 排障/ 写一份 Markdown，老师发给 AI 工具（或点"复制给 AI"）
 //   文件名 <yyyy-MM-dd>-<HHmmss>-<环节>.md（diagnosisName；同一秒同环节已有则加 -2、-3…）；只留最近 KEEP 份（-反馈.md 不算、不删）
-//   collectEnvironment(root, { env, lesson, platform, statfs, realpath, versions, version, files, manage, portOwner }) → §1.3"环境"的数据
+//   collectEnvironment(root, { env, lesson, platform, statfs, realpath, versions, version, files, manage, portOwner, networkShare }) → §1.3"环境"的数据
+//     S19：networkShare（server.js 启动后异步算的 network-share.js 结果，缺省 null）非空 → 环境一节多一行"平台文件夹在网络共享里：<path>"
 //     （全部可注入；缺省读 root/.env、os、fs.statfsSync、fs.realpathSync.native、process.version / npm_config_user_agent、
 //      currentVersion、checkPlatformFiles）；secrets = .env 里敏感键的非空值（只用于脱敏，不写进文件）
 //   renderDiagnosis({ stage, phase, message, detail, environment, sections, now }) → Markdown；sections = [{ title, lines }]，
@@ -99,6 +100,7 @@ export function collectEnvironment(root, {
   files,
   manage,
   portOwner,
+  networkShare = null,
 } = {}) {
   const abs = path.resolve(root);
   let values = env;
@@ -162,6 +164,7 @@ export function collectEnvironment(root, {
     root: abs,
     realpath: real,
     remote: isRemote(abs) || isRemote(real),
+    networkShare: networkShare ?? null,
     diskFree,
     lesson: lessonText,
     hasEnv,
@@ -180,6 +183,7 @@ function environmentLines(e) {
     `- 班迹版本：${e.version}；平台文件被改过：${e.platformFiles}`,
     `- 系统：${e.system}；Node ${e.node}；npm ${e.npm}`,
     `- 平台文件夹：${e.root}；真实路径：${e.realpath}${remote}`,
+    ...(e.networkShare?.path ? [`- 平台文件夹在网络共享里：${e.networkShare.path}`] : []),
     `- 磁盘可用：${e.diskFree}`,
     `- 当前课程：${e.lesson}`,
     e.env?.length ? `- .env：\n${e.env.map((l) => `  - ${l}`).join('\n')}` : `- .env：${e.hasEnv === false ? '（没有 .env）' : '（空）'}`,

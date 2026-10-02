@@ -2,9 +2,10 @@
 //   slugFromTitle(title) → 课名里的英文字母与数字转小写、其余连成一个连字符；须以字母开头、3–20 个字符、不是保留字，否则 null
 //     （中文转拼音需要字表或依赖，不做；纯中文课名走日期序号）
 //   dateSeqId(date, n) → lesson-<yyyyMMdd>-<两位序号>
-//   pickLessonId({ title, taken(id) → bool, now }) → 先试 slug，重名或没有就用日期序号（01 起找第一个没被占用的）
+//   pickLessonId({ title, taken(id) → bool, now }) → 先试 slug，重名、是 Windows 保留名或没有就用日期序号（01 起找第一个没被占用的）
 // 结果都符合阶段 id 规则 /^[a-z][a-z0-9-]*$/（newLesson 会再校验一次）
 import { STAGE_ID_RE, RESERVED_STAGE_IDS } from '../../kernel/server/stage-loader.js';
+import { isWindowsReservedName } from '../../kernel/server/lesson-db-path.js';
 
 const MAX_LEN = 20;
 const MIN_LEN = 3;
@@ -27,11 +28,13 @@ export function dateSeqId(date, n) {
 }
 
 export function pickLessonId({ title, taken = () => false, now = new Date() } = {}) {
+  // S19：Windows 保留名（con、aux、com1…）在 taken 之外再判一次，视为已占用
+  const busy = (id) => isWindowsReservedName(id) || taken(id);
   const slug = slugFromTitle(title);
-  if (slug && !taken(slug)) return slug;
+  if (slug && !busy(slug)) return slug;
   for (let n = 1; n <= 99; n += 1) {
     const id = dateSeqId(now, n);
-    if (!taken(id)) return id;
+    if (!busy(id)) return id;
   }
   throw Object.assign(new Error('今天新建的课程太多了，请明天再建，或先删掉几门不用的课'), { status: 409, expose: true });
 }

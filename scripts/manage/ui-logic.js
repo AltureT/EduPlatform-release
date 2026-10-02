@@ -9,6 +9,7 @@
 //     errorActions 的 goto-settings（密码 / 端口在平台 → 设置）；classChecklist 的环境一行只读
 //   G4 收尾：envCurrent / envCheckRow / envLine / envTopText / envBanner / envRetryText / envCleansWith：课程要用的环境
 //     （overview.env、SSE env，env-prepare.js status() 同形）在第 4、5 步检查单、平台 → 环境与版本、顶栏、横幅、删课确认框里的文案
+//   S19：shareBanner(overview) → 横幅 #p-share（平台文件夹在网络共享里）的一句，没有 null
 //   passwordError：设置页的密码；fetchProgress：下载输出 → 进度（服务端 env-prepare.js 用）
 //   errorActions(error) → [{ id, label, title, ... }]：启动失败时可点的下一步（动态按钮都带 title 提示）
 //   stateLabel(platform) → 状态带里的状态文字（已停止时区分"没能启动"与"平台意外停止"）
@@ -941,6 +942,21 @@ export function envBanner(env, { platform = null, dismissedAt = null, needed = f
   }
   if (py.state === 'failed' && py.error) return { kind: 'failed', text: `Python 环境没准备好：${py.error}`, diagnosis: py.diagnosis ?? null };
   return null;
+}
+
+// S19：横幅 #p-share——平台文件夹在网络共享里（overview.networkShare，服务端 network-share.js）→ { text }，否则 null；
+//   路径超过 60 字符时中间省略（保留开头与结尾，共 60 字符）
+const SHARE_PATH_MAX = 60;
+function middleClip(s, max = SHARE_PATH_MAX) {
+  const t = String(s ?? '');
+  if (t.length <= max) return t;
+  const tail = Math.floor((max - 1) / 2);
+  return `${t.slice(0, max - 1 - tail)}…${t.slice(t.length - tail)}`;
+}
+export function shareBanner(overview) {
+  const share = overview?.networkShare;
+  if (!share?.path) return null;
+  return { text: `平台文件夹在网络共享里（${middleClip(share.path)}），上课记录可能保存不稳。建议把整个文件夹拷到这台电脑的磁盘上，再从那里双击工作台。` };
 }
 
 // "重试""导入整包"（POST /api/env/retry → { started, env }）之后的提示

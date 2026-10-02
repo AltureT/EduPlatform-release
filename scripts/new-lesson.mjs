@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { STAGE_ID_RE, RESERVED_STAGE_IDS } from '../kernel/server/stage-loader.js';
-import { LESSON_ID_RE } from '../kernel/server/lesson-db-path.js';
+import { LESSON_ID_RE, isWindowsReservedName, windowsReservedMessage } from '../kernel/server/lesson-db-path.js';
 import { ensureEnv, writeEnv } from './manage/env-file.js';
 import { quoteJs } from './lib/config-edit.js';
 import { parseFlags } from './lib/flags.js';
@@ -49,6 +49,7 @@ export async function newLesson({ root = process.cwd(), id, title, dir = 'lesson
     throw new Error(`id ${JSON.stringify(id ?? '')} 不合法：用小写字母开头，只含小写字母、数字和连字符，2–40 个字符（如 prime-intro）`);
   }
   if (RESERVED_STAGE_IDS.includes(id)) throw new Error(`id "${id}" 是保留字，换一个`);
+  if (isWindowsReservedName(id)) throw new Error(windowsReservedMessage(id));
   if (typeof title !== 'string' || title.trim() === '' || /[\r\n]/.test(title)) throw new Error('请用 --title 给出课名（一行文字）');
   const dirRel = toPosix(path.posix.join(toPosix(dir), id)).replace(/^\.\//, '');
   const absDir = path.resolve(root, dirRel);

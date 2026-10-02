@@ -8,10 +8,11 @@
 //   主区：课名标题行 + "…"菜单 + 一句状态（courseLead）+ 页签式步骤条（tabMarks，四页 #draft #build #prepare #class）；没有课程时"新建第一门课"卡
 // G4 收尾（§3.1–§3.4）：课程要用的环境由工作台自动准备——overview.env / SSE env → 平台 → 环境与版本（#env-section）、顶栏一句、
 //   横幅 #p-env、第 4 步 #c-env、第 5 步提醒；"重试""导入整包"都是 POST /api/env/retry（renderEnv）
+// S19：横幅 #p-share（overview.networkShare → shareBanner）：平台文件夹在网络共享里，所有页面都显示、不可收起（renderEnv 里一起刷新）
 import {
   tabMarks, courseLead, TAB_PAGES, routeFor, buildDescOpen, buildSteps, classChecklist, PAGES, sideCourses, sideVersion, diagCountText,
   passwordError,
-  envCurrent, envCheckRow, envLine, envTopText, envBanner, envRetryText, envCleansWith,
+  envCurrent, envCheckRow, envLine, envTopText, envBanner, envRetryText, envCleansWith, shareBanner,
   errorActions, backupSummary, fmtDate, fmtSize,
   splitAddresses, stateLabel, classroomLesson,
   checkSummary, checkNotice, checkItems, checkReportText, checkBandText,
@@ -527,6 +528,11 @@ function renderEnv() {
   $('#p-env-restart').hidden = b?.kind !== 'restart';
   $('#p-env-retry').hidden = b?.kind !== 'failed';
   renderDiag($('#p-env-diag'), b?.kind === 'failed' ? b.diagnosis : null);
+
+  // S19：#p-share 和 #p-env 并列，平台文件夹在网络共享里就一直显示（不可收起），随 overview 刷新
+  const share = shareBanner(overview);
+  $('#p-share').hidden = !share;
+  setText('#p-share-text', share?.text ?? '');
 
   const line = envLine(env);
   $('#env-dot').className = `dot ${line.dot}`;

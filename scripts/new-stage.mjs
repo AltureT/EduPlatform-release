@@ -19,6 +19,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { STAGE_ID_RE, RESERVED_STAGE_IDS, DEFAULT_PRIMITIVES_ROOT } from '../kernel/server/stage-loader.js';
 import { componentIdsOf } from '../kernel/server/component-loader.js';
+import { isWindowsReservedName, windowsReservedMessage } from '../kernel/server/lesson-db-path.js';
 import { insertArrayItem, quoteJs } from './lib/config-edit.js';
 import { stageCardTemplate } from './lib/stage-card.js';
 import { parseFlags } from './lib/flags.js';
@@ -332,6 +333,7 @@ export async function newStage({
     throw new Error(`id ${JSON.stringify(id ?? '')} 不合法：用小写字母开头，只含小写字母、数字和连字符（如 prime-vote）`);
   }
   if (RESERVED_STAGE_IDS.includes(id)) throw new Error(`id "${id}" 是内核保留的阶段，换一个`);
+  if (isWindowsReservedName(id)) throw new Error(windowsReservedMessage(id));
   if (typeof label !== 'string' || label.trim() === '' || /[\r\n]/.test(label)) throw new Error('请用 --label 给出阶段名（一行文字，进度条上显示）');
   const types = primitiveTypes(primitivesRoot);
   if (primitive !== 'none' && !types.includes(primitive)) {
