@@ -4,6 +4,7 @@
 // - 主线程 → Worker：init / load / write / run / test / http
 // - Worker → 主线程：progress / ready / fail / done / out / stdin-request / image / result / test-result / http-result，
 //   以及 fatal { id, message }（Pyodide 致命错误；主线程据此重建，§3.9）
+// - 图：学生调 plt.show() 时当场逐张 image（与文字输出按先后穿插）并关图；运行结束再收还开着的图，合计 ≤ MAX_IMAGES
 // - 输出：write 模式 + 同步合批（距上次 flush ≥ 50 ms 或缓冲 ≥ 8 KB 立即 post；stdin-request 前、time.sleep 前、运行结束前强制 flush）；
 //   累计超 1 MB 停止转发只计数，结束时 system 一条"输出过多"；结果里 stdout / stderr 保留尾部 200 KB
 // - input()：同步 XHR 长轮询 stdinUrl/<runId>；204 继续；status 0 / 403 退避重试 3 次；其余抛"输入通道断开"
@@ -130,6 +131,17 @@ export function createWorkerCore({
     },
   });
 
+  // plt.show() 中途出图（Python 侧已先 flush，图排在此前的输出之后）；JSON [png, compact]
+  function postImage(json) {
+    let pair;
+    try {
+      pair = JSON.parse(String(json));
+    } catch {
+      return;
+    }
+    if (Array.isArray(pair) && typeof pair[0] === 'string') post({ type: 'image', id: currentId, png: pair[0], compact: pair[1] ?? null });
+  }
+
   // ---------- input()：同步 XHR ----------
   function readLine() {
     flush();
@@ -216,7 +228,7 @@ export function createWorkerCore({
       p.setStdout(writer('stdout'));
       p.setStderr(writer('stderr'));
       p.setStdin({ stdin: readLine });
-      p.registerJsModule('_sb_js', { flush: () => flush() });
+      p.registerJsModule('_sb_js', { flush: () => flush(), image: (j) => postImage(j) });
       p.globals.set('__sb_src', SANDBOX_RT);
       await p.runPythonAsync(BOOTSTRAP);
       rt = p.pyimport('_sandbox_rt');
@@ -255,7 +267,7 @@ export function createWorkerCore({
     resetOutput(id);
     if (files && Object.keys(files).length > 0) rt.write_files(JSON.stringify(files));
     await loadImports(code);
-    const r = JSON.parse(rt.run(code));
+    const r = JSON.parse(rt.run(code, IMAGE_LIMIT, MAX_IMAGES));
     const figs = JSON.parse(rt.collect_figs(IMAGE_LIMIT, MAX_IMAGES));
     for (const [png, compact] of figs) post({ type: 'image', id, png, compact });
     const { stdout, stderr } = endOutput();

@@ -8,6 +8,7 @@
 // S3：onResponse({ status, path, method, finalPath })：每次导航（挂载、地址栏、◀ ▶ ↻、自动刷新、iframe 里的链接 / 表单）结束后回调；
 //   path 为请求路径、finalPath 为跟随重定向后的路径；no-app 时 status 502，其他失败（超时、被停止…）为 null；
 //   被后一次导航取代的请求不回调；iframe 页面自己的 fetch / XHR 不算导航
+// 只读（镜像内）：禁用的地址栏 + 页面区一句说明（S23，弹窗代码对齐与网站段镜像说明规格 §2），不调 http()
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStudentStage, Btn, Chip, Fill } from '#kernel/client/index.js';
 import { getPythonClient } from '../pythonClient.js';
@@ -361,6 +362,31 @@ function LiveWebSim({ home, onResponse }) {
   );
 }
 
+// S23：镜像不运行学生的网站（学生的 app 只在学生自己的 Worker 里），页面区放一句说明，不留空白
+export const MIRROR_NOTE = '镜像不运行学生的网站，这里不显示页面';
+export const MIRROR_HINT = '代码和运行输出在左边；要看页面效果，请这位学生在自己的设备上打开';
+
+function MirrorNote() {
+  return (
+    <div
+      data-websim-mirror-note=""
+      style={{
+        ...fillView,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 'var(--sp-2)',
+        padding: 'var(--sp-4)',
+        textAlign: 'center',
+      }}
+    >
+      <div style={{ color: 'var(--ink-soft)', fontSize: 'var(--fs-md)' }}>{MIRROR_NOTE}</div>
+      <div style={{ color: 'var(--ink-dim)', fontSize: 'var(--fs-sm)', lineHeight: 1.5 }}>{MIRROR_HINT}</div>
+    </div>
+  );
+}
+
 export default function WebSim({ stageId, home = '/', onResponse }) {
   const st = useStudentStage(stageId);
   const start = typeof home === 'string' && home.startsWith('/') ? home : '/';
@@ -369,6 +395,7 @@ export default function WebSim({ stageId, home = '/', onResponse }) {
       <Fill data-sandbox-websim="">
         <div style={frameStyle}>
           <Chrome addr={start} status={null} disabled />
+          <MirrorNote />
         </div>
       </Fill>
     );

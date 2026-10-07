@@ -223,6 +223,10 @@ export function openDb(dbPath) {
       DELETE FROM drafts;
       DELETE FROM component_teacher_data;
     `);
+    // 阶段进度回课前：classroom_snapshot（persistence.js）的 stageIndex 归 0、subPhase 清空，lessonId / stagesHash 保留
+    // （备份按它核对来源课）；离线重置（工作台在平台停止时）只走这里，不改则下次启动 hydrate 回到原阶段
+    const snap = getSession('classroom_snapshot');
+    if (snap && typeof snap === 'object') setSession('classroom_snapshot', { ...snap, stageIndex: 0, subPhase: null, savedAt: Date.now() });
     const epoch = newEpoch();
     setSession('class_epoch', epoch);
     return epoch;

@@ -5,6 +5,7 @@
 // - lang 只认 python；其它值（text / json）只等宽不高亮；超过 HIGHLIGHT_MAX 字也不高亮（大文本不卡）
 // - size：sm → --fs-sm，md → --fs-md；wrap：true 时 pre-wrap（提示块、大屏），否则 pre + 横向滚动
 // - maxLines：超过时 <pre> 里只放前 n 行，<pre> 之后另起一行"…还有 N 行"（data-code-more；不做展开）
+// - <pre> 固定 text-align: left（S23）：放进居中的 dialog 也左对齐、保留缩进
 // - 不收 style；className、data-* / aria-* / id / title 落在 <pre> 上
 import { useMemo } from 'react';
 import { highlightCode, tagHighlighter } from '@lezer/highlight';
@@ -70,6 +71,7 @@ export default function CodeView({ code, lang = 'python', size = 'sm', wrap = fa
     background: 'var(--code-bg)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius-sm)',
+    textAlign: 'left',
     userSelect: 'text',
     ...(wrap ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } : { whiteSpace: 'pre', overflowX: 'auto' }),
   };

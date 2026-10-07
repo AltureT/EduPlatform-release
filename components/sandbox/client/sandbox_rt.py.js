@@ -1,6 +1,7 @@
 // sandbox 初始化脚本（规格 §3.8）：Worker init 时写入 site-packages/_sandbox_rt.py 再 import，
 // 这样运行时自己的帧路径含 /lib/python3，会被 friendlyError 裁掉（学生代码的帧是 <exec>）。
-// 依赖 JS 侧 registerJsModule('_sb_js', { flush })：把 Worker 里合批的输出立即送出。
+// 依赖 JS 侧 registerJsModule('_sb_js', { flush, image })：flush 把 Worker 里合批的输出立即送出；
+// image(json) 在运行中途送出一张图（plt.show() 时，JSON [png, compact]）。
 // 与 JS 交换的数据一律是 JSON 字符串（避免 PyProxy 泄漏）。
 export default String.raw`
 import sys, os, io, json, base64, time, importlib, shutil
@@ -11,6 +12,8 @@ os.environ['MPLBACKEND'] = 'Agg'
 import _sb_js
 
 STATE = {'ns': None, 'client': None}
+# 图：live 只在 run() 执行学生代码期间为真；shown 是本次运行已由 plt.show() 送出的张数（与收尾收集共用 max 上限）
+FIGS = {'live': False, 'limit': 80000, 'max': 6, 'shown': 0}
 FONT_DIR = '/usr/share/fonts/sandbox'
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 LOCAL_HOSTS = ('websim.invalid', 'localhost', '127.0.0.1')
@@ -48,10 +51,11 @@ def _err(e):
     return {'type': type(e).__name__, 'message': msg, 'traceback': ''.join(traceback.format_exception(e))}
 
 
-def run(code):
+def run(code, img_limit=80000, max_images=6):
     """全新命名空间执行学生代码；最后一条是裸表达式时返回其 repr（只求值一次）。成功时记住命名空间供 http() 使用"""
     from pyodide.code import eval_code
     ns = {'__name__': '__main__'}
+    FIGS.update(live=True, limit=img_limit, max=max_images, shown=0)
     try:
         try:
             value = eval_code(code, ns, return_mode='last_expr')
@@ -73,6 +77,7 @@ def run(code):
     except BaseException as e:
         return json.dumps({'ok': False, 'value': None, 'error': _err(e)})
     finally:
+        FIGS['live'] = False
         del ns
         flush()
 
@@ -83,25 +88,26 @@ def _png(fig, dpi):
     return base64.b64encode(b.getvalue()).decode('ascii')
 
 
-def collect_figs(limit=80000, max_n=6):
-    """收集所有 figure：[(dpi 96 原图, compact)]；原图超 limit 时按 72、50 dpi 重出，仍超则 compact 为 None"""
-    plt = sys.modules.get('matplotlib.pyplot')
-    if plt is None:
-        return '[]'
+def _fig_pair(fig, limit):
+    """[dpi 96 原图, compact]；原图超 limit 时按 72、50 dpi 重出，仍超则 compact 为 None"""
+    full = _png(fig, 96)
+    compact = full if len(full) <= limit else None
+    if compact is None:
+        for dpi in (72, 50):
+            c = _png(fig, dpi)
+            if len(c) <= limit:
+                compact = c
+                break
+    return [full, compact]
+
+
+def _figs_out(plt, limit, max_n):
+    """把当前所有 figure 转成 [[原图, compact]]（最多 max_n 张），然后全部关闭"""
     out = []
     try:
-        for n in plt.get_fignums()[:max_n]:
+        for n in plt.get_fignums()[:max(0, max_n)]:
             try:
-                fig = plt.figure(n)
-                full = _png(fig, 96)
-                compact = full if len(full) <= limit else None
-                if compact is None:
-                    for dpi in (72, 50):
-                        c = _png(fig, dpi)
-                        if len(c) <= limit:
-                            compact = c
-                            break
-                out.append([full, compact])
+                out.append(_fig_pair(plt.figure(n), limit))
             except Exception:
                 pass
     finally:
@@ -109,7 +115,36 @@ def collect_figs(limit=80000, max_n=6):
             plt.close('all')
         except Exception:
             pass
-    return json.dumps(out)
+    return out
+
+
+def _show(*a, **k):
+    """plt.show()：像 notebook 一样把当前的图按顺序送进输出区并关闭，下一张图从新画布开始。
+    不在 run() 里（pytest、Flask 请求）时与原来一样什么都不做"""
+    if not FIGS['live']:
+        return None
+    plt = sys.modules.get('matplotlib.pyplot')
+    if plt is None or not plt.get_fignums():
+        return None
+    flush()
+    for pair in _figs_out(plt, FIGS['limit'], FIGS['max'] - FIGS['shown']):
+        FIGS['shown'] += 1
+        try:
+            _sb_js.image(json.dumps(pair))
+        except Exception:
+            pass
+    return None
+
+
+def collect_figs(limit=80000, max_n=6):
+    """运行结束后收集还开着的 figure（没调 plt.show() 的图）：[(dpi 96 原图, compact)]；
+    与本次运行里 plt.show() 已送出的张数合计不超过 max_n"""
+    plt = sys.modules.get('matplotlib.pyplot')
+    budget = max_n - FIGS['shown']
+    FIGS['shown'] = 0
+    if plt is None:
+        return '[]'
+    return json.dumps(_figs_out(plt, limit, budget))
 
 
 # K4：常见中文字体名都作别名指向子集字体，学生照大陆常见写法设 SimHei 等也能显示中文、不报 findfont
@@ -140,7 +175,7 @@ def _add_font_aliases(font_manager, font_path):
 
 
 def setup_mpl(font_path):
-    """matplotlib 加载后调用：Agg、注册中文字体、关掉负号 unicode、plt.show 变空操作"""
+    """matplotlib 加载后调用：Agg、注册中文字体、关掉负号 unicode、plt.show 换成即时出图（_show）"""
     import matplotlib
     matplotlib.use('Agg')
     from matplotlib import font_manager
@@ -157,7 +192,7 @@ def setup_mpl(font_path):
     rc['font.sans-serif'] = names + ['Noto Sans CJK SC', 'Noto Sans SC'] + [f for f in rc['font.sans-serif'] if f not in names]
     rc['font.family'] = 'sans-serif'
     rc['axes.unicode_minus'] = False
-    plt.show = lambda *a, **k: None
+    plt.show = _show
     return json.dumps(names)
 
 
