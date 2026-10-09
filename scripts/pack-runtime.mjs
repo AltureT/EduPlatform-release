@@ -3,6 +3,7 @@
 //   输入 template/vendor/pyodide/：manifest.json 在、列出的每个文件 sha256 校验通过、fontSubset: true、版本与 RUNTIME_RELEASE_TAG 一致，否则报错
 //   输出 <仓库根>/release/EduPlatform-runtime-v<version>.zip：pyodide/manifest.json + manifest 列出的 pyodide/v<version>/**（含 .gz 预压缩文件），
 //     zip 内路径以 pyodide/ 开头；同时输出同名 .sha256（sha256sum 格式）。manifest 没列的文件（如下载中断留下的 .part）不打进去，只提示
+//   template/THIRD_PARTY_NOTICES.md 在就放在 zip 根上（Pyodide 的 MPL-2.0、Noto 字体的 OFL 要求随包附许可；解压时只取 pyodide/ 下 manifest 列出的文件，它不进 vendor/）
 //   zip 用 lib/zip.js（Node 自带 zlib）生成；时间戳固定，同样的 vendor 打出同样的 zip
 // 导出 packRuntime({ templateDir, outDir, log, warn }) → { version, name, zipPath, shaPath, sha256, size, count }（publish:release --runtime 调用）
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ import { RUNTIME_RELEASE_TAG, runtimeZipName, verifyRuntimeDir } from './lib/run
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const TEMPLATE_DIR = path.resolve(HERE, '..');
+export const NOTICES_FILE = 'THIRD_PARTY_NOTICES.md';
 
 const walk = (dir, rel = '') => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
   const r = rel ? `${rel}/${e.name}` : e.name;
@@ -58,6 +60,9 @@ export function packRuntime({
     { name: 'pyodide/manifest.json', data: fs.readFileSync(path.join(pyDir, 'manifest.json')) },
     ...listed.map((r) => ({ name: `pyodide/${r}`, data: fs.readFileSync(path.join(pyDir, ...r.split('/'))) })),
   ];
+  const notices = path.join(templateDir, NOTICES_FILE);
+  if (fs.existsSync(notices)) entries.push({ name: NOTICES_FILE, data: fs.readFileSync(notices) });
+  else warn(`没有 ${NOTICES_FILE}，整包里不带第三方许可声明`);
   const tmp = `${zipPath}.part`;
   const size = writeZip(tmp, entries);
   fs.renameSync(tmp, zipPath);

@@ -1,7 +1,7 @@
 {
-  "version": "0.9.5",
-  "builtAt": "2026-10-07T09:05:43.591Z",
-  "commit": "36efcf3",
+  "version": "0.9.6",
+  "builtAt": "2026-10-09T11:20:59.600Z",
+  "commit": "86d9f0c",
   "protected": {
     ".clinerules/eduplatform.md": "7e1b28f03e4df2a26210939d10ab75c1b968842d68de9e01a81eedcf21dcc578",
     ".cursor/rules/eduplatform.mdc": "ac08631e3cfd7379541fef9e4d53753dcde7215b180fca6ffb316d22a32ff025",
@@ -193,7 +193,7 @@
     "kernel/test-utils/virtualStudent.js": "484797f63378d586f7f9cbf44821ca6ca2e9eeb2d391841d72ffded983bc4933",
     "kernel/test-utils/virtualTeacher.js": "472aef72c8124f225779e588104f20708baf2add58df69254cf7cc6d7d4b7c53",
     "kernel/test-utils/waitFor.js": "8a31fbd3f830af05a29edf523159ace8e4c05c7d3c0fe113ad370b0f72d6176a",
-    "package.json": "6642f7560eb70440a55ddce6a0de01f3920622e77e6183ed061a2cef6e2026d9",
+    "package.json": "5a164286e9b81ad011bb96c62a2d6b89a337f3e27b94bd5e0344aaa05c075eca",
     "primitives/README.md": "e647a72797a30ecaa2c33f116734d126f413d17a656f819c58893cda276be092",
     "primitives/_shared/CodeStats.jsx": "a8b111bebcc3c70de4324862f19fb1705d1145f486d81f8d2b55223cec207c00",
     "primitives/_shared/DemoTools.jsx": "0c0344f78eaba98d332e00c9fa23fc1bc25c45117b587f279d9eb32a8114a7d9",
@@ -321,7 +321,7 @@
     "scripts/new-component.mjs": "42b3086a55c8da4cd6ef08c7edcbc67abbafbb98a0064cf7b8ff077d1e6ef571",
     "scripts/new-lesson.mjs": "5cee06c9fff65a0546de0dac11250c8f72c1af7f207d43c3aa3babd5cb21a68c",
     "scripts/new-stage.mjs": "7fccbf247f8b762d336734bb9754398b0f76db1ec97736923b4f1b1717bafee8",
-    "scripts/pack-runtime.mjs": "1daa7f8fd46c8ab1ffcac013e8aee0fb0f7f76315b973c86a28a2866698d04bd",
+    "scripts/pack-runtime.mjs": "6dee899c1a20f2d730bfb154e0dcf4ff985e5c595763605ad967d0ccedc10bcf",
     "scripts/prep-tests.mjs": "f17ff4ebfe15d1b1499301d716c0c8218a55758501b81d778a9e0d541fec92f3",
     "scripts/simulate.js": "a010fd80549f4cbde576bb7ba3af1bdce601e53000e479cdedb7fef0766d957f",
     "scripts/update-platform.mjs": "51cecc50bc424f9770dfdf0aebaba79713e83ccd66933c486ad37f25c73e80e3",

@@ -1,0 +1,26 @@
+文档与教程许可 · Documentation License
+
+Copyright (c) 2026 AltureT
+
+本项目的文档与教程——所有 docs/ 目录下的内容（开发仓库里是根目录 docs/ 与 template/docs/，
+发布包里是 docs/），含教程视频、分镜与配图、教学设计 PDF——
+采用 知识共享 署名 4.0 国际许可协议（CC BY 4.0）授权：
+可以自由复制、转载、改编、用于商业用途，但须署名原作者（AltureT / 班迹 EduPlatform）、
+附上本许可链接，并注明是否做过修改。
+
+许可全文：https://creativecommons.org/licenses/by/4.0/legalcode.zh-hans
+
+代码（含 README、skills/、示例课 examples/）不适用本文件，按 LICENSE（MIT）授权。
+第三方内容按各自许可，见 THIRD_PARTY_NOTICES.md（开发仓库里在 template/ 下）。
+"班迹"名称与标志不在以上任何授权范围内；改出来的版本请换个名字。
+
+---
+
+The documentation and tutorials of this project — everything under any docs/
+directory (docs/ and template/docs/ in the development repository), including tutorial videos, storyboards, illustrations and lesson-design PDFs —
+are licensed under the Creative Commons Attribution 4.0 International License
+(CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+
+Source code (including README, skills/ and examples/) is licensed under the MIT
+License, see LICENSE. Third-party components keep their own licenses, see
+THIRD_PARTY_NOTICES.md (under template/ in the development repository). The name and logo "班迹" are not licensed under either.

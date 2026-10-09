@@ -1,7 +1,8 @@
 {
   "name": "classroom-template",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "imports": {
     "#kernel/*": "./kernel/*",
