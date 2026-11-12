@@ -16,13 +16,15 @@
 //   backupLessonId(backupDir, file) → 同上，单个文件
 //   dataSummary({ dbPath, backupDir }) → { roster, dbBytes, lastBackup } | null（库不存在）：课程列表（第 1 步）卡片"名单 N 人 · 数据 M KB · 最近备份"
 //   moveLessonData(root, id, destDir) → { moved: [...] }：删课连带——data/lessons/<id>.sqlite* 与 backups/lessons/<id>/ 移到 destDir/data/
+//   班级名单与按班分库规格 §2.2、§2.4：lessonPaths 另接受 classId（按班分库）；moveLessonData 连 data/lessons/<id>/（各班的库）一起移；
+//     moveClassData(root, classId, { now }) → { movedTo, moved }：删班级连带，移到 backups/deleted-classes/<班级 id>-<ts>/
 //   removeUnsorted(root, { now }) → { movedTo }：未归类的旧数据"删除"——移到 backups/deleted-lessons/_unsorted-<ts>/data/（不直接删）
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { openDb } from '../../kernel/server/db.js';
-import { lessonDbPath, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
+import { lessonDbPath, classDbPath, UNSORTED_ID, LESSONS_DATA_DIR, CLASS_ID_RE } from '../../kernel/server/lesson-db-path.js';
 import { snapshotLessonId } from './migrate-db.js';
 
 const BACKUP_RE = /^(classroom|pre_restore|pre_reset)_[^/\\]*\.db$/;
@@ -153,11 +155,16 @@ async function safetySnapshot(prefix, { dbPath, backupDir, statfs, now }) {
 export const LESSON_BACKUPS_DIR = 'backups/lessons';
 export const DELETED_DIR = 'backups/deleted-lessons';
 
-export function lessonPaths(root, id, { customDb = null } = {}) {
+export const DELETED_CLASSES_DIR = 'backups/deleted-classes';
+
+// 班级名单与按班分库规格 §2.2：classId → data/lessons/<id>/<班级 id>.sqlite 与 backups/lessons/<id>/<班级 id>/；没有 classId = 不分班（照旧）
+export function lessonPaths(root, id, { customDb = null, classId = null } = {}) {
   const flat = path.join(root, 'backups');
   if (customDb) return { dbPath: path.resolve(root, customDb), backupDir: flat };
   if (id === UNSORTED_ID) return { dbPath: lessonDbPath(root, UNSORTED_ID), backupDir: flat };
-  return { dbPath: lessonDbPath(root, id), backupDir: path.join(root, ...LESSON_BACKUPS_DIR.split('/'), id) };
+  const lessonBackups = path.join(root, ...LESSON_BACKUPS_DIR.split('/'), id);
+  if (classId) return { dbPath: classDbPath(root, id, classId), backupDir: path.join(lessonBackups, classId) };
+  return { dbPath: lessonDbPath(root, id), backupDir: lessonBackups };
 }
 
 export function backupLessonId(backupDir, file) {
@@ -280,7 +287,45 @@ export function moveLessonData(root, id, destDir) {
   };
   for (const sfx of ['', '-wal', '-shm']) move(dbPath + sfx, path.join(dataDir, path.basename(dbPath) + sfx));
   move(backupDir, path.join(dataDir, 'backups'));
+  // 按班分库：各班的库在 data/lessons/<id>/ 下（备份已随 backups/lessons/<id>/ 一起走）
+  move(path.join(path.dirname(dbPath), id), path.join(dataDir, 'classes'));
   return { moved };
+}
+
+// 删班级（班级名单与按班分库规格 §2.4）：它在各门课里的库（data/lessons/<课程 id>/<班级 id>.sqlite*）与备份
+//   （backups/lessons/<课程 id>/<班级 id>/）移到 backups/deleted-classes/<班级 id>-<ts>/<课程 id>/，不直接删 → { movedTo | null, moved }
+export function moveClassData(root, classId, { now = new Date() } = {}) {
+  if (typeof classId !== 'string' || !CLASS_ID_RE.test(classId)) throw userError('班级不对');
+  const dataRoot = path.join(root, ...LESSONS_DATA_DIR.split('/'));
+  const backupRoot = path.join(root, ...LESSON_BACKUPS_DIR.split('/'));
+  const parent = path.join(root, ...DELETED_CLASSES_DIR.split('/'));
+  const baseName = `${classId}-${stamp(now)}`;
+  let name = baseName;
+  for (let i = 2; fs.existsSync(path.join(parent, name)); i += 1) name = `${baseName}_${i}`;
+  const dest = path.join(parent, name);
+  const moved = [];
+  const move = (from, to) => {
+    const st = lstatOrNull(from);
+    if (!st || st.isSymbolicLink()) return;
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    moved.push(path.relative(root, from).split(path.sep).join('/'));
+  };
+  const dirs = (d) => {
+    try {
+      return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    } catch {
+      return [];
+    }
+  };
+  for (const lessonId of dirs(dataRoot)) {
+    for (const sfx of ['', '-wal', '-shm']) {
+      const f = `${classId}.sqlite${sfx}`;
+      move(path.join(dataRoot, lessonId, f), path.join(dest, lessonId, f));
+    }
+  }
+  for (const lessonId of dirs(backupRoot)) move(path.join(backupRoot, lessonId, classId), path.join(dest, lessonId, 'backups'));
+  return { movedTo: moved.length ? `${DELETED_CLASSES_DIR}/${name}` : null, moved };
 }
 
 const pad2 = (n) => String(n).padStart(2, '0');

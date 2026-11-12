@@ -222,9 +222,56 @@
            （教师密码、端口、AI 接口是全平台共用的，整体搬到平台区"设置"页） -->
       <section id="page-prepare" class="page" hidden>
         <div data-need-course>
-          <!-- 名单：只对当前课（接口 lesson 参数传当前课目录） -->
+          <!-- 班级名单与按班分库规格 §2.5：上课班级（全平台共用；当前班级记在 .env CLASS_ID）。选项、按钮状态由 app.js 按 /api/classes 填 -->
+          <div class="card" id="prep-class">
+            <h3>上课班级</h3>
+            <p class="desc">每个班存一份名单，换班选一下；各班的课堂数据分开存。</p>
+            <div class="row class-row">
+              <label for="c-select">现在上</label>
+              <select id="c-select" class="class-select" title="选这节课上哪个班；名单和课堂数据跟着换"></select>
+              <button id="c-new" type="button" title="新建一个班，接着在下面粘贴它的名单">新建班级</button>
+              <button id="c-bulk-btn" type="button" title="粘贴全年级的班级、姓名两列，一次建好所有班和名单">批量导入</button>
+            </div>
+            <!-- 批量导入（规格 §2.6）：粘贴全年级"班级、姓名"两列 → 预览（每班人数、已有 / 新建）→ 导入 -->
+            <div id="c-bulk" class="c-bulk" hidden>
+              <div class="sample">
+                <p class="label">样例（两列：班级、姓名）</p>
+                <pre>班级	姓名
+高一(1)班	张三
+高一(2)班	李四</pre>
+                <p class="help">从 Excel 复制这两列粘贴，或选 CSV / TXT 文件。</p>
+              </div>
+              <textarea id="cb-text" rows="8" placeholder="在这里粘贴全年级的班级和姓名"></textarea>
+              <div class="row">
+                <label class="file" title="选一个 CSV 或 TXT 文件，内容会放进上面的框里">选择文件<input type="file" id="cb-file" accept=".csv,.txt,text/plain,text/csv"></label>
+                <button id="cb-preview" type="button" title="先看看解析出几个班、每班几个人，确认后再导入">预览</button>
+                <button id="cb-close" type="button" title="收起批量导入">收起</button>
+              </div>
+              <div id="cb-preview-box" class="preview" hidden>
+                <p id="cb-count" class="big-ish"></p>
+                <ul id="cb-list" class="cb-list"></ul>
+                <p id="cb-note" class="muted" hidden></p>
+                <div class="row" id="cb-ops">
+                  <button id="cb-import" type="button" class="primary" title="新的班自动建好；已有同名的班，名单换成这份">导入这些班</button>
+                  <button id="cb-cancel" type="button" title="收起预览，回到上面修改">回去修改</button>
+                </div>
+              </div>
+            </div>
+            <p id="c-note" class="muted" hidden></p>
+            <div class="row" id="c-ops" hidden>
+              <button id="c-rename" type="button" title="只改班名，名单和数据都不动">改班名</button>
+              <button id="c-delete" type="button" class="danger" title="删除这个班的名单；它在各门课里的课堂数据移到平台文件夹的备份里">删除这个班</button>
+            </div>
+            <details class="more-help"><summary>详细说明</summary>
+              <p>同一门课给几个班上：每个班建一次、粘贴一次名单，以后换班只要在这里选。每个班在每门课里的学生记录和做的内容分开存，换回来接着上次的进度；数据页可以按班备份、恢复。</p>
+              <p>平台正在上课时换班，要重启平台才生效。选"不分班"就和以前一样：名单只属于这门课。</p>
+              <p>批量导入：从学校发的 Excel 名单里复制"班级""姓名"两列（带表头也行，多出学号等列会忽略；班级是合并单元格也没关系），一次建好全年级的班。和已有的班同名时，那个班的名单换成新的；换班仍在"现在上"里选。</p>
+            </details>
+          </div>
+
+          <!-- 名单：选了班级时是这个班的名单（所有课共用，PUT /api/classes/:id）；不分班时只对当前课（接口 lesson 参数传当前课目录） -->
           <div class="card" id="prep-roster">
-            <h3><span class="ln"></span>的名单</h3>
+            <h3 id="r-title"><span class="ln"></span>的名单</h3>
             <p class="desc">学生加入时从名单里选名字，不会错字、重名。</p>
             <p id="r-status" class="r-status">—</p>
             <p class="muted" id="r-names"></p>
@@ -239,7 +286,7 @@
             <div class="row">
               <label class="file" title="选一个 CSV 或 TXT 名单文件，内容会放进上面的框里">选择文件<input type="file" id="r-file" accept=".csv,.txt,text/plain,text/csv"></label>
               <button id="r-preview" type="button" title="先看看解析出几个名字，确认后再导入">预览名单</button>
-              <button data-action="roster-clear" type="button" class="danger" title="删除名单，学生改为自己输入名字">清空名单</button>
+              <button id="r-clear" data-action="roster-clear" type="button" class="danger" title="删除名单，学生改为自己输入名字">清空名单</button>
             </div>
             <div id="r-preview-box" class="preview" hidden>
               <p id="r-preview-count" class="big-ish"></p>
@@ -483,6 +530,7 @@
             <h2 class="page-title"><span class="ln-data"></span>的数据</h2>
             <button id="d-other" class="linkish" type="button" title="选一门别的课看它的备份；不会改当前课程">看别的课的数据</button>
             <select id="d-lesson" class="lesson-select" hidden aria-label="看哪门课的数据" title="数据是每门课自己的；换一门课看它的备份，不会改当前课程"></select>
+            <select id="d-class" class="class-select" hidden aria-label="看哪个班的数据" title="每个班的课堂数据分开存；换一个班看它的备份，不会改上课班级"></select>
           </div>
           <div class="card">
             <h3>备份</h3>
@@ -499,7 +547,7 @@
           </div>
           <div class="card">
             <h3>重置课堂</h3>
-            <p class="desc">换班或新一节课之前清掉上一节的数据；会先自动备份。</p>
+            <p class="desc">新一节课之前清掉上一节的数据；会先自动备份。</p>
             <p id="reset-desc" class="help"></p>
             <button data-action="reset" class="danger" title="清掉上一节课的数据，课堂回到第一环节">重置并回到第一环节</button>
             <details class="more-help"><summary>详细说明</summary><p>清除这门课的学生记录、设备对应关系和学生做的内容，课堂回到第一个环节，名单保留。重置前会自动存一份（列表里标"重置前自动快照"），需要时可以恢复。</p></details>

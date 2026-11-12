@@ -21,7 +21,7 @@ import {
   platformFilesStatus, updateStatus, updateBandText, updateResultText, updateRecoveredText, UPDATE_TEXT,
   aiTestText,
   aiModelsText,
-  lessonDataLine, lessonPickOptions, migratedText,
+  lessonDataLine, lessonPickOptions, migratedText, CLASS_TEXT,
 } from './ui-logic.js';
 
 // ===== 访问凭据：从地址栏 t 取出后存 sessionStorage，并从地址栏移除 =====
@@ -155,10 +155,11 @@ function renderPage(hash) {
   // 数据页：带 ?lesson= 就看那门课；不带（侧栏点"数据"）就复位回当前课、收起选课框
   if (r.page === 'data') {
     dataLesson = r.lesson ?? '';
+    dataClass = new URLSearchParams(String(hash ?? '').split('?')[1] ?? '').get('class') ?? '';
     if (!dataLesson) $('#d-lesson').hidden = true;
   }
   // 空井号、#home、旧井号：地址栏换成新页面的井号（不留历史记录）
-  const want = r.page === 'data' && r.lesson ? `#data?lesson=${encodeURIComponent(r.lesson)}` : `#${r.page}`;
+  const want = r.page === 'data' && (r.lesson || dataClass) ? dataHash() : `#${r.page}`;
   if (location.hash !== want) history.replaceState(null, '', want);
   currentPage = r.page;
   for (const s of $$('.page')) s.hidden = s.id !== `page-${r.page}`;
@@ -1092,15 +1093,35 @@ function renderClassroom() {
 // ===== 名单（第 4 步，只对当前课）/ 数据页（当前课，"看别的课的数据"可换，只影响本页）（M6）=====
 // 当前课目录：根目录开发课 '' → '.'
 const dirParam = (dir) => (dir === '' ? '.' : dir);
+// 班级名单与按班分库规格 §2.5：名单卡跟当前班级（class=<id>，不分班 none）
 const rosterQuery = () => {
   const cl = currentLesson();
-  return cl && typeof cl.dir === 'string' ? `?lesson=${encodeURIComponent(dirParam(cl.dir))}` : '';
+  const q = new URLSearchParams();
+  if (cl && typeof cl.dir === 'string') q.set('lesson', dirParam(cl.dir));
+  q.set('class', classesState.current ?? 'none');
+  return `?${q}`;
 };
 // 数据页：dataLesson = 选过的课程目录（'' = 当前课）；pickValue = 实际选中的
 let dataLesson = '';
 let pickRows = [];
 let pickValue = '';
-const lessonQuery = () => (pickValue ? `?lesson=${encodeURIComponent(pickValue)}` : '');
+// 数据页的班级：dataClass = 选过的（'' = 缺省：看的是正在上的课时跟正在上的班，否则当前班级）；classPick = 实际选中的（'none' = 不分班）
+let dataClass = '';
+let classPick = 'none';
+const dataQuery = (lesson = pickValue) => {
+  const q = new URLSearchParams();
+  if (lesson) q.set('lesson', lesson);
+  q.set('class', classPick);
+  return `?${q}`;
+};
+const lessonQuery = () => dataQuery();
+const dataHash = () => {
+  const q = new URLSearchParams();
+  if (dataLesson) q.set('lesson', dataLesson);
+  if (dataClass) q.set('class', dataClass);
+  const t = q.toString();
+  return t ? `#data?${t}` : '#data';
+};
 const runningDirOf = (o) => (o?.platform?.state === 'running' && o.runningLesson ? o.runningLesson.dir ?? null : null);
 function pickedRow() {
   if (pickValue === '.') {
@@ -1112,7 +1133,9 @@ function pickedRow() {
 const pickedName = () => lessonName(pickedRow());
 function pickedRunning() {
   const rd = runningDirOf(overview);
-  return rd !== null && (pickValue === rd || (rd === '' && pickValue === '.'));
+  if (!(rd !== null && (pickValue === rd || (rd === '' && pickValue === '.')))) return false;
+  // 按班分库：同一门课还要是正在上的那个班
+  return (overview?.classes?.running?.id ?? 'none') === classPick;
 }
 async function loadLessonPick() {
   if (!overview) await refresh();
@@ -1129,7 +1152,19 @@ async function loadLessonPick() {
   pickValue = selected;
   // 看的不是当前课时，选课框一直显示
   if (dataLesson && dataLesson !== dirParam(currentDir ?? '')) box.hidden = false;
-  setText('.ln-data', pickedName());
+  // 班级选择：有班级（或地址栏指定了班）才显示
+  await loadClasses({ render: false });
+  const cbox = $('#d-class');
+  cbox.textContent = '';
+  for (const c of classesState.classes) cbox.append(el('option', { value: c.id, textContent: c.name }));
+  cbox.append(el('option', { value: 'none', textContent: CLASS_TEXT.noneName }));
+  const fallback = (pickedRunning() ? classesState.running : classesState.current) ?? 'none';
+  const want = dataClass || fallback;
+  classPick = [...cbox.options].some((o) => o.value === want) ? want : 'none';
+  cbox.value = classPick;
+  cbox.hidden = classesState.classes.length === 0 && classPick === 'none';
+  const klass = classesState.classes.find((c) => c.id === classPick);
+  setText('.ln-data', CLASS_TEXT.dataName(pickedName(), klass?.name));
   renderResetDesc();
 }
 $('#d-other').addEventListener('click', () => {
@@ -1140,7 +1175,12 @@ $('#d-other').addEventListener('click', () => {
 $('#d-lesson').addEventListener('change', (e) => {
   dataLesson = e.target.value;
   // 地址栏跟着改（不触发 hashchange），刷新页面仍是这门课
-  history.replaceState(null, '', `#data?lesson=${encodeURIComponent(dataLesson)}`);
+  history.replaceState(null, '', dataHash());
+  loadBackups();
+});
+$('#d-class').addEventListener('change', (e) => {
+  dataClass = e.target.value;
+  history.replaceState(null, '', dataHash());
   loadBackups();
 });
 
@@ -1148,25 +1188,154 @@ let previewNames = null;
 async function loadRoster() {
   if (!overview) await refresh();
   if (!currentLesson()) return;
+  await loadClasses();
+  const cur = curClass();
+  setText('#r-title', CLASS_TEXT.rosterTitle(cur ? cur.name : lessonName(currentLesson())));
+  $('#r-clear').hidden = Boolean(cur);
+  $('#r-import').title = cur ? CLASS_TEXT.importTitle : CLASS_TEXT.importTitleLesson;
+  const namesLine = (names) => names.slice(0, 20).join('、') + (names.length > 20 ? LESSON_TEXT.rosterMore(names.length) : '');
+  if (cur) {
+    // 班级名单以班级列表为准；已绑定设备数读这门课这个班的库（读不到按 0）
+    const r = await api(`/api/roster${rosterQuery()}`).catch(() => null);
+    setText('#r-status', CLASS_TEXT.rosterStatus(cur.count, r?.bound ?? 0));
+    setText('#r-names', namesLine(cur.names));
+    return;
+  }
   try {
     const r = await api(`/api/roster${rosterQuery()}`);
     setText('#r-status', LESSON_TEXT.rosterStatus(r.count, r.bound));
-    setText('#r-names', r.names.slice(0, 20).join('、') + (r.count > 20 ? LESSON_TEXT.rosterMore(r.count) : ''));
+    setText('#r-names', namesLine(r.names));
   } catch (err) {
     setText('#r-status', err.message);
     setText('#r-names', '');
   }
 }
-$('#r-file').addEventListener('change', async (e) => {
+
+// ===== 上课班级（班级名单与按班分库规格 §2.5）：全平台共用；当前班级记在 .env CLASS_ID =====
+let classesState = { classes: [], current: null, running: null };
+const curClass = () => classesState.classes.find((c) => c.id === classesState.current) ?? null;
+async function loadClasses({ render = true } = {}) {
+  const r = await api('/api/classes').catch(() => null);
+  if (r) classesState = r;
+  if (render) renderClasses();
+}
+function renderClasses() {
+  const box = $('#c-select');
+  box.textContent = '';
+  for (const c of classesState.classes) box.append(el('option', { value: c.id, textContent: CLASS_TEXT.option(c) }));
+  box.append(el('option', { value: 'none', textContent: CLASS_TEXT.none }));
+  box.value = classesState.current ?? 'none';
+  $('#c-ops').hidden = !curClass();
+  const note = CLASS_TEXT.note({ ...classesState, platformRunning: platform.state === 'running' });
+  $('#c-note').hidden = !note;
+  setText('#c-note', note);
+}
+const classNameOf = (id) => classesState.classes.find((c) => c.id === id)?.name ?? CLASS_TEXT.noneName;
+function afterPending(r) {
+  if (r && 'pendingRestart' in r) renderPlatform({ ...platform, pendingRestart: r.pendingRestart });
+}
+$('#c-select').addEventListener('change', async (e) => {
+  const id = e.target.value;
+  const r = await run(() => api('/api/classes/current', { method: 'POST', body: { id } }), (x) => CLASS_TEXT.switched(classNameOf(id), x.pendingRestart));
+  afterPending(r);
+  await loadRoster();
+  refreshSoon();
+});
+$('#c-new').addEventListener('click', async () => {
+  const r = await textDialog({
+    head: CLASS_TEXT.newHead, ok: CLASS_TEXT.newOk, value: '', placeholder: CLASS_TEXT.newPlaceholder, maxLength: 20, empty: CLASS_TEXT.needName,
+    submit: (name) => api('/api/classes', { method: 'POST', body: { name } }),
+  });
+  if (!r) return;
+  toast(CLASS_TEXT.created(r.class.name));
+  afterPending(r);
+  await loadRoster();
+  refreshSoon();
+  $('#r-text').focus();
+});
+$('#c-rename').addEventListener('click', async () => {
+  const cur = curClass();
+  if (!cur) return;
+  const r = await textDialog({
+    head: CLASS_TEXT.renameHead, ok: CLASS_TEXT.renameOk, value: cur.name, maxLength: 20, empty: CLASS_TEXT.needName,
+    submit: (name) => (name === cur.name ? null : api(`/api/classes/${encodeURIComponent(cur.id)}`, { method: 'PUT', body: { name } })),
+  });
+  if (!r) return;
+  toast(CLASS_TEXT.renamed(r.class.name));
+  await loadRoster();
+  refreshSoon();
+});
+// 批量导入（规格 §2.6）：粘贴全年级"班级、姓名"两列 → 预览 → 导入（按班名对上的替换名单，没有的新建）
+let bulkClasses = null;
+const showBulk = (on) => {
+  $('#c-bulk').hidden = !on;
+  $('#cb-preview-box').hidden = true;
+  if (on) $('#cb-text').focus();
+};
+$('#c-bulk-btn').addEventListener('click', () => showBulk($('#c-bulk').hidden));
+$('#cb-close').addEventListener('click', () => showBulk(false));
+$('#cb-cancel').addEventListener('click', () => {
+  $('#cb-preview-box').hidden = true;
+  $('#cb-text').focus();
+});
+$('#cb-text').addEventListener('input', () => { $('#cb-preview-box').hidden = true; });
+async function bulkPreview() {
+  const r = await run(() => api('/api/classes/preview', { method: 'POST', body: { text: $('#cb-text').value } }));
+  if (!r) return;
+  bulkClasses = r.classes;
+  $('#cb-preview-box').hidden = false;
+  setText('#cb-count', CLASS_TEXT.bulkCount(r.classes.length, r.total));
+  const ul = $('#cb-list');
+  ul.textContent = '';
+  for (const c of r.classes) {
+    ul.append(el('li', {}, el('span', { textContent: CLASS_TEXT.bulkItem(c) }), el('span', { className: 'tag', textContent: CLASS_TEXT.bulkTag(c.exists) })));
+  }
+  const note = CLASS_TEXT.bulkNote(r);
+  $('#cb-note').hidden = !note;
+  setText('#cb-note', note);
+  $('#cb-ops').hidden = r.classes.length === 0;
+}
+$('#cb-preview').addEventListener('click', bulkPreview);
+$('#cb-file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  $('#cb-text').value = await readListFile(file);
+  e.target.value = '';
+  bulkPreview();
+});
+$('#cb-import').addEventListener('click', async () => {
+  if (!bulkClasses?.length) return;
+  const body = { classes: bulkClasses.map((c) => ({ name: c.name, names: c.names })) };
+  const r = await run(() => api('/api/classes/import', { method: 'POST', body }), (x) => CLASS_TEXT.bulkDone(x));
+  if (!r) return;
+  $('#cb-text').value = '';
+  showBulk(false);
+  await loadRoster();
+  refreshSoon();
+  $('#c-select').focus();
+});
+$('#c-delete').addEventListener('click', async () => {
+  const cur = curClass();
+  if (!cur) return;
+  if (!(await confirmDialog(CLASS_TEXT.deleteConfirm(cur.name), CLASS_TEXT.deleteOk))) return;
+  const r = await run(() => api(`/api/classes/${encodeURIComponent(cur.id)}`, { method: 'DELETE' }), CLASS_TEXT.deleted(cur.name));
+  afterPending(r);
+  await loadRoster();
+  refreshSoon();
+});
+// 读名单文件：Excel 另存的 CSV 常是 GBK 编码，UTF-8 解出乱码时改用 GB18030
+async function readListFile(file) {
   const buf = await file.arrayBuffer();
   let text = new TextDecoder('utf-8').decode(buf);
-  // Excel 另存的 CSV 常是 GBK 编码：UTF-8 解出乱码时改用 GB18030
   if (text.includes('�')) {
     try { text = new TextDecoder('gb18030').decode(buf); } catch { /* 保留 UTF-8 结果 */ }
   }
-  $('#r-text').value = text;
+  return text;
+}
+$('#r-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $('#r-text').value = await readListFile(file);
   e.target.value = '';
   doPreview();
 });
@@ -1188,7 +1357,10 @@ $('#r-cancel').addEventListener('click', () => {
 $('#r-text').addEventListener('input', () => { $('#r-preview-box').hidden = true; });
 $('#r-import').addEventListener('click', async () => {
   if (!previewNames?.length) return;
-  const r = await run(() => api(`/api/roster${rosterQuery()}`, { method: 'POST', body: { names: previewNames } }), (x) => LESSON_TEXT.imported(x.count));
+  const cur = curClass();
+  const r = cur
+    ? await run(() => api(`/api/classes/${encodeURIComponent(cur.id)}`, { method: 'PUT', body: { names: previewNames } }), (x) => CLASS_TEXT.imported(x.class.name, x.class.count, x.pushed))
+    : await run(() => api(`/api/roster${rosterQuery()}`, { method: 'POST', body: { names: previewNames } }), (x) => LESSON_TEXT.imported(x.count));
   if (r) {
     $('#r-preview-box').hidden = true;
     $('#r-text').value = '';
@@ -1236,7 +1408,7 @@ async function loadBackups() {
 }
 async function download(file, lesson) {
   try {
-    const q = lesson ? `?lesson=${encodeURIComponent(lesson)}` : '';
+    const q = dataQuery(lesson);
     const res = await fetch(`/api/backups/${encodeURIComponent(file)}${q}`, { headers: { 'X-Manage-Token': TOKEN } });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || LESSON_TEXT.downloadFailed);
     const url = URL.createObjectURL(await res.blob());
@@ -1265,7 +1437,7 @@ async function restoreBackup(b, lesson) {
   const unsorted = lesson === '_unsorted';
   // 已在确认框里问过来源：普通课也带 allowOther，避免服务端 409 后再问一次
   const body = unsorted ? { to: pickValue, allowOther: differs } : { allowOther: differs };
-  const q = `?lesson=${encodeURIComponent(lesson || pickValue)}`;
+  const q = dataQuery(lesson || pickValue);
   let r;
   try {
     r = await api(`/api/backups/${encodeURIComponent(b.file)}/restore${q}`, { method: 'POST', body });
@@ -1379,27 +1551,35 @@ async function lessonAction(id, row) {
 
 // G4 重命名对话框：预填原课名；回车或"改名"提交，课名不对时在框下说原因（服务端的一句话），不关对话框
 function renameDialog(row) {
+  return textDialog({
+    head: LESSON_TEXT.renameHead, ok: LESSON_TEXT.renameOk, value: row.title ?? '', maxLength: 40, empty: LESSON_TEXT.needTitle,
+    submit: (title) => (title === row.title ? null : api('/api/lessons/rename', { method: 'POST', body: { dir: row.dir, title } })),
+  });
+}
+// 一行文字的对话框（改课名、新建班级、改班名共用）：submit(text) → 结果（null = 不用提交，直接关）；出错在框下说原因，不关对话框
+function textDialog({ head, ok, value = '', placeholder = '', maxLength = 40, empty, submit }) {
   const dlg = $('#rename-dlg');
   const form = $('#rename-form');
   const input = $('#rename-title');
-  input.value = row.title ?? '';
+  setText('#rename-dlg-title', head);
+  setText('#rename-ok', ok);
+  input.maxLength = maxLength;
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', head);
+  input.value = value;
   setText('#rename-err', '');
   return new Promise((resolve) => {
     let result = null;
     const onSubmit = async (e) => {
       e.preventDefault();
-      const title = input.value.trim();
-      if (!title) {
-        setText('#rename-err', LESSON_TEXT.needTitle);
-        return;
-      }
-      if (title === row.title) {
-        dlg.close();
+      const text = input.value.trim();
+      if (!text) {
+        setText('#rename-err', empty);
         return;
       }
       $('#rename-ok').disabled = true;
       try {
-        result = await api('/api/lessons/rename', { method: 'POST', body: { dir: row.dir, title } });
+        result = await submit(text);
         dlg.close();
       } catch (err) {
         if (err.message !== '链接已失效') setText('#rename-err', err.message);
@@ -1430,6 +1610,7 @@ async function afterLessonChange(r) {
   if (currentPage === 'prepare') loadRoster();
   if (currentPage === 'data') {
     dataLesson = '';
+    dataClass = '';
     loadBackups();
   }
 }

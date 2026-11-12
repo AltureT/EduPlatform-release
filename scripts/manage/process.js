@@ -13,6 +13,8 @@
 //   status().lessonConfig：M3 审查，平台启动时的 LESSON_CONFIG（上课面板显示正在跑的课）
 //   status().dbPath：M6 审查，平台启动时实际用的库（绝对路径；启动前算好、以 DB_PATH 传给子进程：.env 自定义 DB_PATH，否则 data/lessons/<课程 id>.sqlite）；
 //     工作台据它判断名单 / 数据页选中的课是不是"正在跑"（比较库路径）
+//   status().classId / className：班级名单与按班分库规格 §2.3，这次启动用的班级（.env CLASS_ID 在班级列表里时；不分班 null）；
+//     有班级时库为 data/lessons/<课程 id>/<班级 id>.sqlite，起子进程前把这个班的名单写进库（replaceRoster）
 //   端口被占时 error = { kind: 'port', reason: 'in-use', port, owner, suggestPort, message }；
 //     reason 'no-permission'（需要管理员权限）/ 'not-ours'（stopOld 指向的不是本项目平台；同样带 suggestPort）
 //   运行中意外退出：error = { kind: 'crash', phase: 'running', message, detail }
@@ -30,7 +32,9 @@ import path from 'node:path';
 import { loadComponents, lessonComponentsRootOf } from '../../kernel/server/component-loader.js';
 import { effectiveEnv, platformEnv, DEFAULT_PASSWORD } from './env-file.js';
 import { readLesson } from './lessons.js';
-import { lessonDbPath } from '../../kernel/server/lesson-db-path.js';
+import { lessonDbPath, classDbPath } from '../../kernel/server/lesson-db-path.js';
+import { openDb } from '../../kernel/server/db.js';
+import { currentClassId, getClass } from './classes.js';
 import { needsBuild, build, pipeLines } from './build.js';
 import { probePort, suggestPort } from './net.js';
 import { findPortOwner, stopOwnPlatform } from './port-owner.js';
@@ -167,7 +171,7 @@ export function createPlatform({
   const ee = new EventEmitter();
   const ring = [];
   const writer = createLogWriter(logFile);
-  const st = { state: 'stopped', port: null, startedAt: null, lesson: null, lessonConfig: null, dbPath: null, error: null, lastExit: null, check: null, envWarning: null };
+  const st = { state: 'stopped', port: null, startedAt: null, lesson: null, lessonConfig: null, dbPath: null, classId: null, className: null, error: null, lastExit: null, check: null, envWarning: null };
   let child = null;
   let buildChild = null;
   let op = null; // 进行中的 start / rebuild
@@ -236,13 +240,18 @@ export function createPlatform({
     }
     let lessonTitle = null;
     let dbPath = null;
+    // 班级名单与按班分库规格 §2.2、§2.3：有当前班级时用这个班的库，起子进程前把班级名单写进去
+    const klass = (() => {
+      const id = currentClassId(root, fileEnv);
+      return id ? getClass(root, id) : null;
+    })();
     try {
       const lesson = await readLesson(root, fileEnv.LESSON_CONFIG);
       if (!lesson) throw new Error(`找不到课程配置 ${fileEnv.LESSON_CONFIG}`);
       lessonTitle = lesson.title ?? null;
       // M6 审查：这次启动用的库（课程 id 不合法时 lessonDbPath 抛错 → 按课程读不出处理）
       const explicit = extraEnv.DB_PATH ?? fileEnv.DB_PATH;
-      dbPath = explicit ? path.resolve(root, explicit) : lessonDbPath(root, lesson.id);
+      dbPath = explicit ? path.resolve(root, explicit) : klass ? classDbPath(root, lesson.id, klass.id) : lessonDbPath(root, lesson.id);
     } catch (err) {
       return fail({ kind: 'lesson', message: failMessage('lesson'), detail: [String(err?.message ?? err)] });
     }
@@ -302,6 +311,18 @@ export function createPlatform({
       set({ state: 'starting' });
     }
 
+    if (klass) {
+      try {
+        const db = openDb(dbPath);
+        try {
+          db.replaceRoster(klass.names);
+        } finally {
+          db.close();
+        }
+      } catch (err) {
+        return fail({ kind: 'lesson', message: `没能把${klass.name}的名单写进课堂数据，请再试一次`, detail: [String(err?.message ?? err)] });
+      }
+    }
     const childEnv = { ...process.env, ...fileEnv, DB_PATH: dbPath, ...extraEnv };
     writer.write(`==== 启动 ${new Date().toISOString()} 端口 ${port}`);
     const c = spawn(serverCommand[0], serverCommand.slice(1), {
@@ -358,7 +379,7 @@ export function createPlatform({
     }
     if (abort) return { ok: false, error: null };
     startedEnv = JSON.stringify(platformEnv(root));
-    set({ state: 'running', port, startedAt: Date.now(), lesson: lessonTitle, lessonConfig: fileEnv.LESSON_CONFIG, dbPath });
+    set({ state: 'running', port, startedAt: Date.now(), lesson: lessonTitle, lessonConfig: fileEnv.LESSON_CONFIG, dbPath, classId: klass?.id ?? null, className: klass?.name ?? null });
     log(`[manage] 平台已启动，端口 ${port}`);
     return { ok: true };
   }

@@ -28,6 +28,7 @@ dist/
 # 课堂数据：数据库、教师登录状态、名单、备份、平台日志都含学生信息，不进仓库
 data/*.sqlite*
 data/lessons/
+data/classes.json*
 data/*.bak-*
 data/teacher_tokens.json
 data/rosters/

@@ -32,6 +32,10 @@
 //     allowOther: true → 409 { error, from, fromTitle }；POST /api/unsorted/delete { confirm: true } 把未归类的旧库移到 backups/deleted-lessons/。
 //     overview.data 按正在跑 / 当前课，另带 custom（.env 自定义 DB_PATH）、unsorted { db, backups }；overview.migrated 见 migrate-db.js；
 //     /api/lessons/overview 每行 data（lesson-admin.js lessonRow）
+//   班级名单与按班分库规格 §2.4：/api/classes（GET 列表 / POST 新建并设为当前 / PUT :id 改名或名单 / DELETE :id 移走数据 / POST current 换班）；
+//     名单 / 备份 / 恢复 / 重置 / 下载接口多查询参数 class（班级 id；'none' = 不分班；缺省 = 选中课正在跑时启动用的班，否则当前班级）；
+//     overview.classes = { current, running, total }；POST /api/classes/preview { text } → 解析全年级"班级、姓名"（每班带 exists）、
+//     POST /api/classes/import { classes: [{ name, names }] } → { created, updated, pushed }（按班名对上的替换名单，没有的新建）
 //   K8（AI 备用线路规格 §5）：POST /api/ai/test { which: 1 | 2, baseUrl, model, apiKey? } → { ok: true, ms } | { ok: false, reason, text }；
 //     参数不对 400 { error }；出站请求用注入的 fetch（ai-test.js）
 //   G3（管理台线性路径重设计规格 §2.4、§3）：/api/lessons、/api/lessons/overview 只列 lessons/（遗留的示例当前课例外）；
@@ -63,6 +67,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { effectiveEnv, readEnv, writeEnv, settingsView, prepareSettingsPatch, validateSettings, downloadEnv, customDbPath, passwordState } from './env-file.js';
 import { migrateDb, takeMigratedNotice } from './migrate-db.js';
+import { listClasses, getClass, createClass, updateClass, removeClassEntry, currentClassId, parseClassRoster, importClasses } from './classes.js';
 import { lessonIdError, UNSORTED_ID } from '../../kernel/server/lesson-db-path.js';
 import { listLessons, listLessonChoices, readLesson, lessonDir, DEV_LESSON } from './lessons.js';
 import { createPlatform, MANAGE_APP, withDiagHint } from './process.js';
@@ -168,7 +173,8 @@ export function createManageServer({
   // M6：名单 / 数据页选中的课。param = 课程目录（examples/x、lessons/x；'.' = 根目录开发课；缺省 = 正在跑的课，没在跑则 .env 当前课）；
   //   allowUnsorted 时另可选 '_unsorted'（未归类的旧数据）。→ { dir, configRel, id, title, dbPath, backupDir, running, unsorted, custom }
   //   running：平台在跑，且正在跑的课用的就是这个库（同 id 的两门课、自定义 DB_PATH 都算）
-  async function selectLesson(param, { allowUnsorted = false } = {}) {
+  // 班级名单与按班分库规格 §2.4：classParam = 班级 id；'none' = 不分班；缺省 = 选中课正在跑时启动用的班，否则当前班级 → 另带 classId / className
+  async function selectLesson(param, { allowUnsorted = false, classParam } = {}) {
     await migrationDone;
     const customDb = customDbPath(root);
     const s = platform.status();
@@ -188,11 +194,27 @@ export function createManageServer({
     }
     const l = await readLesson(root, rel).catch(() => null);
     if (!l || lessonIdError(l.id)) throw userError('这门课程的文件有错，读不出来；请让帮你生成课程的 AI 检查后再试', 400);
-    const paths = backups.lessonPaths(root, l.id, { customDb });
+    let klass = null;
+    if (classParam === undefined || classParam === null || classParam === '') {
+      // 缺省：选中课正在跑（同一门课）时跟启动用的班，否则当前班级
+      const sameLesson = s.state === 'running' && s.lessonConfig && lessonAdmin.sameLessonPath(s.lessonConfig, rel);
+      const id = sameLesson ? s.classId : currentClassId(root, effectiveEnv(root));
+      klass = id ? getClass(root, id) : null;
+    } else if (classParam !== 'none') {
+      klass = typeof classParam === 'string' ? getClass(root, classParam) : null;
+      if (!klass) throw userError('找不到这个班，可能已经删掉了；请刷新页面', 404);
+    }
+    const paths = backups.lessonPaths(root, l.id, { customDb, classId: klass?.id ?? null });
     // M6 审查：比较库路径——平台启动时记下的实际库（status().dbPath）与选中课的库相同才算正在跑；记不到时保守判为正在跑
-    const running = s.state === 'running' && (!s.dbPath || path.resolve(paths.dbPath) === path.resolve(s.dbPath));
-    return { dir: lessonDir(rel) || '.', configRel: rel, id: l.id, title: l.title ?? null, ...paths, running, unsorted: false, custom: Boolean(customDb) };
+    //   自定义 DB_PATH 时各班共用一个库：库相同还要班级相同才算
+    const running = s.state === 'running' && (!s.dbPath || path.resolve(paths.dbPath) === path.resolve(s.dbPath))
+      && (!customDb || (s.classId ?? null) === (klass?.id ?? null));
+    return {
+      dir: lessonDir(rel) || '.', configRel: rel, id: l.id, title: l.title ?? null, ...paths, running, unsorted: false, custom: Boolean(customDb),
+      classId: klass?.id ?? null, className: klass?.name ?? null,
+    };
   }
+  const classParamOf = (req) => req.query?.class ?? req.body?.class;
   const lessonParam = (req) => req.query?.lesson ?? req.body?.lesson;
   // G3：可选的课 = 我的课 + .env 当前课（遗留示例课 / 根目录开发课）+ 平台正在跑的课（与当前课不同时）
   async function lessonCandidates() {
@@ -590,6 +612,8 @@ export function createManageServer({
       // G4：课程需要的环境（§3.1）
       env: envStatus,
       data: await dataInfo(),
+      // 班级名单与按班分库规格 §2.4：{ current: { id, name, count } | null, running: { id, name } | null, total }
+      classes: classesInfo(),
       pendingRestart: platform.pendingRestart(),
       build: { stale: buildStale() },
       // L1：当前课最近一次检查结果（"检查课程"按钮或启动前的检查，取较新的；没查过为 null）
@@ -824,7 +848,7 @@ export function createManageServer({
 
   // 名单
   api.get('/roster', async (req, res) => {
-    res.json(await roster.status(await target(await selectLesson(lessonParam(req)))));
+    res.json(await roster.status(await target(await selectLesson(lessonParam(req), { classParam: classParamOf(req) }))));
   });
   api.post('/roster/preview', (req, res) => {
     const text = req.body?.text;
@@ -834,27 +858,136 @@ export function createManageServer({
   api.post('/roster', async (req, res) => {
     const names = req.body?.names;
     if (!Array.isArray(names)) throw userError('名单格式不对');
-    const r = await serial(async () => roster.importNames({ names, ...(await target(await selectLesson(lessonParam(req)))) }));
+    const r = await serial(async () => roster.importNames({ names, ...(await target(await selectLesson(lessonParam(req), { classParam: classParamOf(req) }))) }));
     res.json({ ok: true, count: r.count });
   });
   api.post('/roster/clear', async (req, res) => {
-    await serial(async () => roster.clear(await target(await selectLesson(lessonParam(req)))));
+    await serial(async () => roster.clear(await target(await selectLesson(lessonParam(req), { classParam: classParamOf(req) }))));
     res.json({ ok: true });
   });
   api.post('/roster/reset-bindings', async (req, res) => {
-    await serial(async () => roster.resetBindings(await target(await selectLesson(lessonParam(req)))));
+    await serial(async () => roster.resetBindings(await target(await selectLesson(lessonParam(req), { classParam: classParamOf(req) }))));
     res.json({ ok: true });
+  });
+
+  // 班级（班级名单与按班分库规格 §2.4）：全平台共用；当前班级记在 .env CLASS_ID
+  const classRow = (c) => ({ id: c.id, name: c.name, count: c.names.length, names: c.names });
+  function classesInfo() {
+    const list = listClasses(root, { log });
+    const s = platform.status();
+    const cur = currentClassId(root, effectiveEnv(root));
+    const curRow = cur ? list.find((c) => c.id === cur) : null;
+    const runId = s.state === 'running' ? s.classId : null;
+    return {
+      current: curRow ? { id: curRow.id, name: curRow.name, count: curRow.names.length } : null,
+      running: runId ? { id: runId, name: list.find((c) => c.id === runId)?.name ?? s.className } : null,
+      total: list.length,
+    };
+  }
+  // 平台正在跑这个班：名单同时推给平台（学生端立即看到）
+  async function pushClassRoster(c) {
+    const s = platform.status();
+    if (s.state !== 'running' || s.classId !== c.id || !s.port) return null;
+    if (c.names.length) await roster.importNames({ names: c.names, port: s.port });
+    else await roster.clear({ port: s.port });
+    return true;
+  }
+  api.get('/classes', (_req, res) => {
+    const s = platform.status();
+    res.json({
+      classes: listClasses(root, { log }).map(classRow),
+      current: currentClassId(root, effectiveEnv(root)),
+      running: s.state === 'running' ? s.classId ?? null : null,
+    });
+  });
+  api.post('/classes', async (req, res) => {
+    const c = await serial(async () => {
+      const made = createClass(root, { name: req.body?.name, names: req.body?.names ?? [] });
+      writeEnv(root, { CLASS_ID: made.id });
+      return made;
+    });
+    res.json({ ok: true, class: classRow(c), pendingRestart: platform.pendingRestart() });
+  });
+  // 批量导入（规格 §2.6）：先预览（每个班标出是不是已有、会被替换），确认后导入；正在上的班名单变了同样推给平台
+  api.post('/classes/preview', (req, res) => {
+    const text = req.body?.text;
+    if (typeof text !== 'string') throw userError('请粘贴班级和名单');
+    const r = parseClassRoster(text);
+    const have = new Set(listClasses(root).map((c) => c.name));
+    res.json({ ...r, classes: r.classes.map((c) => ({ ...c, count: c.names.length, exists: have.has(c.name) })) });
+  });
+  api.post('/classes/import', async (req, res) => {
+    const r = await serial(async () => {
+      const out = importClasses(root, req.body?.classes);
+      let pushed = null;
+      const s = platform.status();
+      const hit = out.updated.find((c) => s.state === 'running' && c.id === s.classId);
+      if (hit) {
+        try {
+          pushed = await pushClassRoster(hit);
+        } catch (err) {
+          log(`[manage] 班级名单没能推给正在运行的平台：${err?.message ?? err}`);
+          pushed = false;
+        }
+      }
+      return { ...out, pushed };
+    });
+    res.json({ ok: true, created: r.created.map(classRow), updated: r.updated.map(classRow), pushed: r.pushed });
+  });
+  api.post('/classes/current', async (req, res) => {
+    const id = req.body?.id;
+    await serial(async () => {
+      if (id === null || id === undefined || id === '' || id === 'none') {
+        writeEnv(root, { CLASS_ID: '' });
+        return;
+      }
+      if (typeof id !== 'string' || !getClass(root, id)) throw userError('找不到这个班，可能已经删掉了；请刷新页面', 404);
+      writeEnv(root, { CLASS_ID: id });
+    });
+    res.json({ ok: true, pendingRestart: platform.pendingRestart() });
+  });
+  api.put('/classes/:id', async (req, res) => {
+    const c = await serial(async () => {
+      const next = updateClass(root, req.params.id, { name: req.body?.name, names: req.body?.names });
+      let pushed = null;
+      if (req.body?.names !== undefined) {
+        // 推给平台失败不影响已保存的名单（下次启动照样写进库），只说一句
+        try {
+          pushed = await pushClassRoster(next);
+        } catch (err) {
+          log(`[manage] 班级名单没能推给正在运行的平台：${err?.message ?? err}`);
+          pushed = false;
+        }
+      }
+      return { next, pushed };
+    });
+    res.json({ ok: true, class: classRow(c.next), pushed: c.pushed });
+  });
+  api.delete('/classes/:id', async (req, res) => {
+    const r = await serial(async () => {
+      const { id } = req.params;
+      if (!getClass(root, id)) throw userError('找不到这个班，可能已经删掉了；请刷新页面', 404);
+      const s = platform.status();
+      if (s.state === 'running' && s.classId === id) throw userError('这个班正在上课，先停止平台再删除', 409);
+      if (s.state !== 'stopped' && s.state !== 'running') throw userError('平台正在启动或停止，请稍候再试', 409);
+      if (s.state === 'stopped') await guardOffline();
+      const moved = customDbPath(root) ? { movedTo: null } : backups.moveClassData(root, id);
+      removeClassEntry(root, id);
+      if (effectiveEnv(root).CLASS_ID === id) writeEnv(root, { CLASS_ID: '' });
+      return moved;
+    });
+    res.json({ ok: true, movedTo: r.movedTo, pendingRestart: platform.pendingRestart() });
   });
 
   // 备份 / 恢复 / 重置
   api.get('/backups', async (req, res) => {
-    const sel = await selectLesson(lessonParam(req), { allowUnsorted: true });
+    const sel = await selectLesson(lessonParam(req), { allowUnsorted: true, classParam: classParamOf(req) });
     // 未归类备份带来源课程（恢复到指定课程时对话框要说"这份备份来自《X》"）
     res.json(backups.listBackups(sel.backupDir, { withLesson: sel.unsorted }));
   });
   api.post('/backups', async (req, res) => {
     const r = await serial(async () => {
-      const sel = await selectLesson(lessonParam(req), { allowUnsorted: true });
+      const sel = await selectLesson(lessonParam(req), { allowUnsorted: true, classParam: classParamOf(req) });
       return backups.backup({ dbPath: sel.dbPath, backupDir: sel.backupDir, statfs });
     });
     res.json({ file: r.file, size: r.size });
@@ -863,7 +996,7 @@ export function createManageServer({
   api.get('/backups/:file', async (req, res) => {
     const { file } = req.params;
     if (!backups.isBackupName(file)) throw userError('备份文件名不对');
-    const full = path.join((await selectLesson(lessonParam(req), { allowUnsorted: true })).backupDir, file);
+    const full = path.join((await selectLesson(lessonParam(req), { allowUnsorted: true, classParam: classParamOf(req) })).backupDir, file);
     let st;
     try {
       st = fs.lstatSync(full);
@@ -886,12 +1019,12 @@ export function createManageServer({
     const { file } = req.params;
     if (!backups.isBackupName(file)) throw userError('备份文件名不对');
     const r = await serial(async () => {
-      const src = await selectLesson(lessonParam(req), { allowUnsorted: true });
+      const src = await selectLesson(lessonParam(req), { allowUnsorted: true, classParam: classParamOf(req) });
       const to = req.body?.to;
       let dest = src;
       if (src.unsorted) {
         if (typeof to !== 'string' || to === '' || to === UNSORTED_ID) throw userError('请选要恢复到哪门课', 400);
-        dest = await selectLesson(to);
+        dest = await selectLesson(to, { classParam: classParamOf(req) });
       } else if (to !== undefined && to !== null && to !== src.dir) {
         throw userError('这份备份只能恢复到它自己的课', 400);
       }
@@ -921,7 +1054,7 @@ export function createManageServer({
     if (req.body?.confirm !== true) throw userError('需要确认后才能重置');
     const r = await serial(async () => {
       if (updating()) throw userError('正在更新平台，请稍候', 409);
-      const sel = await selectLesson(lessonParam(req));
+      const sel = await selectLesson(lessonParam(req), { classParam: classParamOf(req) });
       const t = await target(sel);
       if (t.online) return { ...(await backups.resetOnline({ port: t.port, dbPath: sel.dbPath, backupDir: sel.backupDir, statfs })), online: true };
       exclusive = '正在重置数据，请稍候';

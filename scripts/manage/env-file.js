@@ -15,11 +15,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
+// 班级名单与按班分库规格 §2.1：CLASS_ID = 当前班级（工作台"上课班级"卡写，设置页不显示；不在班级列表里 = 不分班）
 import { isOldDefaultDbPath } from '../../kernel/server/lesson-db-path.js';
 
 export const KNOWN_KEYS = [
   'PORT', 'DB_PATH', 'TEACHER_PASSWORD', 'AUTH_TOKEN_FILE', 'LESSON_CONFIG', 'AI_BASE_URL', 'AI_API_KEY', 'AI_MODEL', 'RUNTIME_ZIP_URL',
-  'AI_BASE_URL_2', 'AI_API_KEY_2', 'AI_MODEL_2',
+  'AI_BASE_URL_2', 'AI_API_KEY_2', 'AI_MODEL_2', 'CLASS_ID',
 ];
 // 上课准备页可见、可改的键（DB_PATH / AUTH_TOKEN_FILE 保持 .env.example 默认，不展示）
 export const EDITABLE_KEYS = [
@@ -52,6 +53,7 @@ export function effectiveEnv(root) {
   const { values } = readEnv(root);
   const out = { ...values };
   if (!out.DB_PATH || isOldDefaultDbPath(out.DB_PATH)) delete out.DB_PATH;
+  if (!out.CLASS_ID) delete out.CLASS_ID; // 空值 = 不分班，与没有这一行相同（"有改动未生效"不误报）
   for (const [k, v] of Object.entries(DEFAULTS)) {
     // G3：LESSON_CONFIG 显式写成空值 = 还没有课程（不回落到根目录配置）
     if (k === 'LESSON_CONFIG' && out[k] === '') continue;

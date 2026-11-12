@@ -5,6 +5,7 @@
 //   lessonDbPath(root, id) → <root>/data/lessons/<id>.sqlite（id 不合法抛错；UNSORTED_ID 例外）
 //   LESSONS_DATA_DIR = 'data/lessons'；UNSORTED_ID = '_unsorted'（旧库迁移时读不出课程的去处，不是合法课程 id）
 //   isOldDefaultDbPath(v)：DB_PATH 等于旧缺省 data/classroom.sqlite（视为没设置）
+//   classDbPath(root, lessonId, classId) → <root>/data/lessons/<课程 id>/<班级 id>.sqlite（班级名单与按班分库规格 §2.2）
 import path from 'node:path';
 
 export const LESSON_ID_RE = /^[a-z][a-z0-9-]{1,39}$/;
@@ -38,4 +39,14 @@ export function lessonDbPath(root, id) {
   const err = id === UNSORTED_ID ? null : lessonIdError(id);
   if (err) throw new Error(err);
   return path.join(path.resolve(root), ...LESSONS_DATA_DIR.split('/'), `${id}.sqlite`);
+}
+
+// 班级名单与按班分库规格 §2.2：有当前班级时这门课的库 → <root>/data/lessons/<课程 id>/<班级 id>.sqlite
+//   CLASS_ID_RE：班级 id 由工作台生成 c1、c2…（不合法抛错）
+export const CLASS_ID_RE = /^c[0-9]{1,6}$/;
+export function classDbPath(root, lessonId, classId) {
+  const err = lessonIdError(lessonId);
+  if (err) throw new Error(err);
+  if (typeof classId !== 'string' || !CLASS_ID_RE.test(classId)) throw new Error(`班级 id ${JSON.stringify(classId)} 不对`);
+  return path.join(path.resolve(root), ...LESSONS_DATA_DIR.split('/'), lessonId, `${classId}.sqlite`);
 }

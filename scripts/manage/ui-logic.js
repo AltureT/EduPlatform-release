@@ -223,7 +223,10 @@ export function classroomLesson(o) {
       : `已换成《${o.lesson.title}》，重启后生效`;
   }
   const dir = run?.dev ? '项目根目录（lesson.config.js）' : (run?.dir || run?.path || '—');
-  return { title: ok ? `《${ls.title}》` : ls.title, meta: ls.meta, next, dir };
+  // 班级名单与按班分库规格 §2.5：平台在跑时带上正在上的班（不分班不带）
+  const klass = o?.platform?.state === 'running' ? o?.classes?.running : null;
+  const meta = klass?.name ? [ls.meta, klass.name].filter(Boolean).join(' · ') : ls.meta;
+  return { title: ok ? `《${ls.title}》` : ls.title, meta, next, dir };
 }
 
 // ===== 课程检查（L1：check:lesson 的结果 { ok, errors, warnings, path?, lesson? }） =====
@@ -567,6 +570,51 @@ export const LESSON_TEXT = {
   migratedUnsorted: '课堂数据已按课程整理；有一份看不出属于哪门课，放在数据页的"未归类的旧数据"里',
   dbCustom: (size) => `自定义位置（${size}）`,
   rosterCount: (n) => (n ? `${n} 人` : '没有名单'),
+};
+
+// 班级名单与按班分库规格 §2.5：上课班级卡、名单卡（班级模式）、数据页班级选择的文字
+export const CLASS_TEXT = {
+  none: '不分班（名单只属于这门课）',
+  option: (c) => `${c.name} · ${c.count ? `${c.count} 人` : '还没有名单'}`,
+  newHead: '新建班级',
+  newOk: '建好',
+  newPlaceholder: '班名，比如 高一(1)班',
+  renameHead: '改班名',
+  renameOk: '改名',
+  needName: '请先填班名',
+  created: (name) => `已新建${name}，接着在下面粘贴名单`,
+  renamed: (name) => `已改名为${name}`,
+  switched: (name, pending) => (pending ? `已换成${name}，重启平台后生效` : `现在上：${name}`),
+  noneName: '不分班',
+  deleteConfirm: (name) => `删除${name}？\n这个班的名单会删掉；它在各门课里的课堂数据移到平台文件夹的备份里（不会直接删掉）。`,
+  deleteOk: '删除这个班',
+  deleted: (name) => `已删除${name}`,
+  // 平台正在上的班与当前选的不同（换班未生效）；没有班级时一句引导；其余不显示
+  note: ({ classes = [], current = null, running = null, platformRunning = false } = {}) => {
+    const nameOf = (id) => (id ? classes.find((c) => c.id === id)?.name ?? '另一个班' : '不分班');
+    if (platformRunning && (running ?? null) !== (current ?? null)) return `平台正在上${nameOf(running)}，重启平台后换成${nameOf(current)}`;
+    if (!classes.length) return '还没有班级：新建一个，以后换班不用重新粘贴名单';
+    return '';
+  },
+  rosterTitle: (name) => `${name}的名单`,
+  rosterStatus: (count, bound) => (count ? `这个班 ${count} 人，已绑定设备 ${bound ?? 0} 台；所有课共用这份名单` : '这个班还没有名单（学生加入时自己填名字）'),
+  imported: (name, count, pushed) => `${name}的名单已保存，共 ${count} 人${pushed === false ? '；正在上的课没能立即换上，重启平台后生效' : ''}`,
+  importTitle: '用这份名单替换这个班的名单（所有课共用）',
+  importTitleLesson: '用这份名单替换当前名单',
+  dataName: (lesson, klass) => (klass ? `${lesson}· ${klass}` : lesson),
+  // 批量导入（规格 §2.6）
+  bulkCount: (classes, total) => (classes ? `解析出 ${classes} 个班、${total} 人` : '没有解析出班级，请检查是否每行"班级、姓名"两列'),
+  bulkItem: (c) => `${c.name} · ${c.count} 人`,
+  bulkTag: (exists) => (exists ? '（已有，名单换成这份）' : '（新建）'),
+  bulkNote: (r) => [
+    r.skipped ? `跳过 ${r.skipped} 行（缺班级或姓名、名字超过 16 字、同班重名）` : '',
+    r.badClassNames?.length ? `班名超过 20 字没有导入：${r.badClassNames.slice(0, 3).join('、')}${r.badClassNames.length > 3 ? ' 等' : ''}` : '',
+  ].filter(Boolean).join('；'),
+  bulkDone: (r) => {
+    const parts = [r.created.length ? `新建 ${r.created.length} 个` : '', r.updated.length ? `替换 ${r.updated.length} 个班的名单` : ''].filter(Boolean).join('、');
+    const tail = r.pushed === false ? '；正在上的班没能立即换上，重启平台后生效' : '';
+    return `已导入：${parts}。在"现在上"里选这节课的班${tail}`;
+  },
 };
 
 // M6（名单与数据以课程为主体规格 §2.4）：课程卡片一行"名单 N 人 · 数据 M KB · 最近备份 <时间或"没有">"；库还不存在"还没有数据"

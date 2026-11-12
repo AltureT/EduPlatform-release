@@ -40,7 +40,8 @@ import { pickLessonId } from '../lib/lesson-id.js';
 import { newLesson } from '../new-lesson.mjs';
 import { fixRadicals } from '../lib/text-fix.js';
 import { moveLessonData, dataSummary, lessonPaths } from './backup.js';
-import { customDbPath, writeEnv } from './env-file.js';
+import { customDbPath, writeEnv, effectiveEnv } from './env-file.js';
+import { currentClassId } from './classes.js';
 import { defaultObject, quoteJs } from '../lib/config-edit.js';
 import { lessonIdError, lessonDbPath } from '../../kernel/server/lesson-db-path.js';
 import { computeNeeds, needsLessons, ENV_KINDS } from './env-prepare.js';
@@ -264,7 +265,7 @@ export async function lessonRow(root, scope, name, { current, checks } = {}) {
     const l = await readLesson(root, configRel);
     if (!l) throw new Error('missing');
     const stages = l.config?.stages;
-    const data = lessonIdError(l.id) ? null : dataSummary(lessonPaths(root, l.id, { customDb: customDbPath(root) }));
+    const data = lessonIdError(l.id) ? null : dataSummary(lessonPaths(root, l.id, { customDb: customDbPath(root), classId: currentClassId(root, effectiveEnv(root)) }));
     return { ...base, id: l.id, title: l.title, stages: Array.isArray(stages) ? stages.length : 0, data };
   } catch (err) {
     return { ...base, id: null, title: null, stages: 0, broken: true, error: String(err?.message ?? err), data: null };
@@ -302,7 +303,7 @@ export async function currentLessonRow(root, rel, { checks } = {}) {
     const l = await readLesson(root, rel);
     if (!l) return null;
     const stages = l.config?.stages;
-    const data = lessonIdError(l.id) ? null : dataSummary(lessonPaths(root, l.id, { customDb: customDbPath(root) }));
+    const data = lessonIdError(l.id) ? null : dataSummary(lessonPaths(root, l.id, { customDb: customDbPath(root), classId: currentClassId(root, effectiveEnv(root)) }));
     return { ...base, id: l.id, title: l.title, stages: Array.isArray(stages) ? stages.length : 0, data };
   } catch (err) {
     return { ...base, id: null, title: null, stages: 0, broken: true, error: String(err?.message ?? err), data: null };
@@ -334,7 +335,9 @@ export async function createLesson(root, { title, now = new Date() } = {}) {
   // M6 审查：已删课程留下的库（或未整理的同名库）也算占用，新课不会接手旧数据
   const hasDb = (id) => {
     try {
-      return fs.existsSync(lessonDbPath(root, id));
+      const db = lessonDbPath(root, id);
+      // 班级名单与按班分库规格 §2.4：各班的库在 data/lessons/<id>/ 下，也算占用
+      return fs.existsSync(db) || fs.existsSync(db.replace(/\.sqlite$/, ''));
     } catch {
       return false;
     }
