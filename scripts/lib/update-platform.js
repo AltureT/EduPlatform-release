@@ -38,7 +38,7 @@ export const releaseZipName = (v) => `EduPlatform-v${v}.zip`;
 export const RELEASE_API = [
   {
     label: 'Gitee',
-    url: 'https://gitee.com/api/v5/repos/alture/EduPlatform-release/releases?page=1&per_page=20',
+    url: 'https://gitee.com/api/v5/repos/alture/EduPlatform-release/releases?page=1&per_page=20&direction=desc',
     download: (v) => `https://gitee.com/alture/EduPlatform-release/releases/download/v${v}/${releaseZipName(v)}`,
   },
   {
